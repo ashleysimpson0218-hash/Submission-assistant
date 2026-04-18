@@ -1,123 +1,1370 @@
-import { useState, useEffect, useCallback } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
-var POS=['Registered Nurse','Charge Nurse','Licensed Practical Nurse','Certified Nursing Assistant','Certified Medical Assistant','Director of Nursing','Assistant Director of Nursing','Nurse Administrator','Health Services Administrator','Infection Control Nurse','Lab Tech','Phlebotomist','Pharmacy Tech','Medical Records Clerk','Administrative Assistant','Intake Coordinator'];
-var EMP=['FT','PT','PRN','FT or PT','FT OR PRN'];
-var FTEV=['1.00','0.90','0.80','0.60','0.50','0.40','PRN','.9 or .6'];
-var SH=['Day','Evening','Night','PRN','Day or Night','Day or Evening','Night or Evening'];
-var PIPE=['Initial Outreach','Phone Screen','Submitted','Interview Scheduled','Interview Completed','Offer Extended','Background Initiated','Background Cleared','Start Confirmed','On Hold by Facility','No Response','Withdrew','No Show to Interview','Rate Mismatch','Failed Background','Not Selected','Hired','Inactive'];
-var DISP=['Active','Hired','Withdrawn','No Response','No Show to Interview','Rate Mismatch','Failed Background','Not Selected','On Hold'];
-var LIC=['Active/Clear','Active/Encumbered','Inactive','Pending','Not Verified','Not required for position'];
-var CPRV=['Active','Inactive','Pending'];
-var BGS=['Pending','Cleared','Failed Background','Withdrew Candidacy','Internal Hire Cleared'];
-var FAC=['Arrendale SP','Arrendale TC','Baldwin SP','Burruss CTC','Central SP','Clayton TC','Colwell PDC','Dodge State Prison','Dooly State Prison','Emanuel PDC',"Emanuel Women's",'GDCP','GDCP-SMU','Hancock SP','Hays SP','Helms','Macon TC','McEver PDC','Metro Reentry','Metro Reinvestment','Metro TC','Paulding RSAT','Phillips SP','Phillips TC','Turner RSAT','Walker SP','Washington SP','Whitworth','Wilcox SP','Atlanta TC'];
-var FTM={'Arrendale SP':'Special Mission','Arrendale TC':'Special Mission','Baldwin SP':'24-hour','Burruss CTC':'12-hour','Central SP':'24-hour','Clayton TC':'12-hour','Colwell PDC':'12-hour','Dodge State Prison':'12-hour','Dooly State Prison':'12-hour','Emanuel PDC':'12-hour',"Emanuel Women's":'12-hour','GDCP':'Special Mission','GDCP-SMU':'Special Mission','Hancock SP':'24-hour','Hays SP':'24-hour','Helms':'24-hour','Macon TC':'12-hour','McEver PDC':'12-hour','Metro Reentry':'24-hour','Metro Reinvestment':'12-hour','Metro TC':'12-hour','Paulding RSAT':'12-hour','Phillips SP':'24-hour','Phillips TC':'12-hour','Turner RSAT':'12-hour','Walker SP':'12-hour','Washington SP':'12-hour','Whitworth':'12-hour','Wilcox SP':'12-hour','Atlanta TC':'12-hour'};
-var MFTE={'Arrendale SP':6,'Arrendale TC':2,'Baldwin SP':27.6,'Burruss CTC':6,'Central SP':14.6,'Clayton TC':1.4,'Colwell PDC':3.2,'Dodge State Prison':15.3,'Dooly State Prison':18.5,'Emanuel PDC':3.2,"Emanuel Women's":7,'GDCP':57,'GDCP-SMU':4,'Hancock SP':13,'Hays SP':21,'Helms':13.2,'Macon TC':1.4,'McEver PDC':3.6,'Metro Reentry':13.8,'Metro Reinvestment':2,'Metro TC':1.5,'Paulding RSAT':3.6,'Phillips SP':27.3,'Phillips TC':1,'Turner RSAT':3,'Walker SP':9,'Washington SP':16,'Whitworth':6.9,'Wilcox SP':18,'Atlanta TC':1.4};
-var NP=['Registered Nurse','Charge Nurse','Licensed Practical Nurse','Director of Nursing','Assistant Director of Nursing','Nurse Administrator','Infection Control Nurse'];
-var CNA_POS=['Certified Nursing Assistant','Certified Medical Assistant'];
-var MS_LABELS=[['Initial Outreach','io','Recruiter'],['Phone Screen','ps','Recruiter'],['Submitted','sub','Recruiter'],['Interview Scheduled','is','Site Leadership'],['Interview Completed','ic','Site Leadership'],['Credentialing App Sent','cred','Recruiter'],['Offer Extended','oe','Site Leadership'],['BG Initiated','bi','Recruiter'],['BG Cleared','bc','HR'],['Start Confirmed','sc','Recruiter']];
+const STORAGE_KEY = "submission-assistant-v1-settings";
+const RECENT_KEY = "submission-assistant-v1-recent";
 
-var RT={};
-(function(){var ti=['0-2','3-5','6-10','11-15','16+'],ft=['12-hour','24-hour','Special Mission'];var s={'Health Services Administrator':{'12-hour':'$107K-$114K','24-hour':'$112K-$117K','Special Mission':'$118K-$125K'},'Director of Nursing':{'12-hour':'$103K-$110K','24-hour':'$107K-$113K','Special Mission':'$110K-$117K'},'Nurse Administrator':{'12-hour':'$101K-$110K','24-hour':'$107K-$114K','Special Mission':'$107K-$114K'},'Assistant Director of Nursing':{'12-hour':'$101K-$110K','24-hour':'$107K-$114K','Special Mission':'$107K-$114K'}};for(var p in s)for(var f in s[p])RT[p+'|'+f]=s[p][f];RT['Administrative Assistant']='$21-$26/hr';RT['Intake Coordinator']='$21-$26/hr';RT['Medical Records Clerk']='$18-$20/hr';var rn={'12-hour':[41,42.25,43.5,44.75,46],'24-hour':[41,42.25,43.5,44.75,46],'Special Mission':[44,45.25,46.5,47.75,49]};var ch={'12-hour':[42.5,43.75,45,46.25,47.5],'24-hour':[42.5,43.75,45,46.25,47.5],'Special Mission':[46,47.25,48.5,49.75,51]};var lp={'12-hour':[29,30.25,31.5,32.75,34],'24-hour':[30,31.25,32.5,33.75,35],'Special Mission':[31,32.25,33.5,34.75,36]};var cn=[17,18.25,19.5,20.75,22],lb=[18,19,21,22,23],ph=[19,20,21,22,23];var rnP={'12-hour':45,'24-hour':45,'Special Mission':48},chP={'12-hour':47,'24-hour':47,'Special Mission':50},lpP={'12-hour':33,'24-hour':34,'Special Mission':35};[{n:['Registered Nurse','Infection Control Nurse'],r:rn,p:rnP},{n:['Charge Nurse'],r:ch,p:chP},{n:['Licensed Practical Nurse'],r:lp,p:lpP}].forEach(function(g){g.n.forEach(function(nm){ft.forEach(function(f){ti.forEach(function(t,i){RT[nm+'|'+f+'|'+t]='$'+g.r[f][i].toFixed(2);});RT[nm+'|'+f+'|PRN']='$'+g.p[f].toFixed(2);});});});['Certified Nursing Assistant','Certified Medical Assistant'].forEach(function(nm){ft.forEach(function(f){ti.forEach(function(t,i){RT[nm+'|'+f+'|'+t]='$'+cn[i].toFixed(2);});RT[nm+'|'+f+'|PRN']='$21.00';});});['Lab Tech','Phlebotomist'].forEach(function(nm){ft.forEach(function(f){ti.forEach(function(t,i){RT[nm+'|'+f+'|'+t]='$'+lb[i].toFixed(2);});RT[nm+'|'+f+'|PRN']='$23.00';});});ft.forEach(function(f){ti.forEach(function(t,i){RT['Pharmacy Tech|'+f+'|'+t]='$'+ph[i].toFixed(2);});RT['Pharmacy Tech|'+f+'|PRN']='$23.00';});})();
+const DEFAULT_SETTINGS = {
+  general: {
+    workspaceName: "",
+    companyName: "",
+    recruiterName: "",
+    recruiterEmail: "",
+    recruiterPhone: "",
+    signOffName: "",
+    signOffLine: "",
+  },
+  options: {
+    employmentTypes: ["FT", "PT", "PRN", "Contract", "FT or PT"],
+    shiftOptions: ["Day", "Evening", "Night", "Flexible", "PRN"],
+    fteOptions: ["1.00", "0.90", "0.80", "0.60", "0.50", "0.40", "PRN"],
+    startAvailabilityOptions: ["Immediate", "1–2 Weeks", "2–3 Weeks", "3+ Weeks"],
+    educationLevels: [
+      "High School",
+      "Associate's",
+      "Bachelor's",
+      "Master's",
+      "Doctorate",
+      "Certification / Trade",
+    ],
+    licenseStatusOptions: [
+      "Active/Clear",
+      "Active/Encumbered",
+      "Inactive",
+      "Pending",
+      "Not Verified",
+      "Not Required",
+    ],
+    cprStatusOptions: ["Active", "Inactive", "Pending", "Not Required"],
+  },
+  sites: [
+    {
+      id: "site-1",
+      siteName: "Demo Facility",
+      siteType: "24-hour",
+      location: "Atlanta, GA",
+      status: "Active",
+      notes: "",
+    },
+  ],
+  roles: [
+    {
+      id: "role-1",
+      positionTitle: "Registered Nurse",
+      roleCategory: "Healthcare",
+      requiresLicense: true,
+      requiresCpr: true,
+      requiresFte: true,
+      requiresShift: true,
+      status: "Active",
+    },
+    {
+      id: "role-2",
+      positionTitle: "Administrative Assistant",
+      roleCategory: "General",
+      requiresLicense: false,
+      requiresCpr: false,
+      requiresFte: false,
+      requiresShift: false,
+      status: "Active",
+    },
+  ],
+  rates: {
+    enabled: true,
+    rules: [
+      {
+        id: "rate-1",
+        positionTitle: "Registered Nurse",
+        scopeType: "Site Type",
+        scopeValue: "24-hour",
+        experienceTier: "3–5",
+        rate: "$42.25/hr",
+        employmentType: "",
+        shift: "",
+      },
+    ],
+  },
+  templates: {
+    greetingLine: "Hello {facility},",
+    introLine: "Please see candidate details below:",
+    followUpLine: "Please reach out within 24–48 hours.",
+    closingLine:
+      "The candidate is aware of the hiring process and is prepared to move forward.",
+    atsStyle: "Detailed",
+    includeSubmissionDate: true,
+    includeEducation: true,
+    includeAvailability: true,
+    includeCredentials: true,
+  },
+};
 
-function aE(pos,rn,lpn,ly){var r=parseFloat(rn)||0,l=parseFloat(lpn)||0;if(ly&&parseInt(ly)>1900&&r===0&&l===0){var y=new Date().getFullYear()-parseInt(ly);if(NP.indexOf(pos)>-1&&pos!=='Licensed Practical Nurse')r=y;else if(pos==='Licensed Practical Nurse')l=y;else r=y;}if(['Registered Nurse','Charge Nurse','Infection Control Nurse'].indexOf(pos)>-1)return r+l/2;if(pos==='Licensed Practical Nurse')return l;return Math.max(r,l);}
-function gR(pos,fac,adj,emp,fte,shift){if(!pos||!fac)return'';var ft=FTM[fac]||'';var prn=emp==='PRN'||fte==='PRN'||shift==='PRN';var tier=prn?'PRN':(adj<3?'0-2':adj<6?'3-5':adj<11?'6-10':adj<16?'11-15':'16+');return RT[pos+'|'+ft+'|'+tier]||RT[pos+'|'+ft]||RT[pos]||'';}
-function mkC(){return{id:Date.now()+''+Math.random().toString(36).slice(2,5),disp:'Active',prev:'',fac:'',name:'',email:'',phone:'',pos:'',emp:'',fte:'',shift:'',lic:'',cpr:'',rnY:'',lpnY:'',licY:'',addlExp:'',adj:0,rate:'',reqRate:'',recType:'',req:'',pipe:'Initial Outreach',avail3wk:false,availNote:'',ms:{io:'',ps:'',sub:'',is:'',ic:'',cred:'',oe:'',bi:'',bc:'',sc:''},notes:''};}
-function getExpStr(x){var p=[];var rv=parseFloat(x.rnY)||0;var lv=parseFloat(x.lpnY)||0;if(rv>0)p.push('RN: '+rv+' yrs');if(lv>0)p.push('LPN: '+lv+' yrs');if(p.length===0&&x.licY&&parseInt(x.licY)>1900){var y=new Date().getFullYear()-parseInt(x.licY);if(NP.indexOf(x.pos)>-1&&x.pos!=='Licensed Practical Nurse')p.push('RN: '+y+' yrs');else if(x.pos==='Licensed Practical Nurse')p.push('LPN: '+y+' yrs');else p.push(y+' yrs');}if(x.addlExp)p.push(x.addlExp);if(p.length===0)p.push('N/A');return p.join(' | ');}
-function getPrev(x){return x.prev==='Yes'?'Yes - rehire eligibility approved by HR':(x.prev||'N/A');}
-var dc=function(d){return{Active:'#dbeafe',Hired:'#d1fae5',Withdrawn:'#e2e8f0','Failed Background':'#fee2e2','No Response':'#fef9c3','On Hold':'#ffedd5',Pending:'#fef3c7',Cleared:'#d1fae5'}[d]||'#f1f5f9';};
-function cpTxt(text,show){try{if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(function(){show('Copied!');}).catch(function(){fbCp(text,show);});}else{fbCp(text,show);}}catch(e){fbCp(text,show);}}
-function fbCp(text,show){var ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.left='-9999px';document.body.appendChild(ta);ta.select();try{document.execCommand('copy');show('Copied!');}catch(e){show('Copy failed');}document.body.removeChild(ta);}
+const DEMO_FORM = {
+  fullName: "Ashley Martin",
+  phoneNumber: "404-555-0198",
+  emailAddress: "ashleymartin@email.com",
+  location: "Atlanta, GA",
+  position: "Registered Nurse",
+  siteName: "Demo Facility",
+  employmentType: "FT",
+  shiftPreference: "Night",
+  fte: "0.90",
+  yearsExperience: "6",
+  experienceNotes: "Corrections 3 yrs | Med-Surg 3 yrs | Strong communicator",
+  educationLevel: "Bachelor's",
+  fieldOfStudy: "Nursing",
+  schoolName: "Chamberlain University",
+  requestedRate: "",
+  startAvailability: "2–3 Weeks",
+  startNotes: "Needs to give two-week notice",
+  interviewAvailability: "Mon–Fri after 4 PM",
+  licenseStatus: "Active/Clear",
+  cprStatus: "Active",
+  licensedYear: "2019",
+  candidateNotes:
+    "Open to nights, interested in long-term placement, responsive by text.",
+};
 
-export default function App(){
-  var [pg,setPg]=useState('list');var [cs,setCs]=useState([]);var [hs,setHs]=useState([]);var [sn,setSn]=useState([]);var [ld,setLd]=useState(true);var [eid,setEid]=useState(null);var [sub,setSub]=useState('');var [msg,setMsg]=useState('');var [rf,setRf]=useState('');var [rp,setRp]=useState('');var [re,setRe]=useState('');var [rem,setRem]=useState('FT');var [rly,setRly]=useState('');var [we,setWe]=useState(new Date().toISOString().split('T')[0]);var [offerNm,setOfferNm]=useState('');
-  var show=function(m){setMsg(m);setTimeout(function(){setMsg('');},2500);};
-  useEffect(function(){(async function(){try{var r=await window.storage.get('rh6');if(r&&r.value){var d=JSON.parse(r.value);setCs(d.c||[]);setHs(d.h||[]);setSn(d.s||[]);}}catch(e){}setLd(false);})();},[]);
-  var sv=useCallback(async function(c,h,s){try{await window.storage.set('rh6',JSON.stringify({c:c,h:h,s:s||sn}));}catch(e){}},[sn]);
-  function upC(id,f,v){
-    setCs(function(prev){
-      var next=prev.map(function(c){if(c.id!==id)return c;var u=Object.assign({},c);u[f]=v;u.adj=aE(u.pos,u.rnY,u.lpnY,u.licY);u.rate=gR(u.pos,u.fac,u.adj,u.emp,u.fte,u.shift);return u;});
-      if(f==='disp'&&v==='Hired'){
-        var cand=next.find(function(c){return c.id===id;});
-        if(cand){addToNH(cand);}
+function makeId(prefix) {
+  return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function loadStoredValue(key, fallback) {
+  try {
+    if (typeof window === "undefined") return fallback;
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (error) {
+    console.error("Storage load failed", error);
+    return fallback;
+  }
+}
+
+function saveStoredValue(key, value) {
+  try {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    console.error("Storage save failed", error);
+  }
+}
+
+function tierFromYears(value) {
+  const years = Number(value || 0);
+  if (years <= 2) return "0–2";
+  if (years <= 5) return "3–5";
+  if (years <= 10) return "6–10";
+  if (years <= 15) return "11–15";
+  return "16+";
+}
+
+function todayString() {
+  return new Date().toLocaleDateString("en-US");
+}
+
+function downloadFile(name, content, type = "application/json") {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function safeClipboardWrite(text) {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text);
+  }
+  return Promise.reject(new Error("Clipboard not available"));
+}
+
+function buildEducation(form) {
+  const parts = [form.educationLevel, form.fieldOfStudy].filter(Boolean);
+  return parts.length ? parts.join(" in ") : "N/A";
+}
+
+function Button({ children, onClick, primary = false, type = "button", style = {} }) {
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      style={{
+        padding: "12px 16px",
+        borderRadius: 12,
+        border: primary ? "1px solid #0f172a" : "1px solid #cbd5e1",
+        background: primary ? "#0f172a" : "#ffffff",
+        color: primary ? "#ffffff" : "#0f172a",
+        fontWeight: 700,
+        cursor: "pointer",
+        ...style,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function TextInput({ value, onChange, placeholder = "", type = "text", readOnly = false }) {
+  return (
+    <input
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder}
+      type={type}
+      readOnly={readOnly}
+      style={{
+        width: "100%",
+        padding: "12px 14px",
+        borderRadius: 12,
+        border: "1px solid #cbd5e1",
+        boxSizing: "border-box",
+        background: readOnly ? "#f8fafc" : "#ffffff",
+      }}
+    />
+  );
+}
+
+function SelectInput({ value, onChange, options, placeholder = "Select" }) {
+  return (
+    <select
+      value={value}
+      onChange={onChange}
+      style={{
+        width: "100%",
+        padding: "12px 14px",
+        borderRadius: 12,
+        border: "1px solid #cbd5e1",
+        boxSizing: "border-box",
+        background: "#ffffff",
+      }}
+    >
+      <option value="">{placeholder}</option>
+      {options.map((option) => (
+        <option key={option} value={option}>
+          {option}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function TextArea({ value, onChange, placeholder = "" }) {
+  return (
+    <textarea
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder}
+      style={{
+        width: "100%",
+        minHeight: 100,
+        padding: "12px 14px",
+        borderRadius: 12,
+        border: "1px solid #cbd5e1",
+        boxSizing: "border-box",
+        resize: "vertical",
+        background: "#ffffff",
+      }}
+    />
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <label style={{ display: "block" }}>
+      <div style={{ marginBottom: 8, fontSize: 14, fontWeight: 700, color: "#334155" }}>
+        {label}
+      </div>
+      {children}
+    </label>
+  );
+}
+
+function Card({ title, subtitle, children, action = null }) {
+  return (
+    <section
+      style={{
+        background: "#ffffff",
+        border: "1px solid #e2e8f0",
+        borderRadius: 20,
+        padding: 24,
+        boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, marginBottom: 20 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 22, color: "#0f172a" }}>{title}</h2>
+          {subtitle ? (
+            <p style={{ margin: "8px 0 0 0", color: "#64748b", fontSize: 14 }}>{subtitle}</p>
+          ) : null}
+        </div>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function ToggleField({ label, checked, onChange }) {
+  return (
+    <label
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        border: "1px solid #e2e8f0",
+        borderRadius: 12,
+        padding: 14,
+        background: "#ffffff",
+      }}
+    >
+      <span style={{ fontWeight: 700, fontSize: 14, color: "#334155" }}>{label}</span>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+    </label>
+  );
+}
+
+function TagListEditor({ label, values, onChange }) {
+  const [draft, setDraft] = useState("");
+
+  function addValue() {
+    const clean = draft.trim();
+    if (!clean || values.includes(clean)) return;
+    onChange([...values, clean]);
+    setDraft("");
+  }
+
+  return (
+    <div style={{ border: "1px solid #e2e8f0", borderRadius: 16, padding: 16, background: "#ffffff" }}>
+      <div style={{ marginBottom: 12, fontSize: 14, fontWeight: 700, color: "#334155" }}>{label}</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+        {values.map((value) => (
+          <span
+            key={value}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "6px 10px",
+              borderRadius: 999,
+              background: "#f1f5f9",
+              fontSize: 12,
+            }}
+          >
+            {value}
+            <button
+              type="button"
+              onClick={() => onChange(values.filter((item) => item !== value))}
+              style={{ border: "none", background: "transparent", cursor: "pointer", color: "#475569" }}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <TextInput value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Add option" />
+        <Button onClick={addValue}>Add</Button>
+      </div>
+    </div>
+  );
+}
+
+function NavButton({ active, children, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        width: "100%",
+        textAlign: "left",
+        padding: "12px 14px",
+        borderRadius: 12,
+        border: active ? "1px solid #0f172a" : "1px solid transparent",
+        background: active ? "#0f172a" : "transparent",
+        color: active ? "#ffffff" : "#334155",
+        fontWeight: 700,
+        cursor: "pointer",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+export default function App() {
+  const [activePage, setActivePage] = useState("submission");
+  const [activeSettingsTab, setActiveSettingsTab] = useState("general");
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [form, setForm] = useState(DEMO_FORM);
+  const [recentCandidates, setRecentCandidates] = useState([DEMO_FORM]);
+  const [output, setOutput] = useState(null);
+  const [hasLoaded, setHasLoaded] = useState(false);
+
+  useEffect(() => {
+    setSettings(loadStoredValue(STORAGE_KEY, DEFAULT_SETTINGS));
+    setRecentCandidates(loadStoredValue(RECENT_KEY, [DEMO_FORM]));
+    setHasLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hasLoaded) return;
+    saveStoredValue(STORAGE_KEY, settings);
+  }, [settings, hasLoaded]);
+
+  useEffect(() => {
+    if (!hasLoaded) return;
+    saveStoredValue(RECENT_KEY, recentCandidates);
+  }, [recentCandidates, hasLoaded]);
+
+  const activeRoles = useMemo(
+    () => settings.roles.filter((role) => role.status === "Active"),
+    [settings.roles]
+  );
+
+  const activeSites = useMemo(
+    () => settings.sites.filter((site) => site.status === "Active"),
+    [settings.sites]
+  );
+
+  const selectedRole = useMemo(
+    () => activeRoles.find((role) => role.positionTitle === form.position) || null,
+    [activeRoles, form.position]
+  );
+
+  const selectedSite = useMemo(
+    () => activeSites.find((site) => site.siteName === form.siteName) || null,
+    [activeSites, form.siteName]
+  );
+
+  const isHealthcare = selectedRole?.roleCategory === "Healthcare";
+
+  const estimatedRate = useMemo(() => {
+    if (!settings.rates.enabled || !form.position) return "";
+    const tier = tierFromYears(form.yearsExperience);
+    const matchingRule = settings.rates.rules.find((rule) => {
+      const positionMatch = rule.positionTitle === form.position;
+      const tierMatch = rule.experienceTier === tier;
+      const scopeMatch =
+        rule.scopeType === "Site Type"
+          ? rule.scopeValue === (selectedSite?.siteType || "")
+          : rule.scopeValue === form.siteName;
+      const employmentMatch = !rule.employmentType || rule.employmentType === form.employmentType;
+      const shiftMatch = !rule.shift || rule.shift === form.shiftPreference;
+      return positionMatch && tierMatch && scopeMatch && employmentMatch && shiftMatch;
+    });
+    return matchingRule?.rate || "";
+  }, [settings.rates, form.position, form.yearsExperience, form.siteName, form.employmentType, form.shiftPreference, selectedSite]);
+
+  const settingsReady = Boolean(
+    settings.general.companyName || settings.sites.length || settings.roles.length
+  );
+
+  function updateForm(key, value) {
+    setForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function updateGeneral(key, value) {
+    setSettings((prev) => ({ ...prev, general: { ...prev.general, [key]: value } }));
+  }
+
+  function updateTemplates(key, value) {
+    setSettings((prev) => ({ ...prev, templates: { ...prev.templates, [key]: value } }));
+  }
+
+  function updateOptions(key, value) {
+    setSettings((prev) => ({ ...prev, options: { ...prev.options, [key]: value } }));
+  }
+
+  function updateSite(id, key, value) {
+    setSettings((prev) => ({
+      ...prev,
+      sites: prev.sites.map((site) => (site.id === id ? { ...site, [key]: value } : site)),
+    }));
+  }
+
+  function updateRole(id, key, value) {
+    setSettings((prev) => ({
+      ...prev,
+      roles: prev.roles.map((role) => (role.id === id ? { ...role, [key]: value } : role)),
+    }));
+  }
+
+  function updateRateRule(id, key, value) {
+    setSettings((prev) => ({
+      ...prev,
+      rates: {
+        ...prev.rates,
+        rules: prev.rates.rules.map((rule) => (rule.id === id ? { ...rule, [key]: value } : rule)),
+      },
+    }));
+  }
+
+  function addSite() {
+    setSettings((prev) => ({
+      ...prev,
+      sites: [
+        ...prev.sites,
+        {
+          id: makeId("site"),
+          siteName: "",
+          siteType: "",
+          location: "",
+          status: "Active",
+          notes: "",
+        },
+      ],
+    }));
+  }
+
+  function addRole() {
+    setSettings((prev) => ({
+      ...prev,
+      roles: [
+        ...prev.roles,
+        {
+          id: makeId("role"),
+          positionTitle: "",
+          roleCategory: "General",
+          requiresLicense: false,
+          requiresCpr: false,
+          requiresFte: false,
+          requiresShift: false,
+          status: "Active",
+        },
+      ],
+    }));
+  }
+
+  function addRateRule() {
+    setSettings((prev) => ({
+      ...prev,
+      rates: {
+        ...prev.rates,
+        rules: [
+          ...prev.rates.rules,
+          {
+            id: makeId("rate"),
+            positionTitle: "",
+            scopeType: "Site Type",
+            scopeValue: "",
+            experienceTier: "0–2",
+            rate: "",
+            employmentType: "",
+            shift: "",
+          },
+        ],
+      },
+    }));
+  }
+
+  function removeSite(id) {
+    setSettings((prev) => ({ ...prev, sites: prev.sites.filter((site) => site.id !== id) }));
+  }
+
+  function removeRole(id) {
+    setSettings((prev) => ({ ...prev, roles: prev.roles.filter((role) => role.id !== id) }));
+  }
+
+  function removeRateRule(id) {
+    setSettings((prev) => ({
+      ...prev,
+      rates: {
+        ...prev.rates,
+        rules: prev.rates.rules.filter((rule) => rule.id !== id),
+      },
+    }));
+  }
+
+  function buildCredentials() {
+    if (!isHealthcare) return "";
+    const values = [];
+    if (form.licenseStatus) values.push(`License: ${form.licenseStatus}`);
+    if (form.cprStatus) values.push(`CPR: ${form.cprStatus}`);
+    if (form.licensedYear) values.push(`Licensed Since: ${form.licensedYear}`);
+    return values.join("\n");
+  }
+
+  function generateSubmission() {
+    const submissionDate = todayString();
+    const finalRate = form.requestedRate || estimatedRate || "TBD";
+    const facilityName = form.siteName || settings.general.companyName || "Hiring Team";
+    const greeting = (settings.templates.greetingLine || "Hello {facility},").replace(
+      "{facility}",
+      facilityName
+    );
+
+    const emailLines = [
+      greeting,
+      "",
+      settings.templates.introLine || "Please see candidate details below:",
+      "",
+      "Candidate:",
+      form.fullName || "N/A",
+      `${form.phoneNumber || "N/A"} | ${form.emailAddress || "N/A"}`,
+      form.location || "N/A",
+    ];
+
+    if (settings.templates.includeSubmissionDate) {
+      emailLines.push(`Submitted: ${submissionDate}`);
+    }
+
+    emailLines.push(
+      "",
+      "Position Details:",
+      `${form.position || "N/A"} | ${form.employmentType || "N/A"} | ${form.shiftPreference || "N/A"} | ${form.fte || "N/A"}`,
+      "",
+      "Experience:",
+      form.yearsExperience || "N/A",
+      form.experienceNotes || "N/A"
+    );
+
+    if (settings.templates.includeEducation) {
+      emailLines.push("", "Education:", buildEducation(form));
+    }
+
+    emailLines.push("", "Compensation:", `Rate: ${finalRate}`);
+
+    if (settings.templates.includeAvailability) {
+      emailLines.push(
+        "",
+        "Availability:",
+        `Start: ${form.startAvailability || "N/A"}`,
+        form.startNotes ? `Start Notes: ${form.startNotes}` : "",
+        `Interview: ${form.interviewAvailability || "N/A"}`
+      );
+    }
+
+    if (settings.templates.includeCredentials && isHealthcare) {
+      emailLines.push("", "Credentials:", buildCredentials() || "N/A");
+    }
+
+    emailLines.push(
+      "",
+      "Notes:",
+      form.candidateNotes || "N/A",
+      "",
+      settings.templates.closingLine ||
+        "The candidate is aware of the hiring process and is prepared to move forward.",
+      "",
+      settings.templates.followUpLine || "Please reach out within 24–48 hours.",
+      "",
+      settings.general.signOffName || settings.general.recruiterName || "",
+      settings.general.signOffLine || ""
+    );
+
+    const detailedAts = [
+      `Submitted ${form.fullName || "N/A"} for ${form.position || "N/A"} at ${facilityName}`,
+      settings.templates.includeSubmissionDate ? `Date: ${submissionDate}` : "",
+      `Exp: ${form.yearsExperience || "N/A"} | Rate: ${finalRate}`,
+      settings.templates.includeAvailability
+        ? `Avail: Start ${form.startAvailability || "N/A"} | Interview ${form.interviewAvailability || "N/A"}`
+        : "",
+      settings.templates.includeEducation ? `Edu: ${buildEducation(form)}` : "",
+      settings.templates.includeCredentials && isHealthcare
+        ? [
+            form.licenseStatus ? `Lic: ${form.licenseStatus}` : "",
+            form.cprStatus ? `CPR: ${form.cprStatus}` : "",
+          ]
+            .filter(Boolean)
+            .join(" | ")
+        : "",
+      `Notes: ${form.candidateNotes || "N/A"}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const compactAts = [
+      `${form.fullName || "N/A"} | ${form.position || "N/A"} | ${facilityName}`,
+      `${form.yearsExperience || "N/A"} yrs exp | ${finalRate}`,
+      settings.templates.includeAvailability
+        ? `Start ${form.startAvailability || "N/A"} | Interview ${form.interviewAvailability || "N/A"}`
+        : "",
+      settings.templates.includeEducation ? buildEducation(form) : "",
+      settings.templates.includeCredentials && isHealthcare
+        ? [form.licenseStatus || "", form.cprStatus ? `CPR ${form.cprStatus}` : ""]
+            .filter(Boolean)
+            .join(" | ")
+        : "",
+      form.candidateNotes || "N/A",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    setOutput({
+      submissionDate,
+      finalRate,
+      emailBody: emailLines.filter((line) => line !== "").join("\n"),
+      atsNote: settings.templates.atsStyle === "Compact" ? compactAts : detailedAts,
+    });
+
+    setRecentCandidates((prev) => [form, ...prev.filter((item) => item.fullName !== form.fullName)].slice(0, 8));
+  }
+
+  function useDemoWorkspace() {
+    setSettings(DEFAULT_SETTINGS);
+    setForm(DEMO_FORM);
+    setRecentCandidates([DEMO_FORM]);
+    setOutput(null);
+    setActivePage("submission");
+  }
+
+  function exportSettings() {
+    downloadFile("submission-assistant-settings.json", JSON.stringify(settings, null, 2));
+  }
+
+  function importSettings(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result));
+        setSettings(parsed);
+        setOutput(null);
+        alert("Settings imported");
+      } catch (error) {
+        console.error(error);
+        alert("Import failed");
       }
-      sv(next,hs);return next;
-    });
+    };
+    reader.readAsText(file);
   }
-  function addToNH(c){
-    setHs(function(prev){
-      var ex=false;prev.forEach(function(h){if(h.name===c.name)ex=true;});
-      if(ex)return prev;
-      var nh={id:Date.now()+'nh'+Math.random().toString(36).slice(2,4),fac:c.fac,name:c.name,pos:c.pos,fte:c.fte,shift:c.shift,emp:c.emp,req:c.req,start:'',docu:'',bg:'Pending',src:c.recType||'',email:c.email||'',phone:c.phone||''};
-      var n=prev.concat([nh]);
-      sv(cs,n);
-      show(c.name+' → New Hires');
-      return n;
-    });
-  }
-  function addC(){var c=mkC();setCs(function(p){var n=p.concat([c]);sv(n,hs);return n;});setEid(c.id);setPg('edit');}
-  function delC(id){setCs(function(p){var n=p.filter(function(c){return c.id!==id;});sv(n,hs);return n;});if(eid===id){setEid(null);setPg('list');}}
-  function toNH(c){addToNH(c);}
-  function upH(id,f,v){setHs(function(p){var n=p.map(function(h){if(h.id!==id)return h;var u=Object.assign({},h);u[f]=v;return u;});sv(cs,n);return n;});}
-  function snap(){var d=new Date().toISOString().split('T')[0];var s={d:d,a:cs.filter(function(c){return c.disp==='Active';}).length,h:cs.filter(function(c){return c.disp==='Hired';}).length,f:cs.filter(function(c){return c.disp==='Failed Background';}).length,p:hs.filter(function(h){return h.bg==='Pending';}).length,cl:hs.filter(function(h){return h.bg==='Cleared';}).length};setSn(function(p){var n=p.concat([s]);sv(cs,hs,n);return n;});show('Saved');}
-  if(ld)return(<div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh'}}><p>Loading...</p></div>);
-  var reqOpts=[];var rqS={};cs.forEach(function(c){if(c.req&&c.fac&&!rqS[c.req]){rqS[c.req]=true;reqOpts.push({v:c.req,l:c.fac+' | '+c.req+' | '+c.pos+' | '+c.shift+' | '+c.fte});}});
-  var S={nav:{display:'flex',flexWrap:'wrap',gap:'3px',padding:'6px 8px',background:'#0f172a'},nb:function(k){return{padding:'5px 8px',fontSize:'10px',fontWeight:pg===k?'700':'400',color:pg===k?'#fff':'#94a3b8',background:pg===k?'#1e40af':'transparent',border:'none',borderRadius:'5px',cursor:'pointer'};},c:{background:'#fff',borderRadius:'10px',border:'1px solid #e2e8f0',padding:'12px',marginBottom:'10px'},h:{fontSize:'15px',fontWeight:'700',color:'#0f172a',marginBottom:'6px'},lb:{display:'block',fontSize:'10px',fontWeight:'600',color:'#64748b',marginBottom:'2px'},ip:{width:'100%',border:'1px solid #cbd5e1',borderRadius:'5px',padding:'5px 7px',fontSize:'11px',boxSizing:'border-box'},bt:function(bg){return{padding:'5px 12px',fontSize:'11px',fontWeight:'600',color:'#fff',background:bg||'#0ea5e9',border:'none',borderRadius:'5px',cursor:'pointer'};},bg:function(t){return{display:'inline-block',padding:'2px 7px',borderRadius:'99px',fontSize:'9px',fontWeight:'600',background:dc(t)};},td:{padding:'5px',borderBottom:'1px solid #f1f5f9',fontSize:'11px'},th:{padding:'6px 5px',textAlign:'left',fontWeight:'600',color:'#64748b',borderBottom:'2px solid #e2e8f0',fontSize:'10px'},g2:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'6px'},st:{background:'#fff',borderRadius:'8px',border:'1px solid #e2e8f0',padding:'10px'},sL:{fontSize:'9px',fontWeight:'700',color:'#94a3b8',textTransform:'uppercase'},sV:function(cl){return{fontSize:'20px',fontWeight:'700',color:cl||'#0f172a'};}};
-  var ec=eid?cs.find(function(x){return x.id===eid;}):null;var sc=cs.find(function(x){return x.name===sub;});var rAdj=aE(rp,re,0,rly);var rRate=rp&&rf?gR(rp,rf,rAdj,rem,rem==='PRN'?'PRN':'',''):'';var wed=new Date(we);var wsd=new Date(wed);wsd.setDate(wsd.getDate()-6);var inR=function(d){if(!d)return false;var dt=new Date(d);return dt>=wsd&&dt<=wed;};var oNH=hs.find(function(h){return h.name===offerNm;});var oCD=oNH?cs.find(function(x){return x.name===oNH.name;}):null;
-  var content=null;
-  var F=function(l,ch){return <div><div style={S.lb}>{l}</div>{ch}</div>;};
-  var Dd=function(val,fn,opts){return <select style={S.ip} value={val||''} onChange={function(e){fn(e.target.value);}}><option value="">—</option>{opts.map(function(o){return <option key={o} value={o}>{o}</option>;})}</select>;};
 
-  if(pg==='list'){content=(<div><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'10px'}}><div><div style={S.h}>Pipeline</div><div style={{fontSize:'10px',color:'#94a3b8'}}>{cs.length} candidates</div></div><button style={S.bt()} onClick={addC}>+ Add</button></div><div style={S.c}><div style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse'}}><thead><tr>{['','Name','Facility','Pos','Stage',''].map(function(h){return <th key={h} style={S.th}>{h}</th>;})}</tr></thead><tbody>{cs.length===0?<tr><td colSpan={6} style={{padding:'20px',textAlign:'center',color:'#94a3b8'}}>No candidates</td></tr>:null}{cs.map(function(x){return(<tr key={x.id}><td style={S.td}><span style={S.bg(x.disp)}>{x.disp}</span></td><td style={Object.assign({},S.td,{fontWeight:'600'})}>{x.name||'—'}<div style={{fontSize:'8px',color:'#94a3b8'}}>ID: {x.id.slice(0,8)}</div></td><td style={S.td}>{x.fac||'—'}</td><td style={S.td}>{x.pos||'—'}</td><td style={S.td}>{x.pipe||'—'}</td><td style={S.td}><button onClick={function(){setEid(x.id);setPg('edit');}} style={{border:'none',background:'none',color:'#0ea5e9',fontWeight:'600',fontSize:'11px',cursor:'pointer'}}>Edit</button>{' '}<button onClick={function(){if(['Offer Extended','Background Initiated','Background Cleared','Hired','Start Confirmed'].indexOf(x.pipe)>-1)toNH(x);else show('Offer Extended+ needed');}} style={{border:'none',background:'none',color:'#10b981',fontWeight:'600',fontSize:'11px',cursor:'pointer'}}>→NH</button>{' '}<button onClick={function(){delC(x.id);}} style={{border:'none',background:'none',color:'#ef4444',fontSize:'11px',cursor:'pointer'}}>✕</button></td></tr>);})}</tbody></table></div></div></div>);}
+  const mailtoHref = output
+    ? `mailto:?subject=${encodeURIComponent(
+        `Candidate Submission: ${form.fullName || "Candidate"} | ${form.position || "Role"} | ${form.siteName || settings.general.companyName || "Company"}`
+      )}&body=${encodeURIComponent(output.emailBody)}`
+    : "#";
 
-  if(pg==='edit'&&ec){var u=function(f,v){upC(ec.id,f,v);};var ms=ec.ms||{};var setMs=function(k,v){u('ms',Object.assign({},ms,{[k]:v}));};
-  content=(<div><div style={{display:'flex',gap:'6px',alignItems:'center',marginBottom:'10px'}}><button onClick={function(){setPg('list');}} style={{border:'none',background:'none',fontSize:'16px',cursor:'pointer'}}>←</button><div style={S.h}>{ec.name||'New'}</div><span style={S.bg(ec.disp)}>{ec.disp}</span></div>
-  <div style={S.c}><div style={{fontSize:'10px',fontWeight:'700',color:'#64748b',textTransform:'uppercase',marginBottom:'6px'}}>Info</div><div style={S.g2}>{F('Disposition',Dd(ec.disp,function(v){u('disp',v);},DISP))}{F('Prev Employed',Dd(ec.prev,function(v){u('prev',v);},['Yes','No']))}{F('Facility',Dd(ec.fac,function(v){u('fac',v);},FAC))}{F('Name',<input style={S.ip} value={ec.name||''} onChange={function(e){u('name',e.target.value);}}/>)}{F('Email',<input style={S.ip} value={ec.email||''} onChange={function(e){u('email',e.target.value);}}/>)}{F('Phone',<input style={S.ip} value={ec.phone||''} onChange={function(e){u('phone',e.target.value);}}/>)}{F('Position',Dd(ec.pos,function(v){u('pos',v);},POS))}{F('Emp Type',Dd(ec.emp,function(v){u('emp',v);},EMP))}{F('FTE',Dd(ec.fte,function(v){u('fte',v);},FTEV))}{F('Shift',Dd(ec.shift,function(v){u('shift',v);},SH))}{F('License/Certification',Dd(ec.lic,function(v){u('lic',v);},LIC))}{F('CPR',Dd(ec.cpr,function(v){u('cpr',v);},CPRV))}</div>
-  {NP.indexOf(ec.pos)>-1?<div style={{marginTop:'8px',padding:'8px',background:'#eff6ff',borderRadius:'6px'}}><a href="https://www.nursys.com/en-US/verification/" target="_blank" rel="noreferrer" style={{fontSize:'11px',color:'#1d4ed8',fontWeight:'600',textDecoration:'none'}}>🔍 Nursys Verification</a></div>:null}
-  {CNA_POS.indexOf(ec.pos)>-1?<div style={{marginTop:'6px',padding:'8px',background:'#fefce8',borderRadius:'6px'}}><a href="https://sos.ga.gov/cna-registry" target="_blank" rel="noreferrer" style={{fontSize:'11px',color:'#a16207',fontWeight:'600',textDecoration:'none'}}>🔍 GA CNA Registry</a></div>:null}
-  <div style={{marginTop:'8px',display:'flex',alignItems:'center',gap:'6px'}}><input type="checkbox" checked={ec.avail3wk||false} onChange={function(e){u('avail3wk',e.target.checked);}} style={{width:'14px',height:'14px'}}/><span style={{fontSize:'11px',fontWeight:'500'}}>Confirmed availability to start within 3 weeks</span></div>
-  {!ec.avail3wk?<div style={{marginTop:'4px'}}>{F('Availability Notes',<input style={S.ip} value={ec.availNote||''} onChange={function(e){u('availNote',e.target.value);}} placeholder="When available?"/>)}</div>:null}
-  </div>
-  <div style={S.c}><div style={{fontSize:'10px',fontWeight:'700',color:'#64748b',textTransform:'uppercase',marginBottom:'6px'}}>Experience</div><div style={S.g2}>{F('Yrs RN',<input style={S.ip} type="number" value={ec.rnY||''} onChange={function(e){u('rnY',e.target.value);}}/>)}{F('Yrs LPN',<input style={S.ip} type="number" value={ec.lpnY||''} onChange={function(e){u('lpnY',e.target.value);}}/>)}{F('Year Licensed (opt)',<input style={S.ip} value={ec.licY||''} onChange={function(e){u('licY',e.target.value);}} placeholder="2018"/>)}{F('Adj Exp',<div style={{background:'#ecfdf5',border:'1px solid #a7f3d0',borderRadius:'5px',padding:'5px',fontSize:'11px',fontWeight:'600'}}>{(ec.adj||0).toFixed(1)}</div>)}</div>
-  <div style={{marginTop:'6px'}}>{F('Additional Experience',<input style={S.ip} value={ec.addlExp||''} onChange={function(e){u('addlExp',e.target.value);}} placeholder="Leadership: 10 yrs facility admin | 5 yrs district mgr"/>)}</div>
-  <div style={Object.assign({},S.g2,{marginTop:'6px'})}>{F('Rate',<div style={{background:'#ecfdf5',border:'1px solid #a7f3d0',borderRadius:'5px',padding:'5px',fontSize:'11px',fontWeight:'600',fontFamily:'monospace'}}>{ec.rate||'—'}</div>)}{F('Requested',<input style={S.ip} value={ec.reqRate||''} onChange={function(e){u('reqRate',e.target.value);}}/>)}{F('Recruiter',Dd(ec.recType,function(v){u('recType',v);},['Primary Recruiter','TAP Submittal','Internal']))}{F('Req #',reqOpts.length>0?<select style={S.ip} value={ec.req||''} onChange={function(e){u('req',e.target.value);}}><option value="">—</option>{reqOpts.map(function(o){return <option key={o.v} value={o.v}>{o.l}</option>;})}</select>:<input style={S.ip} value={ec.req||''} onChange={function(e){u('req',e.target.value);}}/>)}</div>
-  <div style={{marginTop:'6px'}}>{F('Pipeline',Dd(ec.pipe,function(v){u('pipe',v);},PIPE))}</div></div>
-  <div style={S.c}><div style={{fontSize:'10px',fontWeight:'700',color:'#64748b',textTransform:'uppercase',marginBottom:'6px'}}>Milestones</div>{MS_LABELS.map(function(row){return <div key={row[1]} style={{display:'flex',alignItems:'center',gap:'4px',padding:'3px 0',borderBottom:'1px solid #f8fafc'}}><div style={{width:'110px',fontSize:'10px',fontWeight:'500'}}>{row[0]}</div><input type="date" style={{border:'1px solid #cbd5e1',borderRadius:'4px',padding:'3px',fontSize:'10px',width:'120px'}} value={ms[row[1]]||''} onChange={function(e){setMs(row[1],e.target.value);}}/><div style={{fontSize:'9px',color:'#94a3b8'}}>{row[2]}</div></div>;})}</div>
-  <div style={S.c}>{F('Notes',<textarea style={Object.assign({},S.ip,{minHeight:'50px'})} value={ec.notes||''} onChange={function(e){u('notes',e.target.value);}}/>)}</div></div>);}
+  const pageStyle = {
+    minHeight: "100vh",
+    background: "#f8fafc",
+    color: "#0f172a",
+    fontFamily: "Arial, sans-serif",
+  };
 
-  if(pg==='nh'){content=(<div><div style={S.h}>New Hires</div><div style={S.c}><div style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse'}}><thead><tr>{['','Name','Pos','Emp','Start','DocuSign','BG'].map(function(h){return <th key={h} style={S.th}>{h}</th>;})}</tr></thead><tbody>
-    {hs.length===0?<tr><td colSpan={7} style={{padding:'20px',textAlign:'center',color:'#94a3b8'}}>None</td></tr>:null}
-    {hs.map(function(h){var st=h.bg==='Cleared'?'Cleared':h.bg==='Failed Background'?'Failed Background':'Pending';return(<tr key={h.id}><td style={S.td}><span style={S.bg(st)}>{st}</span></td><td style={Object.assign({},S.td,{fontWeight:'600'})}>{h.name}<div style={{fontSize:'9px',color:'#94a3b8'}}>{h.email} | {h.phone}</div></td><td style={S.td}>{h.pos}</td><td style={S.td}>{h.emp}</td><td style={S.td}><input type="date" style={{border:'1px solid #cbd5e1',borderRadius:'4px',padding:'2px',fontSize:'10px',width:'110px'}} value={h.start||''} onChange={function(e){upH(h.id,'start',e.target.value);}}/></td><td style={S.td}><input type="date" style={{border:'1px solid #cbd5e1',borderRadius:'4px',padding:'2px',fontSize:'10px',width:'110px'}} value={h.docu||''} onChange={function(e){upH(h.id,'docu',e.target.value);}}/></td><td style={S.td}><select style={{border:'1px solid #cbd5e1',borderRadius:'4px',padding:'2px',fontSize:'10px'}} value={h.bg} onChange={function(e){upH(h.id,'bg',e.target.value);}}>{BGS.map(function(o){return <option key={o}>{o}</option>;})}</select></td></tr>);})}</tbody></table></div></div></div>);}
+  const shellStyle = {
+    maxWidth: 1280,
+    margin: "0 auto",
+    padding: 24,
+  };
 
-  if(pg==='sub'){var expS=sc?getExpStr(sc):'';var licD=sc?(sc.lic||'Not Verified'):'';var prevT=sc?getPrev(sc):'';var subj=sc?'Candidate Submittal: '+sc.name+' | '+sc.pos+' | '+sc.fac:'';var body=sc?'Hello '+sc.fac+',\n\nPlease see the below candidate details:\n\nCandidate: '+sc.name+' | '+sc.phone+' | '+sc.email+'\nPosition of Interest: '+sc.pos+' | '+sc.fte+' | '+sc.shift+' | '+sc.emp+'\nYears of Experience: '+expS+'\nOffered Rate: '+(sc.rate||'TBD')+'\nLicense/Certification: '+licD+'\nCPR: '+(sc.cpr||'N/A')+'\nPreviously Employed: '+prevT+'\n\nAvailable to start within 3 weeks and understands the requirement for background check. Please reach out to this candidate within the next 24-48 hours, via email and phone call. If the candidate is not responsive please reach back out so I can follow up. Expect recruiting follow up within the next 48 hours.':'';var pay=sc?'Submitted '+sc.name+' to '+sc.fac+' | '+sc.pos+' | '+sc.emp+' | Exp: '+expS+' | Rate: '+sc.rate+' | Lic: '+licD+' | Req: '+sc.req:'';var ml=sc?'mailto:?subject='+encodeURIComponent(subj)+'&body='+encodeURIComponent(body):'';
-  content=(<div><div style={S.h}>Submittal</div><div style={S.c}><select style={Object.assign({},S.ip,{marginBottom:'8px'})} value={sub} onChange={function(e){setSub(e.target.value);}}><option value="">Select...</option>{cs.map(function(x){return x.name?<option key={x.id} value={x.name}>{x.name}</option>:null;})}</select>{sub?<button style={S.bt('#ef4444')} onClick={function(){setSub('');}}>Clear</button>:null}{sc?<div style={Object.assign({},S.g2,{marginTop:'8px'})}>{[['Facility',sc.fac],['Position',sc.pos],['Email',sc.email],['Phone',sc.phone],['Rate',sc.rate],['Exp',expS],['License',licD],['Prev Emp',prevT]].map(function(r){return <div key={r[0]} style={{fontSize:'11px'}}><span style={{fontWeight:'600',color:'#64748b'}}>{r[0]}:</span> {r[1]||'—'}</div>;})}</div>:null}{sc&&NP.indexOf(sc.pos)>-1?<div style={{marginTop:'6px'}}><a href="https://www.nursys.com/en-US/verification/" target="_blank" rel="noreferrer" style={{fontSize:'11px',color:'#1d4ed8',fontWeight:'600'}}>🔍 Nursys</a></div>:null}{sc&&CNA_POS.indexOf(sc.pos)>-1?<div style={{marginTop:'6px'}}><a href="https://sos.ga.gov/cna-registry" target="_blank" rel="noreferrer" style={{fontSize:'11px',color:'#a16207',fontWeight:'600'}}>🔍 GA CNA</a></div>:null}</div>{sc?<div style={S.c}><div style={{fontWeight:'700',fontSize:'12px',color:'#0369a1',marginBottom:'4px'}}>📨 Email</div><pre style={{background:'#f8fafc',padding:'10px',borderRadius:'6px',fontSize:'11px',whiteSpace:'pre-wrap',border:'1px solid #e2e8f0',margin:0}}>{body}</pre><div style={{display:'flex',gap:'6px',marginTop:'8px'}}><a href={ml} style={{display:'inline-block',padding:'5px 12px',fontSize:'11px',fontWeight:'600',color:'#fff',background:'#0ea5e9',borderRadius:'5px',textDecoration:'none'}}>📧 Outlook</a><button style={S.bt('#475569')} onClick={function(){cpTxt(body,show);}}>📋 Copy</button></div></div>:null}{sc?<div style={S.c}><div style={{fontWeight:'700',fontSize:'12px',marginBottom:'4px'}}>📝 Paycom</div><pre style={{background:'#f8fafc',padding:'10px',borderRadius:'6px',fontSize:'11px',whiteSpace:'pre-wrap',border:'1px solid #e2e8f0',margin:0}}>{pay}</pre><button style={Object.assign({},S.bt('#475569'),{marginTop:'6px'})} onClick={function(){cpTxt(pay,show);}}>📋 Copy</button></div>:null}</div>);}
+  const gridTwo = {
+    display: "grid",
+    gap: 24,
+    gridTemplateColumns: "1.1fr 0.9fr",
+  };
 
-  if(pg==='offer'){var today=new Date().toISOString().split('T')[0];
-    var ob=oNH&&oCD?'Subject: Action Required: Onboarding Steps for '+oNH.pos+' at '+oNH.fac+'\n\nHello '+oNH.name+',\n\nWe are excited to move forward with your onboarding for the '+oNH.pos+' at '+oNH.fac+'.\nIt is imperative that you read this entire email in full. This document outlines all required steps to begin and complete your onboarding. Missing any portion may delay your start date.\n\n────────────────────────────────\nPosition Details\nPosition: '+oNH.pos+' | '+oNH.shift+' | '+oNH.emp+'\n\n────────────────────────────────\nBackground Check (Action Required)\nYour background check forms were sent via DocuSign today.\n\nSent to: '+(oCD.email||'')+(oNH.docu?' | '+oNH.docu:' | '+today)+'\nCheck your inbox and spam/junk folder immediately.\nIf not received, notify us right away.\n\nTimeline & Expectations:\nProcessing time: up to 3 weeks\nStart date is tentative until complete: '+(oNH.start||'TBD')+'\nSubmit all requested items promptly to avoid delays.\n\nFull disclosure is required, including:\n1. Any prior or current inmate interaction\n2. Any history of incarceration or legal involvement\n3. Any other relevant personal background details\n\nContact for Background Check:\nTara Bryant | tbryant1@TeamCenturion.com\n\n────────────────────────────────\nOffer Letter (Pending Approval)\nRequires leadership approval, typically within 24-48 hours after site approval.\nOnce received, complete all documents immediately.\n\nContact for Offer Letter Questions:\nHR Team | hrinbox@TeamCenturion.com\n\n────────────────────────────────\nCredentialing Package (Action Required)\nYour credentialing package has been sent separately.\nComplete all documents in full.\nSubmit all required items as soon as possible.\nDelays in completion will delay your onboarding.\n\nContact for Credentialing:\nCredentialing Team | credentialing@TeamCenturion.com\n\n────────────────────────────────\nFacility Leadership Contacts\nThese individuals will support you with site-specific coordination and onboarding:\n\nHSA: (see facility contacts)\nDON: (see facility contacts)\nAA: (see facility contacts)\nNurse Admin: (see facility contacts)\n\n────────────────────────────────\nWe look forward to welcoming you to the Centurion Health team and to your impact at '+oNH.fac+'.':'';
-    var txtMsg=oNH?'Hi '+oNH.name+', this is Ash with Centurion Health. Congratulations on your offer for the '+oNH.pos+' at '+oNH.fac+'. Your onboarding email and background check forms have been sent. Please review everything thoroughly and confirm receipt. The email includes important contact information and next steps. Complete your background forms as soon as possible to avoid delays. Reach out to the appropriate department or facility leadership if you have any questions.':'';
-    var bb=oNH&&oCD?'Hello,\n\nPlease see below new hire details for:\n\nNew Hire Name: '+oNH.name+'\nPosition: '+oNH.pos+'\nEmail: '+(oCD.email||'')+'\nPhone: '+(oCD.phone||'')+'\nFacility: '+oNH.fac+'\nReq Number: '+(oNH.req||'')+'\n\nTo confirm, the background check form has been submitted to this new hire for completion.':'';
-    var lb=oNH?'Hello '+oNH.fac+',\n\nThe following new hire has entered onboarding:\n\nFacility: '+oNH.fac+'\nName: '+oNH.name+'\nPosition: '+oNH.pos+'\nShift: '+oNH.shift+'\nFTE: '+oNH.fte+'\nTentative Start Date: '+(oNH.start||'TBD')+'\nOffer letter submitted: '+(oNH.docu||'Pending')+'\nBackground forms sent: '+(oNH.docu||today)+'\n\nIf anything should be corrected, please reach back asap. Please begin outreach and connect with your new hire to provide onboarding support and next steps.':'';
-    var pb=oNH?'Offer to '+oNH.name+' | '+oNH.pos+' | '+oNH.fac+' | '+oNH.shift+' | FTE '+oNH.fte+' | '+oNH.emp+' | Req '+(oNH.req||'')+' | Start '+(oNH.start||'TBD'):'';
-    var bml=oNH?'mailto:tbryant1@teamcenturion.com;jyoumans@teamcenturion.com?subject='+encodeURIComponent('BG Submitted: '+oNH.name+' | '+oNH.fac)+'&body='+encodeURIComponent(bb):'';
-    var lml=oNH?'mailto:?subject='+encodeURIComponent('New Hire: '+oNH.name+' | '+oNH.fac)+'&body='+encodeURIComponent(lb):'';
-  content=(<div><div style={S.h}>Offer Generator</div>
-  <div style={S.c}><div style={S.lb}>Select New Hire</div><select style={S.ip} value={offerNm} onChange={function(e){setOfferNm(e.target.value);}}><option value="">Select by name...</option>{hs.map(function(h){return <option key={h.id} value={h.name}>{h.name+' | '+h.fac+' | '+h.pos}</option>;})}</select>{offerNm?<button style={Object.assign({},S.bt('#ef4444'),{marginTop:'6px'})} onClick={function(){setOfferNm('');}}>Clear</button>:null}
-  {oNH?<div style={Object.assign({},S.g2,{marginTop:'8px'})}>{[['Name',oNH.name],['Facility',oNH.fac],['Position',oNH.pos],['Shift',oNH.shift],['FTE',oNH.fte],['Emp Type',oNH.emp],['Req',oNH.req],['Email',oCD&&oCD.email],['Phone',oCD&&oCD.phone]].map(function(r){return <div key={r[0]} style={{fontSize:'11px'}}><span style={{fontWeight:'600',color:'#64748b'}}>{r[0]}:</span> {r[1]||'—'}</div>;})}</div>:null}
-  {oNH?<div style={Object.assign({},S.g2,{marginTop:'6px'})}><div><div style={S.lb}>Start Date</div><input type="date" style={S.ip} value={oNH.start||''} onChange={function(e){upH(oNH.id,'start',e.target.value);}}/></div><div><div style={S.lb}>DocuSign Date</div><input type="date" style={S.ip} value={oNH.docu||''} onChange={function(e){upH(oNH.id,'docu',e.target.value);}}/></div></div>:null}
-  </div>
-  {oNH?<div style={S.c}><div style={{fontWeight:'700',fontSize:'12px',color:'#3b82f6',marginBottom:'4px'}}>📨 Onboarding Email (copy — too long for mailto)</div><pre style={{background:'#f8fafc',padding:'10px',borderRadius:'6px',fontSize:'10px',whiteSpace:'pre-wrap',border:'1px solid #e2e8f0',margin:0,maxHeight:'200px',overflow:'auto'}}>{ob}</pre><button style={Object.assign({},S.bt('#3b82f6'),{marginTop:'6px'})} onClick={function(){cpTxt(ob,show);}}>📋 Copy</button></div>:null}
-  {oNH?<div style={S.c}><div style={{fontWeight:'700',fontSize:'12px',color:'#8B5A2B',marginBottom:'4px'}}>📱 Text Message</div><pre style={{background:'#fdf6ee',padding:'10px',borderRadius:'6px',fontSize:'10px',whiteSpace:'pre-wrap',border:'1px solid #e2e8f0',margin:0}}>{txtMsg}</pre><button style={Object.assign({},S.bt('#8B5A2B'),{marginTop:'6px'})} onClick={function(){cpTxt(txtMsg,show);}}>📋 Copy</button></div>:null}
-  {oNH?<div style={S.c}><div style={{fontWeight:'700',fontSize:'12px',color:'#22c55e',marginBottom:'4px'}}>🔒 BG Notification (to Tara + Jalen, CC leadership)</div><pre style={{background:'#f8fafc',padding:'10px',borderRadius:'6px',fontSize:'10px',whiteSpace:'pre-wrap',border:'1px solid #e2e8f0',margin:0}}>{bb}</pre><div style={{display:'flex',gap:'6px',marginTop:'6px'}}><a href={bml} style={{display:'inline-block',padding:'5px 12px',fontSize:'11px',fontWeight:'600',color:'#fff',background:'#22c55e',borderRadius:'5px',textDecoration:'none'}}>📧 Outlook</a><button style={S.bt('#475569')} onClick={function(){cpTxt(bb,show);}}>📋 Copy</button></div></div>:null}
-  {oNH?<div style={S.c}><div style={{fontWeight:'700',fontSize:'12px',color:'#8b5cf6',marginBottom:'4px'}}>👥 Leadership Notification</div><pre style={{background:'#f8fafc',padding:'10px',borderRadius:'6px',fontSize:'10px',whiteSpace:'pre-wrap',border:'1px solid #e2e8f0',margin:0}}>{lb}</pre><div style={{display:'flex',gap:'6px',marginTop:'6px'}}><a href={lml} style={{display:'inline-block',padding:'5px 12px',fontSize:'11px',fontWeight:'600',color:'#fff',background:'#8b5cf6',borderRadius:'5px',textDecoration:'none'}}>📧 Outlook</a><button style={S.bt('#475569')} onClick={function(){cpTxt(lb,show);}}>📋 Copy</button></div></div>:null}
-  {oNH?<div style={S.c}><div style={{fontWeight:'700',fontSize:'12px',marginBottom:'4px'}}>📝 Paycom</div><pre style={{background:'#f8fafc',padding:'10px',borderRadius:'6px',fontSize:'10px',whiteSpace:'pre-wrap',border:'1px solid #e2e8f0',margin:0}}>{pb}</pre><button style={Object.assign({},S.bt('#475569'),{marginTop:'6px'})} onClick={function(){cpTxt(pb,show);}}>📋 Copy</button></div>:null}
-  </div>);}
+  const settingsLayout = {
+    display: "grid",
+    gap: 24,
+    gridTemplateColumns: "240px 1fr",
+  };
 
-  if(pg==='rate'){content=(<div><div style={S.h}>Rate Lookup</div><div style={S.c}><div style={{display:'grid',gap:'6px'}}><div><div style={S.lb}>Facility</div><select style={S.ip} value={rf} onChange={function(e){setRf(e.target.value);}}><option value="">—</option>{FAC.map(function(o){return <option key={o}>{o}</option>;})}</select></div><div><div style={S.lb}>Position</div><select style={S.ip} value={rp} onChange={function(e){setRp(e.target.value);}}><option value="">—</option>{POS.map(function(o){return <option key={o}>{o}</option>;})}</select></div><div><div style={S.lb}>Emp Type</div><select style={S.ip} value={rem} onChange={function(e){setRem(e.target.value);}}>{EMP.map(function(o){return <option key={o}>{o}</option>;})}</select></div><div style={S.g2}><div><div style={S.lb}>Years Exp</div><input style={S.ip} type="number" value={re} onChange={function(e){setRe(e.target.value);}}/></div><div><div style={S.lb}>Year Licensed</div><input style={S.ip} value={rly} onChange={function(e){setRly(e.target.value);}} placeholder="2018"/></div></div></div>{rf?<div style={{fontSize:'10px',color:'#64748b',marginTop:'4px'}}>Type: <b>{FTM[rf]}</b></div>:null}{rAdj>0?<div style={{fontSize:'10px',color:'#64748b'}}>Adj: <b>{rAdj.toFixed(1)}</b></div>:null}{rRate?<div style={{marginTop:'8px',padding:'12px',background:'#ecfdf5',borderRadius:'8px',border:'1px solid #a7f3d0'}}><div style={{fontSize:'9px',color:'#059669',fontWeight:'700'}}>RATE</div><div style={{fontSize:'22px',fontWeight:'700',color:'#065f46',fontFamily:'monospace'}}>{rRate}</div></div>:null}{NP.indexOf(rp)>-1?<div style={{marginTop:'6px'}}><a href="https://www.nursys.com/en-US/verification/" target="_blank" rel="noreferrer" style={{display:'inline-block',padding:'5px 10px',background:'#2563eb',color:'#fff',borderRadius:'5px',fontSize:'11px',fontWeight:'600',textDecoration:'none'}}>🔍 Nursys</a></div>:null}{CNA_POS.indexOf(rp)>-1?<div style={{marginTop:'6px'}}><a href="https://sos.ga.gov/cna-registry" target="_blank" rel="noreferrer" style={{display:'inline-block',padding:'5px 10px',background:'#a16207',color:'#fff',borderRadius:'5px',fontSize:'11px',fontWeight:'600',textDecoration:'none'}}>🔍 GA CNA</a></div>:null}</div></div>);}
+  const fieldGrid = {
+    display: "grid",
+    gap: 16,
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  };
 
-  if(pg==='dash'){var cnt={};DISP.forEach(function(d){cnt[d]=cs.filter(function(x){return x.disp===d;}).length;});content=(<div><div style={S.h}>Dashboard</div><div style={S.g2}>{[['Active',cnt['Active'],'#0284c7'],['Hired',cnt['Hired'],'#059669'],['Failed',cnt['Failed Background'],'#dc2626'],['Withdrew',cnt['Withdrawn'],'#64748b'],['NH Pend',hs.filter(function(h){return h.bg==='Pending';}).length,'#d97706'],['NH Clear',hs.filter(function(h){return h.bg==='Cleared';}).length,'#059669'],['Total',cs.length],['NH',hs.length]].map(function(r){return <div key={r[0]} style={S.st}><div style={S.sL}>{r[0]}</div><div style={S.sV(r[2])}>{r[1]}</div></div>;})}</div></div>);}
+  return (
+    <div style={pageStyle}>
+      <div style={shellStyle}>
+        <Card
+          title="Recruiter Submission Assistant"
+          subtitle="Use a clean submission page for recruiters and a separate settings area for workspace setup, sites, roles, rates, templates, and data."
+          action={
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              <Button primary={activePage === "submission"} onClick={() => setActivePage("submission")}>
+                Submission Assistant
+              </Button>
+              <Button primary={activePage === "settings"} onClick={() => setActivePage("settings")}>
+                Settings
+              </Button>
+            </div>
+          }
+        >
+          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase", color: "#64748b" }}>
+            Configurable Recruiter Tool
+          </div>
+        </Card>
 
-  if(pg==='ops'){var data=FAC.map(function(f){var fc=cs.filter(function(x){return x.fac===f;});var fh=hs.filter(function(x){return x.fac===f;});var mx=MFTE[f]||0;var af=fh.filter(function(h){return h.bg==='Cleared';}).reduce(function(s,h){return s+(parseFloat(h.fte)||0);},0);return{f:f,mx:mx,of:Math.max(0,mx-af),v:mx>0?Math.round((mx-af)/mx*100):0,ac:fc.filter(function(x){return x.disp==='Active';}).length};}).filter(function(d){return d.ac>0||d.mx>0;});content=(<div><div style={S.h}>Operational</div><div style={S.c}><div style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse'}}><thead><tr>{['Facility','Matrix','Open','Vac%','Active'].map(function(h){return <th key={h} style={S.th}>{h}</th>;})}</tr></thead><tbody>{data.map(function(d){return <tr key={d.f} style={d.v>=50?{background:'#fef2f2'}:{}}><td style={Object.assign({},S.td,{fontWeight:'600'})}>{d.f}</td><td style={S.td}>{d.mx}</td><td style={Object.assign({},S.td,{color:'#dc2626',fontWeight:'600'})}>{d.of.toFixed(1)}</td><td style={S.td}>{d.v}%</td><td style={S.td}>{d.ac}</td></tr>;})}</tbody></table></div></div></div>);}
+        {!settingsReady ? (
+          <div style={{ marginTop: 24 }}>
+            <Card
+              title="Welcome"
+              subtitle="No workspace setup found. Start with demo data or set up your workspace."
+              action={
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  <Button primary onClick={useDemoWorkspace}>Use Demo Workspace</Button>
+                  <Button
+                    onClick={() => {
+                      setActivePage("settings");
+                      setActiveSettingsTab("general");
+                    }}
+                  >
+                    Set Up My Workspace
+                  </Button>
+                </div>
+              }
+            />
+          </div>
+        ) : null}
 
-  if(pg==='week'){var tot={i:0,o:0,b:0,bc:0,h:0,op:0};var fwd=FAC.map(function(f){var fc=cs.filter(function(x){return x.fac===f;});var fh=hs.filter(function(x){return x.fac===f;});var i=fc.filter(function(x){return inR(x.ms&&x.ms.ic);}).length;var o=fc.filter(function(x){return inR(x.ms&&x.ms.oe);}).length;var b=fc.filter(function(x){return inR(x.ms&&x.ms.bi);}).length;var bc=fc.filter(function(x){return inR(x.ms&&x.ms.bc);}).length;var h=fh.filter(function(x){return inR(x.start);}).length;var op=fc.filter(function(x){return x.disp==='Active';}).length;tot.i+=i;tot.o+=o;tot.b+=b;tot.bc+=bc;tot.h+=h;tot.op+=op;return{f:f,i:i,o:o,b:b,bc:bc,h:h,op:op};}).filter(function(d){return d.i+d.o+d.b+d.bc+d.h+d.op>0;});content=(<div><div style={S.h}>Weekly</div><div style={{display:'flex',gap:'6px',alignItems:'center',marginBottom:'8px'}}><input type="date" value={we} onChange={function(e){setWe(e.target.value);}} style={{border:'1px solid #cbd5e1',borderRadius:'4px',padding:'3px',fontSize:'11px'}}/><button style={S.bt('#475569')} onClick={snap}>📸</button></div><div style={S.g2}>{[['Int',tot.i,'#0284c7'],['Off',tot.o,'#1d4ed8'],['BI',tot.b,'#ea580c'],['BC',tot.bc,'#059669'],['Hire',tot.h,'#047857'],['Open',tot.op,'#dc2626']].map(function(r){return <div key={r[0]} style={S.st}><div style={S.sL}>{r[0]}</div><div style={S.sV(r[2])}>{r[1]}</div></div>;})}</div><div style={Object.assign({},S.c,{marginTop:'8px'})}><div style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse'}}><thead><tr>{['Fac','I','O','BI','BC','H','Op'].map(function(h){return <th key={h} style={S.th}>{h}</th>;})}</tr></thead><tbody>{fwd.map(function(d){return <tr key={d.f}><td style={Object.assign({},S.td,{fontWeight:'600'})}>{d.f}</td><td style={S.td}>{d.i}</td><td style={S.td}>{d.o}</td><td style={S.td}>{d.b}</td><td style={S.td}>{d.bc}</td><td style={S.td}>{d.h}</td><td style={Object.assign({},S.td,{color:'#dc2626'})}>{d.op}</td></tr>;})}{fwd.length===0?<tr><td colSpan={7} style={{padding:'16px',textAlign:'center',color:'#94a3b8'}}>No activity</td></tr>:null}</tbody></table></div></div>{sn.length>0?<div style={Object.assign({},S.c,{marginTop:'8px'})}><table style={{width:'100%',borderCollapse:'collapse'}}><thead><tr>{['Date','Act','Hire','Fail','Pend','Clr'].map(function(h){return <th key={h} style={S.th}>{h}</th>;})}</tr></thead><tbody>{sn.slice(-6).reverse().map(function(s,i){return <tr key={i}><td style={S.td}>{s.d}</td><td style={S.td}>{s.a}</td><td style={S.td}>{s.h}</td><td style={S.td}>{s.f}</td><td style={S.td}>{s.p}</td><td style={S.td}>{s.cl}</td></tr>;})}</tbody></table></div>:null}</div>);}
+        <div style={{ marginTop: 24 }}>
+          {activePage === "submission" ? (
+            <div style={gridTwo}>
+              <div style={{ display: "grid", gap: 24 }}>
+                <Card
+                  title="Enter Candidate"
+                  subtitle="The recruiter-facing page stays clean. All buyer-specific setup lives in Settings."
+                  action={<Button onClick={() => setForm(DEMO_FORM)}>Load Demo Candidate</Button>}
+                >
+                  <div style={fieldGrid}>
+                    <Field label="Full Name">
+                      <TextInput value={form.fullName} onChange={(e) => updateForm("fullName", e.target.value)} />
+                    </Field>
+                    <Field label="Phone Number">
+                      <TextInput value={form.phoneNumber} onChange={(e) => updateForm("phoneNumber", e.target.value)} />
+                    </Field>
+                    <Field label="Email Address">
+                      <TextInput value={form.emailAddress} onChange={(e) => updateForm("emailAddress", e.target.value)} />
+                    </Field>
+                    <Field label="Current Location">
+                      <TextInput value={form.location} onChange={(e) => updateForm("location", e.target.value)} placeholder="Atlanta, GA" />
+                    </Field>
+                    <Field label="Position">
+                      <SelectInput
+                        value={form.position}
+                        onChange={(e) => updateForm("position", e.target.value)}
+                        options={activeRoles.map((role) => role.positionTitle)}
+                        placeholder="Select position"
+                      />
+                    </Field>
+                    <Field label="Site / Facility">
+                      <SelectInput
+                        value={form.siteName}
+                        onChange={(e) => updateForm("siteName", e.target.value)}
+                        options={activeSites.map((site) => site.siteName)}
+                        placeholder="Select site"
+                      />
+                    </Field>
+                    <Field label="Employment Type">
+                      <SelectInput
+                        value={form.employmentType}
+                        onChange={(e) => updateForm("employmentType", e.target.value)}
+                        options={settings.options.employmentTypes}
+                        placeholder="Select employment type"
+                      />
+                    </Field>
+                    <Field label="Shift Preference">
+                      <SelectInput
+                        value={form.shiftPreference}
+                        onChange={(e) => updateForm("shiftPreference", e.target.value)}
+                        options={settings.options.shiftOptions}
+                        placeholder="Select shift"
+                      />
+                    </Field>
+                    <Field label="FTE">
+                      <SelectInput
+                        value={form.fte}
+                        onChange={(e) => updateForm("fte", e.target.value)}
+                        options={settings.options.fteOptions}
+                        placeholder="Select FTE"
+                      />
+                    </Field>
+                    <Field label="Years of Experience">
+                      <TextInput
+                        value={form.yearsExperience}
+                        onChange={(e) => updateForm("yearsExperience", e.target.value)}
+                        type="number"
+                      />
+                    </Field>
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <Field label="Experience Notes">
+                        <TextArea value={form.experienceNotes} onChange={(e) => updateForm("experienceNotes", e.target.value)} />
+                      </Field>
+                    </div>
+                    <Field label="Highest Education">
+                      <SelectInput
+                        value={form.educationLevel}
+                        onChange={(e) => updateForm("educationLevel", e.target.value)}
+                        options={settings.options.educationLevels}
+                        placeholder="Select education"
+                      />
+                    </Field>
+                    <Field label="Field of Study">
+                      <TextInput value={form.fieldOfStudy} onChange={(e) => updateForm("fieldOfStudy", e.target.value)} />
+                    </Field>
+                    <Field label="School (Optional)">
+                      <TextInput value={form.schoolName} onChange={(e) => updateForm("schoolName", e.target.value)} />
+                    </Field>
+                    <Field label="Estimated Rate">
+                      <TextInput value={estimatedRate} readOnly onChange={() => undefined} />
+                    </Field>
+                    <Field label="Requested Rate Override">
+                      <TextInput
+                        value={form.requestedRate}
+                        onChange={(e) => updateForm("requestedRate", e.target.value)}
+                        placeholder="Optional override"
+                      />
+                    </Field>
+                    <Field label="Start Availability">
+                      <SelectInput
+                        value={form.startAvailability}
+                        onChange={(e) => updateForm("startAvailability", e.target.value)}
+                        options={settings.options.startAvailabilityOptions}
+                        placeholder="Select start availability"
+                      />
+                    </Field>
+                    <Field label="Interview Availability">
+                      <TextInput
+                        value={form.interviewAvailability}
+                        onChange={(e) => updateForm("interviewAvailability", e.target.value)}
+                        placeholder="Mon–Fri after 4 PM"
+                      />
+                    </Field>
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <Field label="Start Notes">
+                        <TextInput value={form.startNotes} onChange={(e) => updateForm("startNotes", e.target.value)} />
+                      </Field>
+                    </div>
 
-  return(<div style={{minHeight:'100vh',background:'#f8fafc',fontFamily:'system-ui,sans-serif'}}><div style={S.nav}>{[['list','📋'],['nh','👤'],['sub','📨'],['offer','✉️'],['rate','💲'],['dash','📊'],['ops','🏥'],['week','📅']].map(function(x){return <button key={x[0]} style={S.nb(x[0])} onClick={function(){setPg(x[0]);}}>{x[1]}</button>;})}</div><div style={{padding:'10px',maxWidth:'800px',margin:'0 auto'}}>{content}</div>{msg?<div style={{position:'fixed',bottom:'12px',right:'12px',background:'#0f172a',color:'#fff',padding:'6px 14px',borderRadius:'6px',fontSize:'12px',zIndex:999}}>{msg}</div>:null}</div>);
+                    {isHealthcare && selectedRole?.requiresLicense ? (
+                      <Field label="License Status">
+                        <SelectInput
+                          value={form.licenseStatus}
+                          onChange={(e) => updateForm("licenseStatus", e.target.value)}
+                          options={settings.options.licenseStatusOptions}
+                          placeholder="Select license status"
+                        />
+                      </Field>
+                    ) : null}
+
+                    {isHealthcare && selectedRole?.requiresCpr ? (
+                      <Field label="CPR Status">
+                        <SelectInput
+                          value={form.cprStatus}
+                          onChange={(e) => updateForm("cprStatus", e.target.value)}
+                          options={settings.options.cprStatusOptions}
+                          placeholder="Select CPR status"
+                        />
+                      </Field>
+                    ) : null}
+
+                    {isHealthcare && selectedRole?.requiresLicense ? (
+                      <Field label="Licensed Year">
+                        <TextInput
+                          value={form.licensedYear}
+                          onChange={(e) => updateForm("licensedYear", e.target.value)}
+                          placeholder="2019"
+                        />
+                      </Field>
+                    ) : null}
+
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <Field label="Candidate Notes">
+                        <TextArea value={form.candidateNotes} onChange={(e) => updateForm("candidateNotes", e.target.value)} />
+                      </Field>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 20 }}>
+                    <Button primary onClick={generateSubmission}>Generate Submission</Button>
+                    <Button onClick={() => setForm({ ...DEMO_FORM, position: "", siteName: "" })}>Clear Form</Button>
+                  </div>
+                </Card>
+
+                <Card title="Recent Candidates" subtitle="Light memory only, so recruiters can reload and regenerate.">
+                  <div style={{ display: "grid", gap: 12 }}>
+                    {recentCandidates.map((candidate, index) => (
+                      <button
+                        key={`${candidate.fullName}-${index}`}
+                        type="button"
+                        onClick={() => setForm(candidate)}
+                        style={{
+                          textAlign: "left",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: 16,
+                          padding: 16,
+                          background: "#ffffff",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <div style={{ fontWeight: 700 }}>{candidate.fullName || "Unnamed Candidate"}</div>
+                        <div style={{ marginTop: 6, fontSize: 14, color: "#64748b" }}>
+                          {candidate.position || "No position"} • {candidate.siteName || "No site"}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </Card>
+              </div>
+
+              <div style={{ display: "grid", gap: 24 }}>
+                <Card
+                  title="Generated Output"
+                  subtitle="Copy and send without rewriting."
+                  action={output ? <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>{output.submissionDate}</div> : null}
+                >
+                  {!output ? (
+                    <div
+                      style={{
+                        border: "1px dashed #cbd5e1",
+                        borderRadius: 16,
+                        padding: 32,
+                        textAlign: "center",
+                        color: "#64748b",
+                      }}
+                    >
+                      Fill the form, then click <strong>Generate Submission</strong>.
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gap: 20 }}>
+                      <div>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 10, alignItems: "center" }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase", color: "#64748b" }}>
+                            Submission Email
+                          </div>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            <a
+                              href={mailtoHref}
+                              style={{
+                                padding: "12px 16px",
+                                borderRadius: 12,
+                                background: "#0f172a",
+                                color: "#ffffff",
+                                textDecoration: "none",
+                                fontWeight: 700,
+                              }}
+                            >
+                              Open in Outlook
+                            </a>
+                            <Button onClick={() => safeClipboardWrite(output.emailBody).catch(() => alert("Copy failed"))}>
+                              Copy Email
+                            </Button>
+                          </div>
+                        </div>
+                        <pre
+                          style={{
+                            margin: 0,
+                            whiteSpace: "pre-wrap",
+                            background: "#f8fafc",
+                            border: "1px solid #e2e8f0",
+                            borderRadius: 16,
+                            padding: 16,
+                            lineHeight: 1.6,
+                            overflowX: "auto",
+                          }}
+                        >
+                          {output.emailBody}
+                        </pre>
+                      </div>
+
+                      <div>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 10, alignItems: "center" }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase", color: "#64748b" }}>
+                            ATS Note
+                          </div>
+                          <Button onClick={() => safeClipboardWrite(output.atsNote).catch(() => alert("Copy failed"))}>
+                            Copy ATS Note
+                          </Button>
+                        </div>
+                        <pre
+                          style={{
+                            margin: 0,
+                            whiteSpace: "pre-wrap",
+                            background: "#f8fafc",
+                            border: "1px solid #e2e8f0",
+                            borderRadius: 16,
+                            padding: 16,
+                            lineHeight: 1.6,
+                            overflowX: "auto",
+                          }}
+                        >
+                          {output.atsNote}
+                        </pre>
+                      </div>
+                    </div>
+                  )}
+                </Card>
+              </div>
+            </div>
+          ) : (
+            <div style={settingsLayout}>
+              <aside
+                style={{
+                  background: "#ffffff",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: 20,
+                  padding: 16,
+                  height: "fit-content",
+                }}
+              >
+                <div style={{ display: "grid", gap: 8 }}>
+                  {[
+                    ["general", "General"],
+                    ["sites", "Sites"],
+                    ["roles", "Roles"],
+                    ["rates", "Rates"],
+                    ["templates", "Templates"],
+                    ["data", "Data"],
+                  ].map(([key, label]) => (
+                    <NavButton key={key} active={activeSettingsTab === key} onClick={() => setActiveSettingsTab(key)}>
+                      {label}
+                    </NavButton>
+                  ))}
+                </div>
+              </aside>
+
+              <div style={{ display: "grid", gap: 24 }}>
+                {activeSettingsTab === "general" ? (
+                  <>
+                    <Card title="Workspace Setup" subtitle="This personalizes the product immediately without touching code.">
+                      <div style={fieldGrid}>
+                        <Field label="Workspace Name">
+                          <TextInput value={settings.general.workspaceName} onChange={(e) => updateGeneral("workspaceName", e.target.value)} />
+                        </Field>
+                        <Field label="Company Name">
+                          <TextInput value={settings.general.companyName} onChange={(e) => updateGeneral("companyName", e.target.value)} />
+                        </Field>
+                        <Field label="Recruiter Name">
+                          <TextInput value={settings.general.recruiterName} onChange={(e) => updateGeneral("recruiterName", e.target.value)} />
+                        </Field>
+                        <Field label="Recruiter Email">
+                          <TextInput value={settings.general.recruiterEmail} onChange={(e) => updateGeneral("recruiterEmail", e.target.value)} />
+                        </Field>
+                        <Field label="Recruiter Phone">
+                          <TextInput value={settings.general.recruiterPhone} onChange={(e) => updateGeneral("recruiterPhone", e.target.value)} />
+                        </Field>
+                        <Field label="Sign-Off Name">
+                          <TextInput value={settings.general.signOffName} onChange={(e) => updateGeneral("signOffName", e.target.value)} />
+                        </Field>
+                        <div style={{ gridColumn: "1 / -1" }}>
+                          <Field label="Sign-Off Line">
+                            <TextArea value={settings.general.signOffLine} onChange={(e) => updateGeneral("signOffLine", e.target.value)} />
+                          </Field>
+                        </div>
+                      </div>
+                    </Card>
+
+                    <Card title="Dropdown Options" subtitle="Editable lists so buyers never need to change code.">
+                      <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+                        <TagListEditor label="Employment Types" values={settings.options.employmentTypes} onChange={(value) => updateOptions("employmentTypes", value)} />
+                        <TagListEditor label="Shift Options" values={settings.options.shiftOptions} onChange={(value) => updateOptions("shiftOptions", value)} />
+                        <TagListEditor label="FTE Options" values={settings.options.fteOptions} onChange={(value) => updateOptions("fteOptions", value)} />
+                        <TagListEditor label="Start Availability" values={settings.options.startAvailabilityOptions} onChange={(value) => updateOptions("startAvailabilityOptions", value)} />
+                        <TagListEditor label="Education Levels" values={settings.options.educationLevels} onChange={(value) => updateOptions("educationLevels", value)} />
+                        <TagListEditor label="License Status" values={settings.options.licenseStatusOptions} onChange={(value) => updateOptions("licenseStatusOptions", value)} />
+                        <TagListEditor label="CPR Status" values={settings.options.cprStatusOptions} onChange={(value) => updateOptions("cprStatusOptions", value)} />
+                      </div>
+                    </Card>
+                  </>
+                ) : null}
+
+                {activeSettingsTab === "sites" ? (
+                  <Card title="Sites / Facilities" subtitle="Buyers add their own sites here. Nothing is hardcoded in the submission form." action={<Button onClick={addSite}>Add Site</Button>}>
+                    <div style={{ display: "grid", gap: 16 }}>
+                      {settings.sites.map((site) => (
+                        <div key={site.id} style={{ border: "1px solid #e2e8f0", borderRadius: 16, padding: 16 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                            <div style={{ fontWeight: 700, fontSize: 14 }}>Site Record</div>
+                            <button type="button" onClick={() => removeSite(site.id)} style={{ border: "none", background: "transparent", color: "#dc2626", fontWeight: 700, cursor: "pointer" }}>
+                              Delete
+                            </button>
+                          </div>
+                          <div style={fieldGrid}>
+                            <Field label="Site Name">
+                              <TextInput value={site.siteName} onChange={(e) => updateSite(site.id, "siteName", e.target.value)} />
+                            </Field>
+                            <Field label="Site Type">
+                              <TextInput value={site.siteType} onChange={(e) => updateSite(site.id, "siteType", e.target.value)} placeholder="24-hour, Hospital, Corporate" />
+                            </Field>
+                            <Field label="Location">
+                              <TextInput value={site.location} onChange={(e) => updateSite(site.id, "location", e.target.value)} />
+                            </Field>
+                            <Field label="Status">
+                              <SelectInput value={site.status} onChange={(e) => updateSite(site.id, "status", e.target.value)} options={["Active", "Inactive"]} placeholder="Select status" />
+                            </Field>
+                            <div style={{ gridColumn: "1 / -1" }}>
+                              <Field label="Notes">
+                                <TextArea value={site.notes} onChange={(e) => updateSite(site.id, "notes", e.target.value)} />
+                              </Field>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                ) : null}
+
+                {activeSettingsTab === "roles" ? (
+                  <Card title="Roles / Positions" subtitle="These records control which fields appear in the submission form." action={<Button onClick={addRole}>Add Role</Button>}>
+                    <div style={{ display: "grid", gap: 16 }}>
+                      {settings.roles.map((role) => (
+                        <div key={role.id} style={{ border: "1px solid #e2e8f0", borderRadius: 16, padding: 16 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                            <div style={{ fontWeight: 700, fontSize: 14 }}>Role Record</div>
+                            <button type="button" onClick={() => removeRole(role.id)} style={{ border: "none", background: "transparent", color: "#dc2626", fontWeight: 700, cursor: "pointer" }}>
+                              Delete
+                            </button>
+                          </div>
+                          <div style={fieldGrid}>
+                            <Field label="Position Title">
+                              <TextInput value={role.positionTitle} onChange={(e) => updateRole(role.id, "positionTitle", e.target.value)} />
+                            </Field>
+                            <Field label="Role Category">
+                              <SelectInput value={role.roleCategory} onChange={(e) => updateRole(role.id, "roleCategory", e.target.value)} options={["Healthcare", "General"]} placeholder="Select role category" />
+                            </Field>
+                            <ToggleField label="Requires License" checked={role.requiresLicense} onChange={(value) => updateRole(role.id, "requiresLicense", value)} />
+                            <ToggleField label="Requires CPR" checked={role.requiresCpr} onChange={(value) => updateRole(role.id, "requiresCpr", value)} />
+                            <ToggleField label="Requires FTE" checked={role.requiresFte} onChange={(value) => updateRole(role.id, "requiresFte", value)} />
+                            <ToggleField label="Requires Shift" checked={role.requiresShift} onChange={(value) => updateRole(role.id, "requiresShift", value)} />
+                            <Field label="Status">
+                              <SelectInput value={role.status} onChange={(e) => updateRole(role.id, "status", e.target.value)} options={["Active", "Inactive"]} placeholder="Select status" />
+                            </Field>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                ) : null}
+
+                {activeSettingsTab === "rates" ? (
+                  <>
+                    <Card title="Rate Setup" subtitle="Turn automatic rate logic on or off. If off, recruiters use manual rate only.">
+                      <ToggleField label="Enable Automatic Rate Calculation" checked={settings.rates.enabled} onChange={(value) => setSettings((prev) => ({ ...prev, rates: { ...prev.rates, enabled: value } }))} />
+                    </Card>
+
+                    {settings.rates.enabled ? (
+                      <Card title="Rate Rules" subtitle="Simple grid logic, not an Excel-looking mess." action={<Button onClick={addRateRule}>Add Rate Rule</Button>}>
+                        <div style={{ display: "grid", gap: 16 }}>
+                          {settings.rates.rules.map((rule) => (
+                            <div key={rule.id} style={{ border: "1px solid #e2e8f0", borderRadius: 16, padding: 16 }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                                <div style={{ fontWeight: 700, fontSize: 14 }}>Rate Rule</div>
+                                <button type="button" onClick={() => removeRateRule(rule.id)} style={{ border: "none", background: "transparent", color: "#dc2626", fontWeight: 700, cursor: "pointer" }}>
+                                  Delete
+                                </button>
+                              </div>
+                              <div style={fieldGrid}>
+                                <Field label="Position">
+                                  <SelectInput value={rule.positionTitle} onChange={(e) => updateRateRule(rule.id, "positionTitle", e.target.value)} options={settings.roles.map((role) => role.positionTitle).filter(Boolean)} placeholder="Select role" />
+                                </Field>
+                                <Field label="Scope Type">
+                                  <SelectInput value={rule.scopeType} onChange={(e) => updateRateRule(rule.id, "scopeType", e.target.value)} options={["Site Type", "Site"]} placeholder="Select scope type" />
+                                </Field>
+                                <Field label={rule.scopeType === "Site Type" ? "Site Type" : "Site Name"}>
+                                  <SelectInput
+                                    value={rule.scopeValue}
+                                    onChange={(e) => updateRateRule(rule.id, "scopeValue", e.target.value)}
+                                    options={
+                                      rule.scopeType === "Site Type"
+                                        ? [...new Set(settings.sites.map((site) => site.siteType).filter(Boolean))]
+                                        : settings.sites.map((site) => site.siteName).filter(Boolean)
+                                    }
+                                    placeholder="Select value"
+                                  />
+                                </Field>
+                                <Field label="Experience Tier">
+                                  <SelectInput value={rule.experienceTier} onChange={(e) => updateRateRule(rule.id, "experienceTier", e.target.value)} options={["0–2", "3–5", "6–10", "11–15", "16+"]} placeholder="Select tier" />
+                                </Field>
+                                <Field label="Rate">
+                                  <TextInput value={rule.rate} onChange={(e) => updateRateRule(rule.id, "rate", e.target.value)} placeholder="$42.25/hr" />
+                                </Field>
+                                <Field label="Employment Type (Optional)">
+                                  <SelectInput value={rule.employmentType} onChange={(e) => updateRateRule(rule.id, "employmentType", e.target.value)} options={settings.options.employmentTypes} placeholder="Any" />
+                                </Field>
+                                <Field label="Shift (Optional)">
+                                  <SelectInput value={rule.shift} onChange={(e) => updateRateRule(rule.id, "shift", e.target.value)} options={settings.options.shiftOptions} placeholder="Any" />
+                                </Field>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </Card>
+                    ) : (
+                      <Card title="Manual Rate Only" subtitle="Automatic rate calculation is off. Recruiters can still enter a requested rate manually on the submission page." />
+                    )}
+                  </>
+                ) : null}
+
+                {activeSettingsTab === "templates" ? (
+                  <>
+                    <Card title="Email Template Settings" subtitle="Controlled text blocks so buyers can personalize wording without breaking structure.">
+                      <div style={fieldGrid}>
+                        <Field label="Greeting Line">
+                          <TextInput value={settings.templates.greetingLine} onChange={(e) => updateTemplates("greetingLine", e.target.value)} />
+                        </Field>
+                        <Field label="Intro Line">
+                          <TextInput value={settings.templates.introLine} onChange={(e) => updateTemplates("introLine", e.target.value)} />
+                        </Field>
+                        <Field label="Follow-Up Line">
+                          <TextInput value={settings.templates.followUpLine} onChange={(e) => updateTemplates("followUpLine", e.target.value)} />
+                        </Field>
+                        <Field label="Closing Line">
+                          <TextInput value={settings.templates.closingLine} onChange={(e) => updateTemplates("closingLine", e.target.value)} />
+                        </Field>
+                      </div>
+                    </Card>
+
+                    <Card title="ATS Template Settings" subtitle="Adjust output without breaking the underlying structure.">
+                      <div style={fieldGrid}>
+                        <Field label="ATS Style">
+                          <SelectInput value={settings.templates.atsStyle} onChange={(e) => updateTemplates("atsStyle", e.target.value)} options={["Detailed", "Compact"]} placeholder="Select ATS style" />
+                        </Field>
+                        <div />
+                        <ToggleField label="Include Submission Date" checked={settings.templates.includeSubmissionDate} onChange={(value) => updateTemplates("includeSubmissionDate", value)} />
+                        <ToggleField label="Include Education" checked={settings.templates.includeEducation} onChange={(value) => updateTemplates("includeEducation", value)} />
+                        <ToggleField label="Include Availability" checked={settings.templates.includeAvailability} onChange={(value) => updateTemplates("includeAvailability", value)} />
+                        <ToggleField label="Include Credentials" checked={settings.templates.includeCredentials} onChange={(value) => updateTemplates("includeCredentials", value)} />
+                      </div>
+                    </Card>
+                  </>
+                ) : null}
+
+                {activeSettingsTab === "data" ? (
+                  <Card title="Data Tools" subtitle="Demo, reset, export, and import so buyers can manage their workspace cleanly.">
+                    <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                      <Button onClick={useDemoWorkspace}>Load Demo Workspace</Button>
+                      <Button
+                        onClick={() => {
+                          setSettings({
+                            ...DEFAULT_SETTINGS,
+                            sites: [],
+                            roles: [],
+                            rates: { ...DEFAULT_SETTINGS.rates, rules: [] },
+                          });
+                          setOutput(null);
+                          alert("Workspace reset");
+                        }}
+                        style={{ borderColor: "#fecaca", color: "#b91c1c" }}
+                      >
+                        Reset Workspace
+                      </Button>
+                      <Button onClick={exportSettings}>Export Settings</Button>
+                      <label
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          padding: "12px 16px",
+                          borderRadius: 12,
+                          border: "1px solid #cbd5e1",
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          background: "#ffffff",
+                        }}
+                      >
+                        Import Settings
+                        <input type="file" accept="application/json" onChange={importSettings} style={{ display: "none" }} />
+                      </label>
+                    </div>
+                  </Card>
+                ) : null}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
