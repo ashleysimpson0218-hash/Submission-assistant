@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-const STORAGE_KEY = "welcomeflow-recruiting-assistant-v3-settings";
-const RECENT_KEY = "welcomeflow-recruiting-assistant-v3-recent";
-const TOUR_KEY = "welcomeflow-recruiting-assistant-v3-tour";
+const STORAGE_KEY = "welcomeflow-recruiting-assistant-v4-settings";
+const RECENT_KEY = "welcomeflow-recruiting-assistant-v4-recent";
+const TOUR_KEY = "welcomeflow-recruiting-assistant-v4-tour";
+const SUBMISSIONS_KEY = "welcomeflow-recruiting-assistant-v4-submissions";
 
 const BRAND = {
   appName: "WelcomeFlow: Recruiting Assistant",
@@ -21,7 +22,6 @@ const THEMES = {
     primary: "#0f172a",
     secondary: "#1e3a8a",
     accent: "#2563eb",
-    gold: "#d4af37",
     sidebarBg: "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)",
     inputBorder: "#d7deea",
     badgeBlueBg: "#dbeafe",
@@ -43,7 +43,6 @@ const THEMES = {
     primary: "#020617",
     secondary: "#2563eb",
     accent: "#38bdf8",
-    gold: "#facc15",
     sidebarBg: "linear-gradient(180deg, rgba(15,23,42,0.98) 0%, rgba(2,6,23,0.98) 100%)",
     inputBorder: "#475569",
     badgeBlueBg: "#1e3a8a",
@@ -145,22 +144,24 @@ const DEFAULT_SETTINGS = {
       },
     ],
   },
-  customFields: [
-    { id: "cf-1", label: "Credential Notes", fieldType: "text", required: false, options: [], appliesTo: "candidate" },
-  ],
+  customFields: [],
   templates: {
     greetingLine: "Hello {facility},",
-    introLine: "Please see candidate details below:",
+    introLine: "Please review the candidate details below.",
     followUpLine: "Please review and advise next steps within 24–48 hours.",
-    closingLine: "The candidate is aware of the hiring process and is prepared to move forward.",
+    closingLine: "The candidate is aware of the role expectations and is prepared to move forward.",
     atsStyle: "Short",
     includeSubmissionDate: true,
     includeEducation: true,
     includeAvailability: true,
     includeCredentials: true,
-    candidateEmailIntro: "Thank you for speaking with me today.",
-    candidateEmailNextSteps: "Your information has been submitted for review.",
-    candidateEmailTiming: "You can expect follow-up within 24–48 hours.",
+    candidateEmailIntro: "Thank you for taking the time to speak with me today.",
+    candidateEmailSubmissionLine: "Your profile has been submitted for review.",
+    candidateEmailNextStep1: "Your information is currently being reviewed by the hiring team.",
+    candidateEmailNextStep2: "If selected, the facility may reach out directly regarding interview coordination.",
+    candidateEmailNextStep3: "I will continue to monitor your submission and share updates as they become available.",
+    candidateEmailTiming: "You can expect an update within 24–48 hours.",
+    candidateEmailSupportLine: "If anything changes on your end, please feel free to reach out directly.",
   },
 };
 
@@ -198,10 +199,8 @@ const DEFAULT_FORM = {
   otConfirmed: false,
   weekendConfirmed: false,
   onCallConfirmed: false,
-  candidateComments: "",
   candidateNotes: "",
   uploads: [],
-  customFieldValues: {},
 };
 
 const DEMO_FORM = {
@@ -237,9 +236,7 @@ const DEMO_FORM = {
   otConfirmed: true,
   weekendConfirmed: true,
   onCallConfirmed: true,
-  candidateComments: "Open to nights and long-term placement.",
-  candidateNotes: "Responsive by text.",
-  customFieldValues: { "cf-1": "Strong documentation habits" },
+  candidateNotes: "Responsive by text. Open to nights and long-term placement.",
 };
 
 function makeId(prefix) {
@@ -337,7 +334,9 @@ function Button({ children, onClick, primary, style, type }) {
 function Field({ label, children, color }) {
   return (
     <label style={{ display: "block" }}>
-      <div style={{ marginBottom: 6, fontSize: 10, fontWeight: 700, color, textTransform: "uppercase", letterSpacing: 0.4, fontFamily: "Arial, sans-serif" }}>{label}</div>
+      <div style={{ marginBottom: 6, fontSize: 10, fontWeight: 700, color, textTransform: "uppercase", letterSpacing: 0.4, fontFamily: "Arial, sans-serif" }}>
+        {label}
+      </div>
       {children}
     </label>
   );
@@ -351,19 +350,47 @@ function TextInput({ value, onChange, placeholder, type, readOnly, border }) {
       placeholder={placeholder || ""}
       type={type || "text"}
       readOnly={readOnly}
-      style={{ width: "100%", padding: "10px 12px", borderRadius: 12, border: `1px solid ${border}`, boxSizing: "border-box", background: readOnly ? "#f8fafc" : "#ffffff", outline: "none", fontSize: 10, fontFamily: "Arial, sans-serif" }}
+      style={{
+        width: "100%",
+        padding: "10px 12px",
+        borderRadius: 12,
+        border: `1px solid ${border}`,
+        boxSizing: "border-box",
+        background: readOnly ? "#f8fafc" : "#ffffff",
+        outline: "none",
+        fontSize: 10,
+        fontFamily: "Arial, sans-serif",
+      }}
     />
   );
 }
 
 function SelectInput({ value, onChange, options, placeholder, border }) {
   return (
-    <select value={value} onChange={onChange} style={{ width: "100%", padding: "10px 12px", borderRadius: 12, border: `1px solid ${border}`, boxSizing: "border-box", background: "#ffffff", outline: "none", fontSize: 10, fontFamily: "Arial, sans-serif" }}>
+    <select
+      value={value}
+      onChange={onChange}
+      style={{
+        width: "100%",
+        padding: "10px 12px",
+        borderRadius: 12,
+        border: `1px solid ${border}`,
+        boxSizing: "border-box",
+        background: "#ffffff",
+        outline: "none",
+        fontSize: 10,
+        fontFamily: "Arial, sans-serif",
+      }}
+    >
       <option value="">{placeholder || "Select"}</option>
       {options.map((option) => {
         const key = typeof option === "string" ? option : option.value;
         const label = typeof option === "string" ? option : option.label;
-        return <option key={key} value={key}>{label}</option>;
+        return (
+          <option key={key} value={key}>
+            {label}
+          </option>
+        );
       })}
     </select>
   );
@@ -371,17 +398,43 @@ function SelectInput({ value, onChange, options, placeholder, border }) {
 
 function TextArea({ value, onChange, border }) {
   return (
-    <textarea value={value} onChange={onChange} style={{ width: "100%", minHeight: 88, padding: "10px 12px", borderRadius: 12, border: `1px solid ${border}`, boxSizing: "border-box", resize: "vertical", background: "#ffffff", outline: "none", fontSize: 10, fontFamily: "Arial, sans-serif" }} />
+    <textarea
+      value={value}
+      onChange={onChange}
+      style={{
+        width: "100%",
+        minHeight: 88,
+        padding: "10px 12px",
+        borderRadius: 12,
+        border: `1px solid ${border}`,
+        boxSizing: "border-box",
+        resize: "vertical",
+        background: "#ffffff",
+        outline: "none",
+        fontSize: 10,
+        fontFamily: "Arial, sans-serif",
+      }}
+    />
   );
 }
 
 function Card({ title, subtitle, children, action, theme }) {
   return (
-    <section style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, borderRadius: 20, padding: 22, boxShadow: "0 10px 26px rgba(15,23,42,0.06)" }}>
+    <section
+      style={{
+        background: theme.cardBg,
+        border: `1px solid ${theme.cardBorder}`,
+        borderRadius: 20,
+        padding: 22,
+        boxShadow: "0 10px 26px rgba(15,23,42,0.06)",
+      }}
+    >
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16, marginBottom: 18, alignItems: "flex-start" }}>
         <div>
           <h2 style={{ margin: 0, fontSize: 18, color: theme.text, fontFamily: "Arial, sans-serif" }}>{title}</h2>
-          {subtitle ? <p style={{ margin: "6px 0 0 0", color: theme.muted, fontSize: 10, lineHeight: 1.5, fontFamily: "Arial, sans-serif" }}>{subtitle}</p> : null}
+          {subtitle ? (
+            <p style={{ margin: "6px 0 0 0", color: theme.muted, fontSize: 10, lineHeight: 1.5, fontFamily: "Arial, sans-serif" }}>{subtitle}</p>
+          ) : null}
         </div>
         {action || null}
       </div>
@@ -392,7 +445,17 @@ function Card({ title, subtitle, children, action, theme }) {
 
 function ToggleField({ label, checked, onChange, theme }) {
   return (
-    <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", border: `1px solid ${theme.cardBorder}`, borderRadius: 12, padding: 12, background: "#ffffff" }}>
+    <label
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        border: `1px solid ${theme.cardBorder}`,
+        borderRadius: 12,
+        padding: 12,
+        background: "#ffffff",
+      }}
+    >
       <span style={{ fontWeight: 700, fontSize: 10, color: theme.text, fontFamily: "Arial, sans-serif" }}>{label}</span>
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
     </label>
@@ -401,7 +464,23 @@ function ToggleField({ label, checked, onChange, theme }) {
 
 function NavButton({ active, children, onClick }) {
   return (
-    <button type="button" onClick={onClick} style={{ width: "100%", textAlign: "left", padding: "11px 12px", borderRadius: 12, border: active ? "1px solid #1e3a8a" : "1px solid transparent", background: active ? "linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%)" : "transparent", color: active ? "#ffffff" : "#334155", fontWeight: 700, fontSize: 10, cursor: "pointer", fontFamily: "Arial, sans-serif" }}>
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        width: "100%",
+        textAlign: "left",
+        padding: "11px 12px",
+        borderRadius: 12,
+        border: active ? "1px solid #1e3a8a" : "1px solid transparent",
+        background: active ? "linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%)" : "transparent",
+        color: active ? "#ffffff" : "#334155",
+        fontWeight: 700,
+        fontSize: 10,
+        cursor: "pointer",
+        fontFamily: "Arial, sans-serif",
+      }}
+    >
       {children}
     </button>
   );
@@ -409,55 +488,47 @@ function NavButton({ active, children, onClick }) {
 
 function TagListEditor({ label, values, onChange, theme }) {
   const [draft, setDraft] = useState("");
+
   function addValue() {
     const clean = draft.trim();
     if (!clean || values.includes(clean)) return;
     onChange([...values, clean]);
     setDraft("");
   }
+
   return (
     <div style={{ border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16, background: "#ffffff" }}>
       <div style={{ marginBottom: 10, fontSize: 10, fontWeight: 700, color: theme.text, fontFamily: "Arial, sans-serif" }}>{label}</div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
         {values.map((value) => (
-          <span key={value} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 9px", borderRadius: 999, background: "#eef2ff", fontSize: 10, border: "1px solid #dbe4f0", fontFamily: "Arial, sans-serif" }}>
+          <span
+            key={value}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "6px 9px",
+              borderRadius: 999,
+              background: "#eef2ff",
+              fontSize: 10,
+              border: "1px solid #dbe4f0",
+              fontFamily: "Arial, sans-serif",
+            }}
+          >
             {value}
-            <button type="button" onClick={() => onChange(values.filter((item) => item !== value))} style={{ border: "none", background: "transparent", cursor: "pointer", color: "#475569" }}>×</button>
+            <button
+              type="button"
+              onClick={() => onChange(values.filter((item) => item !== value))}
+              style={{ border: "none", background: "transparent", cursor: "pointer", color: "#475569" }}
+            >
+              ×
+            </button>
           </span>
         ))}
       </div>
       <div style={{ display: "flex", gap: 8 }}>
         <TextInput value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Add option" border={theme.inputBorder} />
         <Button onClick={addValue}>Add</Button>
-      </div>
-    </div>
-  );
-}
-
-function CustomFieldEditor({ field, onUpdate, onRemove, theme }) {
-  return (
-    <div style={{ border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16, background: "#ffffff" }}>
-      <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
-        <Field label="Label" color={theme.muted}>
-          <TextInput value={field.label} onChange={(e) => onUpdate(field.id, "label", e.target.value)} border={theme.inputBorder} />
-        </Field>
-        <Field label="Field Type" color={theme.muted}>
-          <SelectInput value={field.fieldType} onChange={(e) => onUpdate(field.id, "fieldType", e.target.value)} options={["text", "dropdown", "multi-select", "checkbox"]} border={theme.inputBorder} />
-        </Field>
-        <Field label="Applies To" color={theme.muted}>
-          <SelectInput value={field.appliesTo} onChange={(e) => onUpdate(field.id, "appliesTo", e.target.value)} options={["candidate", "workspace"]} border={theme.inputBorder} />
-        </Field>
-        <ToggleField label="Required" checked={field.required} onChange={(value) => onUpdate(field.id, "required", value)} theme={theme} />
-        {(field.fieldType === "dropdown" || field.fieldType === "multi-select") ? (
-          <div style={{ gridColumn: "1 / -1" }}>
-            <Field label="Options (comma separated)" color={theme.muted}>
-              <TextInput value={field.options.join(", ")} onChange={(e) => onUpdate(field.id, "options", e.target.value.split(",").map((item) => item.trim()).filter(Boolean))} border={theme.inputBorder} />
-            </Field>
-          </div>
-        ) : null}
-      </div>
-      <div style={{ marginTop: 12 }}>
-        <Button onClick={() => onRemove(field.id)} style={{ borderColor: "#fecaca", color: "#b91c1c" }}>Remove Custom Field</Button>
       </div>
     </div>
   );
@@ -474,6 +545,7 @@ export default function App() {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [form, setForm] = useState(DEMO_FORM);
   const [recentCandidates, setRecentCandidates] = useState([DEMO_FORM]);
+  const [submissionHistory, setSubmissionHistory] = useState([]);
   const [output, setOutput] = useState(null);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [themeKey, setThemeKey] = useState("corporate");
@@ -484,6 +556,7 @@ export default function App() {
   useEffect(() => {
     setSettings(loadStoredValue(STORAGE_KEY, DEFAULT_SETTINGS));
     setRecentCandidates(loadStoredValue(RECENT_KEY, [DEMO_FORM]));
+    setSubmissionHistory(loadStoredValue(SUBMISSIONS_KEY, []));
     const savedTour = loadStoredValue(TOUR_KEY, { completed: false, theme: "corporate" });
     setThemeKey(savedTour.theme || "corporate");
     setShowTour(!savedTour.completed);
@@ -499,6 +572,11 @@ export default function App() {
     if (!hasLoaded) return;
     saveStoredValue(RECENT_KEY, recentCandidates);
   }, [recentCandidates, hasLoaded]);
+
+  useEffect(() => {
+    if (!hasLoaded) return;
+    saveStoredValue(SUBMISSIONS_KEY, submissionHistory);
+  }, [submissionHistory, hasLoaded]);
 
   useEffect(() => {
     if (!hasLoaded) return;
@@ -535,10 +613,13 @@ export default function App() {
       return positionMatch && scopeMatch && basisMatch;
     });
     if (!match) return "";
-    const shiftKey = form.shiftPreference === "Night" ? match.shiftDifferentialNight : form.shiftPreference === "Evening" ? match.shiftDifferentialEvening : "";
-    const weekendKey = form.weekendRequirement === "Required" || form.weekendRequirement === "Rotating" ? match.shiftDifferentialWeekend : "";
-    const extras = [shiftKey, weekendKey].filter(Boolean).join(" + ");
-    return extras ? `${match.baseAmount} (${extras})` : match.baseAmount;
+    const extras = [];
+    if (form.shiftPreference === "Night" && match.shiftDifferentialNight) extras.push(`Night: ${match.shiftDifferentialNight}`);
+    if (form.shiftPreference === "Evening" && match.shiftDifferentialEvening) extras.push(`Evening: ${match.shiftDifferentialEvening}`);
+    if ((form.weekendRequirement === "Required" || form.weekendRequirement === "Rotating") && match.shiftDifferentialWeekend) {
+      extras.push(`Weekend: ${match.shiftDifferentialWeekend}`);
+    }
+    return extras.length ? `${match.baseAmount} base | ${extras.join(" | ")}` : match.baseAmount;
   }, [settings.compensationStructure, form.position, form.yearsExperience, form.siteName, form.shiftPreference, form.weekendRequirement, selectedSite]);
 
   const settingsReady = Boolean(settings.general.companyName || settings.sites.length || settings.roles.length);
@@ -546,9 +627,9 @@ export default function App() {
   const tourSteps = [
     { title: `Welcome to ${BRAND.appName}`, body: "Set up your workspace once, then your recruiters can move through submissions without touching code.", page: "settings", tab: "general", action: "Start Setup" },
     { title: "Step 1 — Workspace Setup", body: "Add company info, recruiter details, and email signature.", page: "settings", tab: "general", action: "Next" },
-    { title: "Step 2 — Sites + Roles", body: "Add locations and roles, including custom roles and Healthcare vs Other logic.", page: "settings", tab: "roles", action: "Next" },
+    { title: "Step 2 — Sites + Roles", body: "Add locations and roles. Role Category stays editable through the option list and role records.", page: "settings", tab: "roles", action: "Next" },
     { title: "Step 3 — Compensation Structure", body: "Set hourly or salary rules, years-based, flat, or custom, with shift differentials.", page: "settings", tab: "compensation", action: "Next" },
-    { title: "Step 4 — Templates + Imports", body: "Customize output templates, create import templates, and understand manual vs upload setup.", page: "settings", tab: "imports", action: "Finish" },
+    { title: "Step 4 — Templates + Imports", body: "Customize templates, use downloadable setup templates, and choose manual or upload setup.", page: "settings", tab: "imports", action: "Finish" },
   ];
 
   function goToTourStep(index) {
@@ -586,10 +667,6 @@ export default function App() {
     setSettings((prev) => ({ ...prev, compensationStructure: { ...prev.compensationStructure, rules: prev.compensationStructure.rules.map((rule) => (rule.id === id ? { ...rule, [key]: value } : rule)) } }));
   }
 
-  function updateCustomField(id, key, value) {
-    setSettings((prev) => ({ ...prev, customFields: prev.customFields.map((field) => (field.id === id ? { ...field, [key]: value } : field)) }));
-  }
-
   function addSite() {
     setSettings((prev) => ({ ...prev, sites: [...prev.sites, { id: makeId("site"), siteName: "", siteType: "", location: "", status: "Active", notes: "" }] }));
   }
@@ -598,17 +675,8 @@ export default function App() {
     setSettings((prev) => ({ ...prev, roles: [...prev.roles, { id: makeId("role"), positionTitle: "", roleCategory: "Other", requiresLicense: false, requiresCpr: false, requiresFte: false, requiresShift: false, requiresWorkExpectations: true, status: "Active" }] }));
   }
 
-  function addCustomRole() {
-    addRole();
-    setActiveSettingsTab("roles");
-  }
-
   function addCompRule() {
     setSettings((prev) => ({ ...prev, compensationStructure: { ...prev.compensationStructure, rules: [...prev.compensationStructure.rules, { id: makeId("comp"), positionTitle: "", scopeType: "Site Type", scopeValue: "", compensationType: "Hourly", basisType: "Years-based", experienceTier: "0–2", baseAmount: "", shiftDifferentialNight: "", shiftDifferentialWeekend: "", shiftDifferentialEvening: "", customNotes: "" }] } }));
-  }
-
-  function addCustomField() {
-    setSettings((prev) => ({ ...prev, customFields: [...prev.customFields, { id: makeId("cf"), label: "", fieldType: "text", required: false, options: [], appliesTo: "candidate" }] }));
   }
 
   function removeSite(id) {
@@ -621,10 +689,6 @@ export default function App() {
 
   function removeCompRule(id) {
     setSettings((prev) => ({ ...prev, compensationStructure: { ...prev.compensationStructure, rules: prev.compensationStructure.rules.filter((rule) => rule.id !== id) } }));
-  }
-
-  function removeCustomField(id) {
-    setSettings((prev) => ({ ...prev, customFields: prev.customFields.filter((field) => field.id !== id) }));
   }
 
   function handleImport(files, mode) {
@@ -641,75 +705,66 @@ export default function App() {
     setForm((prev) => ({ ...prev, uploads }));
   }
 
-  function handleCustomFieldValue(field, rawValue) {
-    setForm((prev) => ({ ...prev, customFieldValues: { ...prev.customFieldValues, [field.id]: rawValue } }));
-  }
-
   function buildCredentials() {
     if (!isHealthcare) return "";
     const values = [];
     if (form.licenseStatus) values.push(`License: ${form.licenseStatus}`);
     if (form.cprStatus) values.push(`CPR: ${form.cprStatus}`);
     if (form.licensedYear) values.push(`Licensed Since: ${form.licensedYear}`);
-    return values.join("\n");
+    return values.join(" | ");
   }
 
   function buildHiringManagerEmail(finalComp) {
     const facilityName = form.siteName || settings.general.companyName || "Hiring Team";
-    const lines = [
-      (settings.templates.greetingLine || "Hello {facility},").replace("{facility}", facilityName),
+    return [
+      `Hello ${facilityName},`,
       "",
-      settings.templates.introLine,
+      "Please review the candidate details below.",
+      "",
+      `Submission Date: ${todayString()}`,
       "",
       "Candidate Summary:",
-      `${form.fullName || "N/A"}`,
+      `${form.fullName || "N/A"} | ${form.position || "N/A"} | ${FteLabel(form.fte)} | ${form.shiftPreference || "N/A"}`,
       `${form.phoneNumber || "N/A"} | ${form.emailAddress || "N/A"}`,
-      `${form.location || "N/A"}`,
-      settings.templates.includeSubmissionDate ? `Submission Date: ${todayString()}` : "",
+      `${form.workArea || "N/A"} | ${form.location || "N/A"}`,
+      `Compensation: ${form.compensationType || "Hourly"} | ${finalComp}`,
       "",
-      "Experience:",
-      `${form.yearsExperience || "N/A"} years`,
-      `${form.experienceNotes || "N/A"}`,
-      "",
-      "Compensation:",
-      `${form.compensationType || "Hourly"} | ${finalComp}`,
-      "",
-      "Availability:",
-      `Start: ${form.startAvailability || "N/A"}`,
-      form.startNotes ? `Start Date Notes: ${form.startNotes}` : "",
-      `Interview: ${form.interviewAvailability || "N/A"}`,
-      "",
-      "Work Expectations:",
-      `Schedule: ${form.workSchedule || "N/A"}`,
-      `OT: ${form.otRequirement || "N/A"}`,
-      `Weekend: ${form.weekendRequirement || "N/A"}`,
-      `On-Call: ${form.onCallRequirement || "N/A"}`,
-      `Work Area: ${form.workArea || "N/A"}`,
-      "",
+      "Experience Summary:",
+      `${form.fullName || "The candidate"} brings ${form.yearsExperience || "N/A"} years of experience as a ${form.position || "candidate"}. ${form.experienceNotes || ""}`.trim(),
       settings.templates.includeEducation ? `Education: ${buildEducation(form)}` : "",
       settings.templates.includeCredentials ? buildCredentials() : "",
       "",
-      "Notes:",
-      `${form.candidateNotes || "N/A"}`,
-      `${form.candidateComments ? `Candidate Comments: ${form.candidateComments}` : ""}`,
+      "Availability:",
+      `${form.fullName || "The candidate"} is available to start ${form.startAvailability || "N/A"}${form.startNotes ? `, with the following note: ${form.startNotes}` : ""}. Interview availability is ${form.interviewAvailability || "N/A"}.`,
+      "",
+      "Work Expectations:",
+      `Schedule: ${form.workSchedule || "N/A"} | OT: ${form.otRequirement || "N/A"} | Weekend: ${form.weekendRequirement || "N/A"} | On-Call: ${form.onCallRequirement || "N/A"}`,
+      "",
+      "Additional Notes:",
+      form.candidateNotes || "N/A",
       "",
       settings.templates.closingLine,
       settings.templates.followUpLine,
       "",
       settings.general.signOffName || settings.general.recruiterName || "",
       settings.general.signOffLine || "",
-    ];
-    return lines.filter(Boolean).join("\n");
+    ].filter(Boolean).join("\n");
   }
 
   function buildAtsShort(finalComp) {
     return [
-      `${form.fullName || "N/A"} | ${form.position || "N/A"} | ${form.siteName || "N/A"}`,
-      `${form.yearsExperience || "N/A"} yrs | ${finalComp}`,
-      settings.templates.includeAvailability ? `Start ${form.startAvailability || "N/A"} | Interview ${form.interviewAvailability || "N/A"}` : "",
-      `${form.workType || "N/A"} | ${FteLabel(form.fte)}`,
-      form.candidateNotes || "N/A",
-    ].filter(Boolean).join("\n");
+      `Submittal Date: ${todayString()}`,
+      `Recruiter: ${settings.general.recruiterName || "N/A"}`,
+      "",
+      `Candidate: ${form.fullName || "N/A"} | ${form.position || "N/A"} | ${form.siteName || "N/A"}`,
+      "",
+      "Quick Snapshot:",
+      `• ${form.yearsExperience || "N/A"} yrs | ${finalComp}`,
+      `• Start ${form.startAvailability || "N/A"} | Interview ${form.interviewAvailability || "N/A"}`,
+      `• ${form.workType || "N/A"} | ${FteLabel(form.fte)} | ${form.shiftPreference || "N/A"}`,
+      "",
+      "Full details available in submission.",
+    ].join("\n");
   }
 
   function buildCandidateEmail(finalComp) {
@@ -718,14 +773,18 @@ export default function App() {
       "",
       settings.templates.candidateEmailIntro,
       "",
-      `Role: ${form.position || "N/A"}`,
-      `Location: ${form.siteName || "N/A"}`,
-      `Work Type: ${form.workType || "N/A"}`,
-      `Shift: ${form.shiftPreference || "N/A"}`,
-      `Compensation Structure: ${form.compensationType || "Hourly"} | ${finalComp}`,
+      `Your profile has been submitted for the ${form.position || "position"}${form.shiftPreference ? `, ${form.shiftPreference}` : ""}${form.employmentType ? `, ${form.employmentType}` : ""} position with ${form.siteName || "the facility"}.`,
       "",
-      settings.templates.candidateEmailNextSteps,
+      "Compensation Structure:",
+      `${form.compensationType || "Hourly"}: ${finalComp}`,
+      "",
+      "Next Steps:",
+      `• ${settings.templates.candidateEmailNextStep1}`,
+      `• ${settings.templates.candidateEmailNextStep2}`,
+      `• ${settings.templates.candidateEmailNextStep3}`,
+      "",
       settings.templates.candidateEmailTiming,
+      settings.templates.candidateEmailSupportLine,
       "",
       settings.general.signOffName || settings.general.recruiterName || "",
       settings.general.signOffLine || "",
@@ -734,13 +793,25 @@ export default function App() {
 
   function generateOutput() {
     const finalComp = form.compensationRequested || estimatedComp || "TBD";
-    setOutput({
+    const generatedOutput = {
       submissionDate: todayString(),
       finalComp,
       hiringManagerEmail: buildHiringManagerEmail(finalComp),
       atsShort: buildAtsShort(finalComp),
       candidateEmail: buildCandidateEmail(finalComp),
-    });
+    };
+    setOutput(generatedOutput);
+    setSubmissionHistory((prev) => [
+      {
+        id: makeId("sub"),
+        candidate: form.fullName || "Unnamed Candidate",
+        position: form.position || "N/A",
+        site: form.siteName || "N/A",
+        date: generatedOutput.submissionDate,
+        output: generatedOutput,
+      },
+      ...prev,
+    ].slice(0, 25));
     setRecentCandidates((prev) => [form, ...prev.filter((item) => item.fullName !== form.fullName)].slice(0, 8));
   }
 
@@ -750,8 +821,6 @@ export default function App() {
     setForm({ ...DEFAULT_FORM });
     setOutput(null);
   }
-
-
 
   function importSettings(event) {
     const file = event.target.files?.[0];
@@ -775,7 +844,7 @@ export default function App() {
       roles: "positionTitle,roleCategory,requiresLicense,requiresCpr,requiresFte,requiresShift,requiresWorkExpectations,status\nRegistered Nurse,Healthcare,true,true,true,true,true,Active",
       rateTables: "positionTitle,scopeType,scopeValue,compensationType,basisType,experienceTier,baseAmount,shiftDifferentialNight,shiftDifferentialWeekend,shiftDifferentialEvening,customNotes\nRegistered Nurse,Site Type,24-hour,Hourly,Years-based,3–5,$42.25/hr,$2.00/hr,$1.50/hr,$1.00/hr,",
       shifts: "shiftOption\nDay\nNight\nEvening\nDay or Night\nEvening or Night\nAny Shift",
-      customFields: "label,fieldType,required,options,appliesTo\nCredential Notes,text,false,,candidate",
+      customFields: "label,fieldType,required,options,appliesTo\nSpecial Note,text,false,,candidate",
     };
     downloadTextFile(`${kind}-template.csv`, templates[kind] || "", "text/csv");
   }
@@ -783,7 +852,6 @@ export default function App() {
   const pageStyle = { minHeight: "100vh", background: theme.pageBg, color: theme.text, fontFamily: "Arial, sans-serif", fontSize: 10 };
   const shellStyle = { maxWidth: 1320, margin: "0 auto", padding: 28 };
   const gridTwo = { display: "grid", gap: 24, gridTemplateColumns: "1.05fr 0.95fr", alignItems: "start" };
-
   const fieldGrid = { display: "grid", gap: 16, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" };
 
   return (
@@ -796,6 +864,7 @@ export default function App() {
           action={
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
               <Button primary={activePage === "submission"} onClick={() => setActivePage("submission")}>✦ Submission</Button>
+              <Button primary={activePage === "submissions"} onClick={() => setActivePage("submissions")}>☰ Submissions</Button>
               <Button primary={activePage === "settings"} onClick={() => setActivePage("settings")}>⚙ Settings</Button>
             </div>
           }
@@ -847,17 +916,10 @@ export default function App() {
         {activePage === "submission" ? (
           <div style={gridTwo}>
             <div style={{ display: "grid", gap: 24 }}>
-              <Card title="Candidate Intake" subtitle="Professional intake flow with work expectations, custom fields, and clean outputs." theme={theme} action={<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button onClick={() => setForm(DEMO_FORM)}>Load Demo</Button><Button onClick={clearForm}>Clear Form</Button></div>}>
+              <Card title="Candidate Intake" subtitle="Professional intake flow with work expectations and clean outputs." theme={theme} action={<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button onClick={() => setForm(DEMO_FORM)}>Load Demo</Button><Button onClick={clearForm}>Clear Form</Button></div>}>
                 <div style={fieldGrid}>
-                  <Field label="Position" color={theme.muted}>
-                    <div style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr auto" }}>
-                      <SelectInput value={form.position} onChange={(e) => updateForm("position", e.target.value)} options={activeRoles.map((role) => role.positionTitle)} placeholder="Select role" border={theme.inputBorder} />
-                      <Button onClick={addCustomRole}>Add Custom Role</Button>
-                    </div>
-                  </Field>
-                  <Field label="Role Category" color={theme.muted}>
-                    <SelectInput value={form.roleCategory || selectedRole?.roleCategory || ""} onChange={(e) => updateForm("roleCategory", e.target.value)} options={settings.options.roleTypes} placeholder="Healthcare or Other" border={theme.inputBorder} />
-                  </Field>
+                  <Field label="Position" color={theme.muted}><SelectInput value={form.position} onChange={(e) => updateForm("position", e.target.value)} options={activeRoles.map((role) => role.positionTitle)} placeholder="Select role" border={theme.inputBorder} /></Field>
+                  <Field label="Role Category" color={theme.muted}><SelectInput value={form.roleCategory || selectedRole?.roleCategory || ""} onChange={(e) => updateForm("roleCategory", e.target.value)} options={settings.options.roleTypes} placeholder="Healthcare or Other" border={theme.inputBorder} /></Field>
                   <Field label="Full Name" color={theme.muted}><TextInput value={form.fullName} onChange={(e) => updateForm("fullName", e.target.value)} border={theme.inputBorder} /></Field>
                   <Field label="Phone Number" color={theme.muted}><TextInput value={form.phoneNumber} onChange={(e) => updateForm("phoneNumber", e.target.value)} border={theme.inputBorder} /></Field>
                   <Field label="Email Address" color={theme.muted}><TextInput value={form.emailAddress} onChange={(e) => updateForm("emailAddress", e.target.value)} border={theme.inputBorder} /></Field>
@@ -901,36 +963,10 @@ export default function App() {
                 </div>
 
                 <div style={{ marginTop: 20 }}>
-                  <h3 style={{ margin: 0, fontSize: 12, color: theme.text }}>Dynamic Custom Fields</h3>
-                  <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
-                    {settings.customFields.filter((field) => field.appliesTo === "candidate").map((field) => {
-                      const value = form.customFieldValues[field.id];
-                      return (
-                        <Field key={field.id} label={field.label || "Custom Field"} color={theme.muted}>
-                          {field.fieldType === "text" ? <TextInput value={value || ""} onChange={(e) => handleCustomFieldValue(field, e.target.value)} border={theme.inputBorder} /> : null}
-                          {field.fieldType === "dropdown" ? <SelectInput value={value || ""} onChange={(e) => handleCustomFieldValue(field, e.target.value)} options={field.options} border={theme.inputBorder} /> : null}
-                          {field.fieldType === "multi-select" ? <TextInput value={Array.isArray(value) ? value.join(", ") : ""} onChange={(e) => handleCustomFieldValue(field, e.target.value.split(",").map((item) => item.trim()).filter(Boolean))} placeholder="Comma separated selections" border={theme.inputBorder} /> : null}
-                          {field.fieldType === "checkbox" ? <ToggleField label={field.label || "Checkbox"} checked={Boolean(value)} onChange={(checked) => handleCustomFieldValue(field, checked)} theme={theme} /> : null}
-                        </Field>
-                      );
-                    })}
+                  <h3 style={{ margin: 0, fontSize: 12, color: theme.text }}>Additional Notes</h3>
+                  <div style={{ marginTop: 12 }}>
+                    <Field label="Candidate Notes" color={theme.muted}><TextArea value={form.candidateNotes} onChange={(e) => updateForm("candidateNotes", e.target.value)} border={theme.inputBorder} /></Field>
                   </div>
-                </div>
-
-                <div style={{ marginTop: 20, ...fieldGrid }}>
-                  <div style={{ gridColumn: "1 / -1" }}><Field label="Candidate Comments" color={theme.muted}><TextArea value={form.candidateComments} onChange={(e) => updateForm("candidateComments", e.target.value)} border={theme.inputBorder} /></Field></div>
-                  <div style={{ gridColumn: "1 / -1" }}><Field label="Candidate Notes" color={theme.muted}><TextArea value={form.candidateNotes} onChange={(e) => updateForm("candidateNotes", e.target.value)} border={theme.inputBorder} /></Field></div>
-                </div>
-
-                <div style={{ marginTop: 20 }}>
-                  <h3 style={{ margin: 0, fontSize: 12, color: theme.text }}>Import Function</h3>
-                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
-                    <Button onClick={() => importInputRef.current?.click()}>Import Document</Button>
-                    <Button onClick={() => importInputRef.current?.click()}>Import Spreadsheet/Data</Button>
-                  </div>
-                  <input ref={importInputRef} type="file" multiple style={{ display: "none" }} onChange={(e) => handleImport(e.target.files, "mixed")} />
-                  <div style={{ marginTop: 8, fontSize: 10, color: theme.muted }}>Supported: PDF, DOCX, TXT, XLSX, CSV</div>
-                  {form.uploads.length ? <div style={{ marginTop: 10, display: "grid", gap: 8 }}>{form.uploads.map((upload, index) => <div key={`${upload.name}-${index}`} style={{ fontSize: 10 }}>{upload.name} • {upload.mode}</div>)}</div> : null}
                 </div>
 
                 <div style={{ marginTop: 20, display: "flex", gap: 12, flexWrap: "wrap" }}>
@@ -961,26 +997,43 @@ export default function App() {
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}><div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: theme.muted }}>Hiring Manager Email</div><span style={badgeStyle(theme.badgeBlueBg, theme.badgeBlueText)}>Professional Format</span></div>
                         <Button onClick={() => safeCopy(output.hiringManagerEmail)}>Copy</Button>
                       </div>
-                      <pre style={{ margin: 0, whiteSpace: "pre-wrap", background: "#ffffff", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 14, lineHeight: 1.6, fontFamily: "Arial, sans-serif", fontSize: 10 }}>{output.hiringManagerEmail}</pre>
+                      <pre style={{ margin: 0, whiteSpace: "pre-wrap", background: "#ffffff", color: "#0f172a", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 14, lineHeight: 1.6, fontFamily: "Arial, sans-serif", fontSize: 10 }}>{output.hiringManagerEmail}</pre>
                     </div>
                     <div>
                       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, gap: 10, flexWrap: "wrap" }}>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}><div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: theme.muted }}>ATS Summary Block</div><span style={badgeStyle(theme.badgeGoldBg, theme.badgeGoldText)}>Short Version</span></div>
                         <Button onClick={() => safeCopy(output.atsShort)}>Copy</Button>
                       </div>
-                      <pre style={{ margin: 0, whiteSpace: "pre-wrap", background: "#ffffff", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 14, lineHeight: 1.6, fontFamily: "Arial, sans-serif", fontSize: 10 }}>{output.atsShort}</pre>
+                      <pre style={{ margin: 0, whiteSpace: "pre-wrap", background: "#ffffff", color: "#0f172a", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 14, lineHeight: 1.6, fontFamily: "Arial, sans-serif", fontSize: 10 }}>{output.atsShort}</pre>
                     </div>
                     <div>
                       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, gap: 10, flexWrap: "wrap" }}>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}><div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: theme.muted }}>Candidate Email</div><span style={badgeStyle(theme.badgeSlateBg, theme.badgeSlateText)}>Confirmation Option</span></div>
                         <Button onClick={() => safeCopy(output.candidateEmail)}>Copy</Button>
                       </div>
-                      <pre style={{ margin: 0, whiteSpace: "pre-wrap", background: "#ffffff", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 14, lineHeight: 1.6, fontFamily: "Arial, sans-serif", fontSize: 10 }}>{output.candidateEmail}</pre>
+                      <pre style={{ margin: 0, whiteSpace: "pre-wrap", background: "#ffffff", color: "#0f172a", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 14, lineHeight: 1.6, fontFamily: "Arial, sans-serif", fontSize: 10 }}>{output.candidateEmail}</pre>
                     </div>
                   </div>
                 )}
               </Card>
             </div>
+          </div>
+        ) : activePage === "submissions" ? (
+          <div style={{ display: "grid", gap: 24 }}>
+            <Card title="Submissions" subtitle="Submission history is kept separate from the intake page." theme={theme}>
+              {!submissionHistory.length ? (
+                <div style={{ border: `1px dashed ${theme.cardBorder}`, borderRadius: 16, padding: 24, textAlign: "center", color: theme.muted, fontFamily: "Arial, sans-serif" }}>No submissions generated yet.</div>
+              ) : (
+                <div style={{ display: "grid", gap: 12 }}>
+                  {submissionHistory.map((item) => (
+                    <button key={item.id} type="button" onClick={() => setOutput(item.output)} style={{ textAlign: "left", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 14, background: "#ffffff", cursor: "pointer", fontFamily: "Arial, sans-serif" }}>
+                      <div style={{ fontWeight: 700, fontSize: 10 }}>{item.candidate} | {item.position}</div>
+                      <div style={{ marginTop: 4, color: theme.muted, fontSize: 10 }}>{item.site} • {item.date}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Card>
           </div>
         ) : (
           <div style={{ display: "grid", gap: 24, gridTemplateColumns: "260px 1fr" }}>
@@ -992,7 +1045,7 @@ export default function App() {
                   ["sites", "⌂ Sites"],
                   ["roles", "◈ Roles"],
                   ["compensation", "⚡ Compensation Structure"],
-                  ["customFields", "☰ Custom Fields"],
+                  ["shifts", "⇄ Shifts + Core Options"],
                   ["templates", "✉ Templates"],
                   ["imports", "⬇ Imports + Templates"],
                 ].map(([key, label]) => <NavButton key={key} active={activeSettingsTab === key} onClick={() => setActiveSettingsTab(key)}>{label}</NavButton>)}
@@ -1001,27 +1054,17 @@ export default function App() {
 
             <div style={{ display: "grid", gap: 24 }}>
               {activeSettingsTab === "general" ? (
-                <>
-                  <Card title="Workspace Setup" subtitle="This personalizes the app immediately." theme={theme}>
-                    <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
-                      <Field label="Workspace Name" color={theme.muted}><TextInput value={settings.general.workspaceName} onChange={(e) => updateGeneral("workspaceName", e.target.value)} border={theme.inputBorder} /></Field>
-                      <Field label="Company Name" color={theme.muted}><TextInput value={settings.general.companyName} onChange={(e) => updateGeneral("companyName", e.target.value)} border={theme.inputBorder} /></Field>
-                      <Field label="Recruiter Name" color={theme.muted}><TextInput value={settings.general.recruiterName} onChange={(e) => updateGeneral("recruiterName", e.target.value)} border={theme.inputBorder} /></Field>
-                      <Field label="Recruiter Email" color={theme.muted}><TextInput value={settings.general.recruiterEmail} onChange={(e) => updateGeneral("recruiterEmail", e.target.value)} border={theme.inputBorder} /></Field>
-                      <Field label="Recruiter Phone" color={theme.muted}><TextInput value={settings.general.recruiterPhone} onChange={(e) => updateGeneral("recruiterPhone", e.target.value)} border={theme.inputBorder} /></Field>
-                      <Field label="Sign-Off Name" color={theme.muted}><TextInput value={settings.general.signOffName} onChange={(e) => updateGeneral("signOffName", e.target.value)} border={theme.inputBorder} /></Field>
-                      <div style={{ gridColumn: "1 / -1" }}><Field label="Sign-Off Line" color={theme.muted}><TextArea value={settings.general.signOffLine} onChange={(e) => updateGeneral("signOffLine", e.target.value)} border={theme.inputBorder} /></Field></div>
-                    </div>
-                  </Card>
-                  <Card title="Core Options" subtitle="Default role types, shifts, work types, start dates, and FTE display." theme={theme}>
-                    <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
-                      <TagListEditor label="Role Types" values={settings.options.roleTypes} onChange={(value) => updateOptions("roleTypes", value)} theme={theme} />
-                      <TagListEditor label="Work Types" values={settings.options.workTypes} onChange={(value) => updateOptions("workTypes", value)} theme={theme} />
-                      <TagListEditor label="Shift Preferences" values={settings.options.shiftOptions} onChange={(value) => updateOptions("shiftOptions", value)} theme={theme} />
-                      <TagListEditor label="Start Date Options" values={settings.options.startAvailabilityOptions} onChange={(value) => updateOptions("startAvailabilityOptions", value)} theme={theme} />
-                    </div>
-                  </Card>
-                </>
+                <Card title="Workspace Setup" subtitle="This personalizes the app immediately." theme={theme}>
+                  <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+                    <Field label="Workspace Name" color={theme.muted}><TextInput value={settings.general.workspaceName} onChange={(e) => updateGeneral("workspaceName", e.target.value)} border={theme.inputBorder} /></Field>
+                    <Field label="Company Name" color={theme.muted}><TextInput value={settings.general.companyName} onChange={(e) => updateGeneral("companyName", e.target.value)} border={theme.inputBorder} /></Field>
+                    <Field label="Recruiter Name" color={theme.muted}><TextInput value={settings.general.recruiterName} onChange={(e) => updateGeneral("recruiterName", e.target.value)} border={theme.inputBorder} /></Field>
+                    <Field label="Recruiter Email" color={theme.muted}><TextInput value={settings.general.recruiterEmail} onChange={(e) => updateGeneral("recruiterEmail", e.target.value)} border={theme.inputBorder} /></Field>
+                    <Field label="Recruiter Phone" color={theme.muted}><TextInput value={settings.general.recruiterPhone} onChange={(e) => updateGeneral("recruiterPhone", e.target.value)} border={theme.inputBorder} /></Field>
+                    <Field label="Sign-Off Name" color={theme.muted}><TextInput value={settings.general.signOffName} onChange={(e) => updateGeneral("signOffName", e.target.value)} border={theme.inputBorder} /></Field>
+                    <div style={{ gridColumn: "1 / -1" }}><Field label="Sign-Off Line" color={theme.muted}><TextArea value={settings.general.signOffLine} onChange={(e) => updateGeneral("signOffLine", e.target.value)} border={theme.inputBorder} /></Field></div>
+                  </div>
+                </Card>
               ) : null}
 
               {activeSettingsTab === "sites" ? (
@@ -1047,23 +1090,59 @@ export default function App() {
               ) : null}
 
               {activeSettingsTab === "roles" ? (
-                <Card title="Roles" subtitle="Use role category smart dropdown and add custom roles." theme={theme} action={<div style={{ display: "flex", gap: 8 }}><Button onClick={addRole}>Add Role</Button><Button onClick={addCustomRole}>Add Custom Role</Button></div>}>
+                <>
+                  <Card title="Role Category Options" subtitle="Edit the dropdown list used for Role Category." theme={theme}>
+                    <TagListEditor label="Role Categories" values={settings.options.roleTypes} onChange={(value) => updateOptions("roleTypes", value)} theme={theme} />
+                  </Card>
+                  <Card title="Roles" subtitle="Role Category is customizable through the editable options list and each role record." theme={theme} action={<Button onClick={addRole}>Add Role</Button>}>
+                    <div style={{ display: "grid", gap: 16 }}>
+                      {settings.roles.map((role) => (
+                        <div key={role.id} style={{ border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16, background: "#ffffff" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                            <div style={{ fontWeight: 700, fontSize: 10 }}>Role Record</div>
+                            <Button onClick={() => removeRole(role.id)} style={{ borderColor: "#fecaca", color: "#b91c1c" }}>Delete</Button>
+                          </div>
+                          <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+                            <Field label="Position Title" color={theme.muted}><TextInput value={role.positionTitle} onChange={(e) => updateRole(role.id, "positionTitle", e.target.value)} border={theme.inputBorder} /></Field>
+                            <Field label="Role Category" color={theme.muted}><SelectInput value={role.roleCategory} onChange={(e) => updateRole(role.id, "roleCategory", e.target.value)} options={settings.options.roleTypes} border={theme.inputBorder} /></Field>
+                            <ToggleField label="Requires License" checked={role.requiresLicense} onChange={(value) => updateRole(role.id, "requiresLicense", value)} theme={theme} />
+                            <ToggleField label="Requires CPR" checked={role.requiresCpr} onChange={(value) => updateRole(role.id, "requiresCpr", value)} theme={theme} />
+                            <ToggleField label="Requires FTE" checked={role.requiresFte} onChange={(value) => updateRole(role.id, "requiresFte", value)} theme={theme} />
+                            <ToggleField label="Requires Shift" checked={role.requiresShift} onChange={(value) => updateRole(role.id, "requiresShift", value)} theme={theme} />
+                            <ToggleField label="Requires Work Expectations" checked={role.requiresWorkExpectations} onChange={(value) => updateRole(role.id, "requiresWorkExpectations", value)} theme={theme} />
+                            <Field label="Status" color={theme.muted}><SelectInput value={role.status} onChange={(e) => updateRole(role.id, "status", e.target.value)} options={["Active", "Inactive"]} border={theme.inputBorder} /></Field>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                </>
+              ) : null}
+
+              {activeSettingsTab === "compensation" ? (
+                <Card title="Compensation Structure" subtitle="Hourly or salary, years-based, flat, or custom, with shift differentials." theme={theme} action={<Button onClick={addCompRule}>Add Rule</Button>}>
+                  <div style={{ marginBottom: 16 }}>
+                    <ToggleField label="Enable Compensation Structure" checked={settings.compensationStructure.enabled} onChange={(value) => setSettings((prev) => ({ ...prev, compensationStructure: { ...prev.compensationStructure, enabled: value } }))} theme={theme} />
+                  </div>
                   <div style={{ display: "grid", gap: 16 }}>
-                    {settings.roles.map((role) => (
-                      <div key={role.id} style={{ border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16, background: "#ffffff" }}>
+                    {settings.compensationStructure.rules.map((rule) => (
+                      <div key={rule.id} style={{ border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16, background: "#ffffff" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-                          <div style={{ fontWeight: 700, fontSize: 10 }}>Role Record</div>
-                          <Button onClick={() => removeRole(role.id)} style={{ borderColor: "#fecaca", color: "#b91c1c" }}>Delete</Button>
+                          <div style={{ fontWeight: 700, fontSize: 10 }}>Compensation Rule</div>
+                          <Button onClick={() => removeCompRule(rule.id)} style={{ borderColor: "#fecaca", color: "#b91c1c" }}>Delete</Button>
                         </div>
                         <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
-                          <Field label="Position Title" color={theme.muted}><TextInput value={role.positionTitle} onChange={(e) => updateRole(role.id, "positionTitle", e.target.value)} border={theme.inputBorder} /></Field>
-                          <Field label="Role Category" color={theme.muted}><SelectInput value={role.roleCategory} onChange={(e) => updateRole(role.id, "roleCategory", e.target.value)} options={settings.options.roleTypes} border={theme.inputBorder} /></Field>
-                          <ToggleField label="Requires License" checked={role.requiresLicense} onChange={(value) => updateRole(role.id, "requiresLicense", value)} theme={theme} />
-                          <ToggleField label="Requires CPR" checked={role.requiresCpr} onChange={(value) => updateRole(role.id, "requiresCpr", value)} theme={theme} />
-                          <ToggleField label="Requires FTE" checked={role.requiresFte} onChange={(value) => updateRole(role.id, "requiresFte", value)} theme={theme} />
-                          <ToggleField label="Requires Shift" checked={role.requiresShift} onChange={(value) => updateRole(role.id, "requiresShift", value)} theme={theme} />
-                          <ToggleField label="Requires Work Expectations" checked={role.requiresWorkExpectations} onChange={(value) => updateRole(role.id, "requiresWorkExpectations", value)} theme={theme} />
-                          <Field label="Status" color={theme.muted}><SelectInput value={role.status} onChange={(e) => updateRole(role.id, "status", e.target.value)} options={["Active", "Inactive"]} border={theme.inputBorder} /></Field>
+                          <Field label="Position" color={theme.muted}><SelectInput value={rule.positionTitle} onChange={(e) => updateCompRule(rule.id, "positionTitle", e.target.value)} options={settings.roles.map((role) => role.positionTitle).filter(Boolean)} border={theme.inputBorder} /></Field>
+                          <Field label="Scope Type" color={theme.muted}><SelectInput value={rule.scopeType} onChange={(e) => updateCompRule(rule.id, "scopeType", e.target.value)} options={["Site Type", "Site"]} border={theme.inputBorder} /></Field>
+                          <Field label={rule.scopeType === "Site Type" ? "Site Type" : "Site Name"} color={theme.muted}><SelectInput value={rule.scopeValue} onChange={(e) => updateCompRule(rule.id, "scopeValue", e.target.value)} options={rule.scopeType === "Site Type" ? [...new Set(settings.sites.map((site) => site.siteType).filter(Boolean))] : settings.sites.map((site) => site.siteName).filter(Boolean)} border={theme.inputBorder} /></Field>
+                          <Field label="Compensation Type" color={theme.muted}><SelectInput value={rule.compensationType} onChange={(e) => updateCompRule(rule.id, "compensationType", e.target.value)} options={COMP_TYPES} border={theme.inputBorder} /></Field>
+                          <Field label="Basis Type" color={theme.muted}><SelectInput value={rule.basisType} onChange={(e) => updateCompRule(rule.id, "basisType", e.target.value)} options={COMP_BASIS} border={theme.inputBorder} /></Field>
+                          <Field label="Experience Tier" color={theme.muted}><SelectInput value={rule.experienceTier} onChange={(e) => updateCompRule(rule.id, "experienceTier", e.target.value)} options={["0–2", "3–5", "6–10", "11–15", "16+"]} border={theme.inputBorder} /></Field>
+                          <Field label="Base Amount" color={theme.muted}><TextInput value={rule.baseAmount} onChange={(e) => updateCompRule(rule.id, "baseAmount", e.target.value)} border={theme.inputBorder} /></Field>
+                          <Field label="Night Differential" color={theme.muted}><TextInput value={rule.shiftDifferentialNight} onChange={(e) => updateCompRule(rule.id, "shiftDifferentialNight", e.target.value)} border={theme.inputBorder} /></Field>
+                          <Field label="Weekend Differential" color={theme.muted}><TextInput value={rule.shiftDifferentialWeekend} onChange={(e) => updateCompRule(rule.id, "shiftDifferentialWeekend", e.target.value)} border={theme.inputBorder} /></Field>
+                          <Field label="Evening Differential" color={theme.muted}><TextInput value={rule.shiftDifferentialEvening} onChange={(e) => updateCompRule(rule.id, "shiftDifferentialEvening", e.target.value)} border={theme.inputBorder} /></Field>
+                          <div style={{ gridColumn: "1 / -1" }}><Field label="Custom Notes" color={theme.muted}><TextArea value={rule.customNotes} onChange={(e) => updateCompRule(rule.id, "customNotes", e.target.value)} border={theme.inputBorder} /></Field></div>
                         </div>
                       </div>
                     ))}
@@ -1071,48 +1150,18 @@ export default function App() {
                 </Card>
               ) : null}
 
-              {activeSettingsTab === "compensation" ? (
-                <>
-                  <Card title="Compensation Structure" subtitle="Hourly or salary, years-based, flat, or custom, with shift differentials." theme={theme} action={<Button onClick={addCompRule}>Add Rule</Button>}>
-                    <div style={{ marginBottom: 16 }}>
-                      <ToggleField label="Enable Compensation Structure" checked={settings.compensationStructure.enabled} onChange={(value) => setSettings((prev) => ({ ...prev, compensationStructure: { ...prev.compensationStructure, enabled: value } }))} theme={theme} />
+              {activeSettingsTab === "shifts" ? (
+                <Card title="Shifts + Core Options" subtitle="Shift preferences, work types, start dates, and FTE display belong here." theme={theme}>
+                  <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+                    <TagListEditor label="Shift Preferences" values={settings.options.shiftOptions} onChange={(value) => updateOptions("shiftOptions", value)} theme={theme} />
+                    <TagListEditor label="Work Types" values={settings.options.workTypes} onChange={(value) => updateOptions("workTypes", value)} theme={theme} />
+                    <TagListEditor label="Start Date Options" values={settings.options.startAvailabilityOptions} onChange={(value) => updateOptions("startAvailabilityOptions", value)} theme={theme} />
+                    <div style={{ border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16, background: "#ffffff" }}>
+                      <div style={{ marginBottom: 10, fontSize: 10, fontWeight: 700, color: theme.text }}>FTE Display</div>
+                      <div style={{ display: "grid", gap: 8 }}>
+                        {FTE_OPTIONS.map((item) => <div key={item.value} style={{ fontSize: 10 }}>{item.label}</div>)}
+                      </div>
                     </div>
-                    <div style={{ display: "grid", gap: 16 }}>
-                      {settings.compensationStructure.rules.map((rule) => (
-                        <div key={rule.id} style={{ border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16, background: "#ffffff" }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-                            <div style={{ fontWeight: 700, fontSize: 10 }}>Compensation Rule</div>
-                            <Button onClick={() => removeCompRule(rule.id)} style={{ borderColor: "#fecaca", color: "#b91c1c" }}>Delete</Button>
-                          </div>
-                          <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
-                            <Field label="Position" color={theme.muted}><SelectInput value={rule.positionTitle} onChange={(e) => updateCompRule(rule.id, "positionTitle", e.target.value)} options={settings.roles.map((role) => role.positionTitle).filter(Boolean)} border={theme.inputBorder} /></Field>
-                            <Field label="Scope Type" color={theme.muted}><SelectInput value={rule.scopeType} onChange={(e) => updateCompRule(rule.id, "scopeType", e.target.value)} options={["Site Type", "Site"]} border={theme.inputBorder} /></Field>
-                            <Field label={rule.scopeType === "Site Type" ? "Site Type" : "Site Name"} color={theme.muted}><SelectInput value={rule.scopeValue} onChange={(e) => updateCompRule(rule.id, "scopeValue", e.target.value)} options={rule.scopeType === "Site Type" ? [...new Set(settings.sites.map((site) => site.siteType).filter(Boolean))] : settings.sites.map((site) => site.siteName).filter(Boolean)} border={theme.inputBorder} /></Field>
-                            <Field label="Compensation Type" color={theme.muted}><SelectInput value={rule.compensationType} onChange={(e) => updateCompRule(rule.id, "compensationType", e.target.value)} options={COMP_TYPES} border={theme.inputBorder} /></Field>
-                            <Field label="Basis Type" color={theme.muted}><SelectInput value={rule.basisType} onChange={(e) => updateCompRule(rule.id, "basisType", e.target.value)} options={COMP_BASIS} border={theme.inputBorder} /></Field>
-                            <Field label="Experience Tier" color={theme.muted}><SelectInput value={rule.experienceTier} onChange={(e) => updateCompRule(rule.id, "experienceTier", e.target.value)} options={["0–2", "3–5", "6–10", "11–15", "16+"]} border={theme.inputBorder} /></Field>
-                            <Field label="Base Amount" color={theme.muted}><TextInput value={rule.baseAmount} onChange={(e) => updateCompRule(rule.id, "baseAmount", e.target.value)} border={theme.inputBorder} /></Field>
-                            <Field label="Night Differential" color={theme.muted}><TextInput value={rule.shiftDifferentialNight} onChange={(e) => updateCompRule(rule.id, "shiftDifferentialNight", e.target.value)} border={theme.inputBorder} /></Field>
-                            <Field label="Weekend Differential" color={theme.muted}><TextInput value={rule.shiftDifferentialWeekend} onChange={(e) => updateCompRule(rule.id, "shiftDifferentialWeekend", e.target.value)} border={theme.inputBorder} /></Field>
-                            <Field label="Evening Differential" color={theme.muted}><TextInput value={rule.shiftDifferentialEvening} onChange={(e) => updateCompRule(rule.id, "shiftDifferentialEvening", e.target.value)} border={theme.inputBorder} /></Field>
-                            <div style={{ gridColumn: "1 / -1" }}><Field label="Custom Notes" color={theme.muted}><TextArea value={rule.customNotes} onChange={(e) => updateCompRule(rule.id, "customNotes", e.target.value)} border={theme.inputBorder} /></Field></div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </Card>
-                  <Card title="FTE Display" subtitle="FTE labels now display as weekly hours plus numeric FTE." theme={theme}>
-                    <div style={{ display: "grid", gap: 8 }}>
-                      {FTE_OPTIONS.map((item) => <div key={item.value} style={{ fontSize: 10 }}>{item.label}</div>)}
-                    </div>
-                  </Card>
-                </>
-              ) : null}
-
-              {activeSettingsTab === "customFields" ? (
-                <Card title="Dynamic Custom Fields" subtitle="Add text, dropdown, multi-select, and checkbox fields." theme={theme} action={<Button onClick={addCustomField}>Add Custom Field</Button>}>
-                  <div style={{ display: "grid", gap: 16 }}>
-                    {settings.customFields.map((field) => <CustomFieldEditor key={field.id} field={field} onUpdate={updateCustomField} onRemove={removeCustomField} theme={theme} />)}
                   </div>
                 </Card>
               ) : null}
@@ -1136,8 +1185,12 @@ export default function App() {
                       <ToggleField label="Include Availability" checked={settings.templates.includeAvailability} onChange={(value) => updateTemplates("includeAvailability", value)} theme={theme} />
                       <ToggleField label="Include Credentials" checked={settings.templates.includeCredentials} onChange={(value) => updateTemplates("includeCredentials", value)} theme={theme} />
                       <div style={{ gridColumn: "1 / -1" }}><Field label="Candidate Email Intro" color={theme.muted}><TextArea value={settings.templates.candidateEmailIntro} onChange={(e) => updateTemplates("candidateEmailIntro", e.target.value)} border={theme.inputBorder} /></Field></div>
-                      <div style={{ gridColumn: "1 / -1" }}><Field label="Candidate Email Next Steps" color={theme.muted}><TextArea value={settings.templates.candidateEmailNextSteps} onChange={(e) => updateTemplates("candidateEmailNextSteps", e.target.value)} border={theme.inputBorder} /></Field></div>
-                      <div style={{ gridColumn: "1 / -1" }}><Field label="Candidate Follow-Up Timing" color={theme.muted}><TextArea value={settings.templates.candidateEmailTiming} onChange={(e) => updateTemplates("candidateEmailTiming", e.target.value)} border={theme.inputBorder} /></Field></div>
+                      <div style={{ gridColumn: "1 / -1" }}><Field label="Submission Confirmation Line" color={theme.muted}><TextArea value={settings.templates.candidateEmailSubmissionLine} onChange={(e) => updateTemplates("candidateEmailSubmissionLine", e.target.value)} border={theme.inputBorder} /></Field></div>
+                      <div style={{ gridColumn: "1 / -1" }}><Field label="Next Step 1" color={theme.muted}><TextArea value={settings.templates.candidateEmailNextStep1} onChange={(e) => updateTemplates("candidateEmailNextStep1", e.target.value)} border={theme.inputBorder} /></Field></div>
+                      <div style={{ gridColumn: "1 / -1" }}><Field label="Next Step 2" color={theme.muted}><TextArea value={settings.templates.candidateEmailNextStep2} onChange={(e) => updateTemplates("candidateEmailNextStep2", e.target.value)} border={theme.inputBorder} /></Field></div>
+                      <div style={{ gridColumn: "1 / -1" }}><Field label="Next Step 3" color={theme.muted}><TextArea value={settings.templates.candidateEmailNextStep3} onChange={(e) => updateTemplates("candidateEmailNextStep3", e.target.value)} border={theme.inputBorder} /></Field></div>
+                      <div style={{ gridColumn: "1 / -1" }}><Field label="Follow-Up Timing" color={theme.muted}><TextArea value={settings.templates.candidateEmailTiming} onChange={(e) => updateTemplates("candidateEmailTiming", e.target.value)} border={theme.inputBorder} /></Field></div>
+                      <div style={{ gridColumn: "1 / -1" }}><Field label="Support Line" color={theme.muted}><TextArea value={settings.templates.candidateEmailSupportLine} onChange={(e) => updateTemplates("candidateEmailSupportLine", e.target.value)} border={theme.inputBorder} /></Field></div>
                     </div>
                   </Card>
                 </>
@@ -1159,7 +1212,7 @@ export default function App() {
                       <div style={{ fontSize: 10, color: theme.muted }}>Bulk import includes: locations, rates, shifts, roles, requirements.</div>
                     </div>
                   </Card>
-                  <Card title="Downloadable Templates" subtitle="Option A enabled: use downloadable templates for setup." theme={theme}>
+                  <Card title="Downloadable Templates" subtitle="Use downloadable templates for setup." theme={theme}>
                     <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                       <Button onClick={() => downloadTemplate("locations")}>Locations Template</Button>
                       <Button onClick={() => downloadTemplate("roles")}>Roles Template</Button>
@@ -1168,7 +1221,7 @@ export default function App() {
                       <Button onClick={() => downloadTemplate("customFields")}>Custom Fields Template</Button>
                     </div>
                     <div style={{ marginTop: 16, fontSize: 10, color: theme.muted }}>
-                      Tutorial: Use manual setup to enter records one by one, or use upload setup to bulk-load files and templates. Start with Workspace Setup, then Sites, Roles, Compensation Structure, Templates, and finally imports.
+                      Tutorial: Use manual setup to enter records one by one, or use upload setup to bulk-load files and templates. Start with Workspace Setup, then Sites, Roles, Compensation Structure, Shifts + Core Options, Templates, and finally imports.
                     </div>
                   </Card>
                 </>
