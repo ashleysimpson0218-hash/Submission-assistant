@@ -751,17 +751,7 @@ export default function App() {
     setOutput(null);
   }
 
-  function useDemoWorkspace() {
-    setSettings(DEFAULT_SETTINGS);
-    setForm(DEMO_FORM);
-    setRecentCandidates([DEMO_FORM]);
-    setOutput(null);
-    setActivePage("submission");
-  }
 
-  function exportSettings() {
-    downloadTextFile("welcomeflow-settings.json", JSON.stringify(settings, null, 2), "application/json");
-  }
 
   function importSettings(event) {
     const file = event.target.files?.[0];
@@ -793,7 +783,7 @@ export default function App() {
   const pageStyle = { minHeight: "100vh", background: theme.pageBg, color: theme.text, fontFamily: "Arial, sans-serif", fontSize: 10 };
   const shellStyle = { maxWidth: 1320, margin: "0 auto", padding: 28 };
   const gridTwo = { display: "grid", gap: 24, gridTemplateColumns: "1.05fr 0.95fr", alignItems: "start" };
-  const settingsLayout = { display: "grid", gap: 24, gridTemplateColumns: "260px 1fr", alignItems: "start" };
+
   const fieldGrid = { display: "grid", gap: 16, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" };
 
   return (
