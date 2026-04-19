@@ -757,8 +757,7 @@ export default function App() {
     "",
     settings.general.signOffName || settings.general.recruiterName || "",
     settings.general.signOffLine || "",
-  ].filter(Boolean).join("
-");
+  ].filter(Boolean).join("\n");
 }
 
   function buildAtsShort(finalComp) {
@@ -776,8 +775,7 @@ export default function App() {
     "Status: Ready for submission",
     "",
     "Full details available in submission.",
-  ].join("
-");
+  ].join("\n");
 }
 
   function buildCandidateEmail(finalComp) {
@@ -803,8 +801,7 @@ export default function App() {
     "",
     settings.general.signOffName || settings.general.recruiterName || "",
     settings.general.signOffLine || "",
-  ].filter(Boolean).join("
-");
+  ].filter(Boolean).join("\n");
 }
 
   function generateOutput() {
