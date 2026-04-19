@@ -715,81 +715,97 @@ export default function App() {
   }
 
   function buildHiringManagerEmail(finalComp) {
-    const facilityName = form.siteName || settings.general.companyName || "Hiring Team";
-    return [
-      `Hello ${facilityName},`,
-      "",
-      "Please review the candidate details below.",
-      "",
-      `Submission Date: ${todayString()}`,
-      "",
-      "Candidate Summary:",
-      `${form.fullName || "N/A"} | ${form.position || "N/A"} | ${FteLabel(form.fte)} | ${form.shiftPreference || "N/A"}`,
-      `${form.phoneNumber || "N/A"} | ${form.emailAddress || "N/A"}`,
-      `${form.workArea || "N/A"} | ${form.location || "N/A"}`,
-      `Compensation: ${form.compensationType || "Hourly"} | ${finalComp}`,
-      "",
-      "Experience Summary:",
-      `${form.fullName || "The candidate"} brings ${form.yearsExperience || "N/A"} years of experience as a ${form.position || "candidate"}. ${form.experienceNotes || ""}`.trim(),
-      settings.templates.includeEducation ? `Education: ${buildEducation(form)}` : "",
-      settings.templates.includeCredentials ? buildCredentials() : "",
-      "",
-      "Availability:",
-      `${form.fullName || "The candidate"} is available to start ${form.startAvailability || "N/A"}${form.startNotes ? `, with the following note: ${form.startNotes}` : ""}. Interview availability is ${form.interviewAvailability || "N/A"}.`,
-      "",
-      "Work Expectations:",
-      `Schedule: ${form.workSchedule || "N/A"} | OT: ${form.otRequirement || "N/A"} | Weekend: ${form.weekendRequirement || "N/A"} | On-Call: ${form.onCallRequirement || "N/A"}`,
-      "",
-      "Additional Notes:",
-      form.candidateNotes || "N/A",
-      "",
-      settings.templates.closingLine,
-      settings.templates.followUpLine,
-      "",
-      settings.general.signOffName || settings.general.recruiterName || "",
-      settings.general.signOffLine || "",
-    ].filter(Boolean).join("\n");
-  }
+  const facilityName = form.siteName || settings.general.companyName || "Hiring Team";
+  const positionName = form.position || "candidate";
+  const candidateName = form.fullName || "The candidate";
+  const credentialsLine = settings.templates.includeCredentials ? buildCredentials() : "";
+  const educationLine = settings.templates.includeEducation ? buildEducation(form) : "";
+
+  const availabilitySentence = `${candidateName} is available to start ${form.startAvailability || "N/A"}${form.startNotes ? `, with the following note: ${form.startNotes}` : ""}. Interview availability is ${form.interviewAvailability || "N/A"}.`;
+
+  const workExpectationSentence = `The candidate has confirmed a schedule of ${form.workSchedule || "N/A"}, with OT set to ${form.otRequirement || "N/A"}, weekend requirement set to ${form.weekendRequirement || "N/A"}, and on-call requirement set to ${form.onCallRequirement || "N/A"}. Work area: ${form.workArea || "N/A"}.`;
+
+  return [
+    `Hello ${facilityName},`,
+    "",
+    "Please review the candidate details below.",
+    "",
+    settings.templates.includeSubmissionDate ? `Submission Date: ${todayString()}` : "",
+    "",
+    "Candidate Summary",
+    `${candidateName} | ${positionName} | ${FteLabel(form.fte)} | ${form.shiftPreference || "N/A"}`,
+    `${form.phoneNumber || "N/A"} | ${form.emailAddress || "N/A"}`,
+    `${form.workArea || "N/A"} | ${form.location || "N/A"}`,
+    `Compensation: ${form.compensationType || "Hourly"} | ${finalComp}`,
+    "",
+    "Experience Summary",
+    `${candidateName} brings ${form.yearsExperience || "N/A"} years of experience as a ${positionName}. ${form.experienceNotes || ""}`.trim(),
+    educationLine ? `Education: ${educationLine}` : "",
+    credentialsLine || "",
+    "",
+    "Availability",
+    availabilitySentence,
+    "",
+    "Work Expectations",
+    workExpectationSentence,
+    "",
+    "Additional Notes",
+    form.candidateNotes || "N/A",
+    "",
+    settings.templates.closingLine,
+    settings.templates.followUpLine,
+    "",
+    settings.general.signOffName || settings.general.recruiterName || "",
+    settings.general.signOffLine || "",
+  ].filter(Boolean).join("
+");
+}
 
   function buildAtsShort(finalComp) {
-    return [
-      `Submittal Date: ${todayString()}`,
-      `Recruiter: ${settings.general.recruiterName || "N/A"}`,
-      "",
-      `Candidate: ${form.fullName || "N/A"} | ${form.position || "N/A"} | ${form.siteName || "N/A"}`,
-      "",
-      "Quick Snapshot:",
-      `• ${form.yearsExperience || "N/A"} yrs | ${finalComp}`,
-      `• Start ${form.startAvailability || "N/A"} | Interview ${form.interviewAvailability || "N/A"}`,
-      `• ${form.workType || "N/A"} | ${FteLabel(form.fte)} | ${form.shiftPreference || "N/A"}`,
-      "",
-      "Full details available in submission.",
-    ].join("\n");
-  }
+  return [
+    `Submittal Date: ${todayString()}`,
+    `Recruiter: ${settings.general.recruiterName || "N/A"}`,
+    "",
+    `Candidate: ${form.fullName || "N/A"} | ${form.position || "N/A"} | ${form.siteName || "N/A"}`,
+    "",
+    "Quick Snapshot",
+    `• ${form.yearsExperience || "N/A"} yrs | ${finalComp}`,
+    `• Start ${form.startAvailability || "N/A"} | Interview ${form.interviewAvailability || "N/A"}`,
+    `• ${form.workType || "N/A"} | ${FteLabel(form.fte)} | ${form.shiftPreference || "N/A"}`,
+    "",
+    "Status: Ready for submission",
+    "",
+    "Full details available in submission.",
+  ].join("
+");
+}
 
   function buildCandidateEmail(finalComp) {
-    return [
-      `Hello ${form.fullName || "Candidate"},`,
-      "",
-      settings.templates.candidateEmailIntro,
-      "",
-      `Your profile has been submitted for the ${form.position || "position"}${form.shiftPreference ? `, ${form.shiftPreference}` : ""}${form.employmentType ? `, ${form.employmentType}` : ""} position with ${form.siteName || "the facility"}.`,
-      "",
-      "Compensation Structure:",
-      `${form.compensationType || "Hourly"}: ${finalComp}`,
-      "",
-      "Next Steps:",
-      `• ${settings.templates.candidateEmailNextStep1}`,
-      `• ${settings.templates.candidateEmailNextStep2}`,
-      `• ${settings.templates.candidateEmailNextStep3}`,
-      "",
-      settings.templates.candidateEmailTiming,
-      settings.templates.candidateEmailSupportLine,
-      "",
-      settings.general.signOffName || settings.general.recruiterName || "",
-      settings.general.signOffLine || "",
-    ].filter(Boolean).join("\n");
-  }
+  const positionLine = `${form.position || "position"}${form.shiftPreference ? `, ${form.shiftPreference}` : ""}${form.employmentType ? `, ${form.employmentType}` : ""}`;
+
+  return [
+    `Hello ${form.fullName || "Candidate"},`,
+    "",
+    settings.templates.candidateEmailIntro,
+    "",
+    `Your profile has been submitted for the ${positionLine} position with ${form.siteName || "the facility"}.`,
+    "",
+    "Compensation Structure",
+    `${form.compensationType || "Hourly"}: ${finalComp}`,
+    "",
+    "Next Steps",
+    `• ${settings.templates.candidateEmailNextStep1}`,
+    `• ${settings.templates.candidateEmailNextStep2}`,
+    `• ${settings.templates.candidateEmailNextStep3}`,
+    "",
+    settings.templates.candidateEmailTiming,
+    settings.templates.candidateEmailSupportLine,
+    "",
+    settings.general.signOffName || settings.general.recruiterName || "",
+    settings.general.signOffLine || "",
+  ].filter(Boolean).join("
+");
+}
 
   function generateOutput() {
     const finalComp = form.compensationRequested || estimatedComp || "TBD";
