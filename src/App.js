@@ -714,52 +714,50 @@ export default function App() {
     return values.join(" | ");
   }
 
-  function buildHiringManagerEmail(finalComp) {
-    const facilityName = form.siteName || settings.general.companyName || "Hiring Team";
-    const positionName = form.position || "candidate";
-    const candidateName = form.fullName || "The candidate";
-    const credentialsLine = settings.templates.includeCredentials ? buildCredentials() : "";
-    const educationLine = settings.templates.includeEducation ? buildEducation(form) : "";
+ function buildHiringManagerEmail(finalComp) {
+  const facilityName = form.siteName || settings.general.companyName || "Hiring Team";
+  const candidateName = form.fullName || "The candidate";
+  const positionName = form.position || "N/A";
 
-    const availabilitySentence = `${candidateName} is available to start ${form.startAvailability || "N/A"}${form.startNotes ? `, with the following note: ${form.startNotes}` : ""}. Interview availability is ${form.interviewAvailability || "N/A"}.`;
+  const educationLine = buildEducation(form);
+  const credentialsLine = buildCredentials();
 
-    const workExpectationSentence = `The candidate has confirmed a schedule of ${form.workSchedule || "N/A"}, with OT set to ${form.otRequirement || "N/A"}, weekend requirement set to ${form.weekendRequirement || "N/A"}, and on-call requirement set to ${form.onCallRequirement || "N/A"}. Work area: ${form.workArea || "N/A"}.`;
-
-    return [
-      `Hello ${facilityName},`,
-      "",
-      "Please review the candidate details below.",
-      "",
-      settings.templates.includeSubmissionDate ? `Submission Date: ${todayString()}` : "",
-      "",
-      "Candidate Summary",
-      `${candidateName} | ${positionName} | ${FteLabel(form.fte)} | ${form.shiftPreference || "N/A"}`,
-      `${form.phoneNumber || "N/A"} | ${form.emailAddress || "N/A"}`,
-      `${form.workArea || "N/A"} | ${form.location || "N/A"}`,
-      `Compensation: ${form.compensationType || "Hourly"} | ${finalComp}`,
-      "",
-      "Experience Summary",
-      `${candidateName} brings ${form.yearsExperience || "N/A"} years of experience as a ${positionName}. ${form.experienceNotes || ""}`.trim(),
-      educationLine ? `Education: ${educationLine}` : "",
-      credentialsLine || "",
-      "",
-      "Availability",
-      availabilitySentence,
-      "",
-      "Work Expectations",
-      workExpectationSentence,
-      "",
-      "Additional Notes",
-      form.candidateNotes || "N/A",
-      "",
-      settings.templates.closingLine,
-      settings.templates.followUpLine,
-      "",
-      settings.general.signOffName || settings.general.recruiterName || "",
-      settings.general.signOffLine || "",
-    ].filter(Boolean).join("\n");
-  }
-
+  return [
+    `Hello ${facilityName},`,
+    "",
+    "Please review the candidate details below.",
+    "",
+    `Submission Date: ${todayString()}`,
+    "",
+    "Candidate Summary",
+    `• ${candidateName} | ${positionName} | ${FteLabel(form.fte)} | ${form.shiftPreference || "N/A"}`,
+    `• ${form.phoneNumber || "N/A"} | ${form.emailAddress || "N/A"}`,
+    `• ${facilityName} | ${form.location || "N/A"}`,
+    `• Compensation: ${form.compensationType || "Hourly"} | ${finalComp}`,
+    "",
+    "Experience Summary",
+    `• ${candidateName} brings ${form.yearsExperience || "N/A"} years of experience as a ${positionName}. ${form.experienceNotes || ""}`.trim(),
+    educationLine && educationLine !== "N/A" ? `• Education: ${educationLine}` : "",
+    credentialsLine ? `• ${credentialsLine}` : "",
+    "",
+    "Availability",
+    `• Available to start ${form.startAvailability || "N/A"}${form.startNotes ? `, with the following note: ${form.startNotes}` : ""}. Interview availability is ${form.interviewAvailability || "N/A"}.`,
+    "",
+    "Work Expectations",
+    `• The candidate has confirmed a schedule of ${form.workSchedule || "N/A"}, with OT set to ${form.otRequirement || "N/A"}, weekend requirement set to ${form.weekendRequirement || "N/A"}, and on-call requirement set to ${form.onCallRequirement || "N/A"}.`,
+    "",
+    "Work Area",
+    `• ${form.workArea || "N/A"}`,
+    "",
+    "Additional Notes",
+    `${form.candidateNotes || ""} ${settings.templates.closingLine} ${settings.templates.followUpLine}`.trim(),
+    "",
+    settings.general.signOffName || settings.general.recruiterName || "",
+    settings.general.signOffLine || "",
+  ]
+    .filter(Boolean)
+    .join("\\n");
+}
   function buildAtsShort(finalComp) {
     return [
       `Submittal Date: ${todayString()}`,
