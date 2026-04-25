@@ -269,7 +269,49 @@ function ToggleField({ label, checked, onChange, theme }) { return <label style=
 function Badge({ children, bg, color }) { return <span style={{ display: "inline-flex", alignItems: "center", padding: "7px 11px", borderRadius: 999, background: bg, color, fontSize: 12, fontWeight: 700 }}>{children}</span>; }
 function DashboardChip({ label, value, bg, color, onClick }) { return <button type="button" onClick={onClick} style={{ display: "grid", gap: 3, minWidth: 128, textAlign: "left", padding: "12px 14px", borderRadius: 16, border: "1px solid rgba(148,163,184,0.35)", background: bg, color, cursor: "pointer", boxShadow: "0 8px 18px rgba(15,23,42,0.06)", fontFamily: "Arial, sans-serif" }}><span style={{ fontSize: 18, fontWeight: 800, lineHeight: 1 }}>{value}</span><span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</span></button>; }
 function NavButton({ active, children, onClick }) { return <button type="button" onClick={onClick} style={{ width: "100%", textAlign: "left", padding: "12px 14px", borderRadius: 12, border: active ? "1px solid #1e3a8a" : "1px solid transparent", background: active ? "linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%)" : "transparent", color: active ? "#ffffff" : "#334155", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>{children}</button>; }
-function OutputBlock({ title, badge, value, theme }) { return <div><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, alignItems: "center" }}><div style={{ display: "flex", gap: 8, alignItems: "center" }}><strong style={{ color: theme.muted, fontSize: 12, textTransform: "uppercase" }}>{title}</strong>{badge ? <Badge bg={theme.blueBg} color={theme.blueText}>{badge}</Badge> : null}</div><Button onClick={() => copyText(value)}>Copy</Button></div><pre style={{ margin: 0, whiteSpace: "pre-wrap", background: "#ffffff", color: "#0f172a", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 18, lineHeight: 1.75, fontFamily: "Arial, sans-serif", fontSize: 13 }}>{value}</pre></div>; }
+function EmailDocumentBlock({ title, badge, subject, body, theme, onOpenDraft }) {
+  const lines = String(body || "").split(NL);
+  const sectionTitles = new Set([
+    "Candidate Snapshot",
+    "Why This Candidate Stands Out",
+    "Experience & Credentials",
+    "Work Expectations",
+    "Additional Notes",
+    "Next Steps",
+    "Compensation Structure",
+    "Candidate Details",
+    "Quick Snapshot",
+    "Recommended Action",
+  ]);
+
+  return <div style={{ background: "#ffffff", color: "#0f172a", border: `1px solid ${theme.cardBorder}`, borderRadius: 20, padding: 20, boxShadow: "0 8px 22px rgba(15,23,42,0.05)" }}>
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 14, flexWrap: "wrap" }}>
+      <div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <h3 style={{ margin: 0, fontSize: 17, color: "#0f172a" }}>{title}</h3>
+          {badge ? <Badge bg={theme.blueBg} color={theme.blueText}>{badge}</Badge> : null}
+        </div>
+        {subject ? <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 12, background: "#f8fafc", border: "1px solid #e2e8f0", fontSize: 13, lineHeight: 1.5 }}><strong>Subject:</strong> {subject}</div> : null}
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {subject ? <Button onClick={() => copyText(subject)}>Copy Subject</Button> : null}
+        <Button onClick={() => copyText(body)}>Copy Body</Button>
+        {onOpenDraft ? <Button primary onClick={onOpenDraft}>Open Draft Email</Button> : null}
+      </div>
+    </div>
+    <div style={{ border: "1px solid #e2e8f0", borderRadius: 16, padding: 18, background: "#ffffff", lineHeight: 1.75, fontSize: 13 }}>
+      {lines.map((line, index) => {
+        const clean = line.trim();
+        if (!clean) return <div key={index} style={{ height: 12 }} />;
+        if (sectionTitles.has(clean)) return <div key={index} style={{ margin: index === 0 ? "0 0 8px" : "18px 0 8px", paddingBottom: 5, borderBottom: "1px solid #e2e8f0", fontWeight: 800, fontSize: 14, color: "#0f172a" }}>{clean}</div>;
+        if (clean.startsWith("•")) return <div key={index} style={{ margin: "4px 0 4px 8px" }}>{clean}</div>;
+        if (clean.startsWith("Subject:")) return <div key={index} style={{ fontWeight: 700 }}>{clean}</div>;
+        return <div key={index} style={{ margin: "4px 0" }}>{clean}</div>;
+      })}
+    </div>
+  </div>;
+}
+
 function TagEditor({ label, values, onChange, theme }) { const [draft, setDraft] = useState(""); function add() { const clean = draft.trim(); if (!clean || values.includes(clean)) return; onChange([...values, clean]); setDraft(""); } return <div style={{ background: "#ffffff", color: "#0f172a", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16 }}><strong>{label}</strong><div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "12px 0" }}>{values.map((value) => <span key={value} style={{ display: "inline-flex", gap: 8, alignItems: "center", padding: "6px 9px", borderRadius: 999, background: "#eef2ff", border: "1px solid #dbe4f0", fontSize: 12 }}>{value}<button type="button" onClick={() => onChange(values.filter((item) => item !== value))} style={{ border: "none", background: "transparent", cursor: "pointer" }}>×</button></span>)}</div><div style={{ display: "flex", gap: 8 }}><TextInput value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Add option" border={theme.inputBorder} /><Button onClick={add}>Add</Button></div></div>; }
 
 export default function App() {
@@ -400,7 +442,7 @@ export default function App() {
         <div style={{ marginTop: 20 }}><Field label="Additional Notes" color={theme.muted}><TextArea value={form.candidateNotes} onChange={(e) => updateForm("candidateNotes", e.target.value)} border={theme.inputBorder} /></Field></div>
         <div style={{ display: "flex", gap: 10, marginTop: 20, flexWrap: "wrap" }}><Button primary onClick={generateOutput}>Generate Output</Button><Button onClick={submitCandidateFlow}>Submit Candidate Workflow</Button></div></Card>
       </div>
-      <Card title="Generated Output" subtitle="Approve, send, log, confirm, remind, and age the submission." theme={theme}>{!output ? <div style={{ border: `1px dashed ${theme.cardBorder}`, borderRadius: 16, padding: 28, textAlign: "center", color: theme.muted }}>Generate output to preview submission content.</div> : <div style={{ display: "grid", gap: 22 }}><OutputBlock title="Subject" badge="Hiring Manager" value={output.hiringSubject} theme={theme} /><OutputBlock title="Hiring Manager Email" badge={getStrengthLabel()} value={output.hiringEmail} theme={theme} /><div style={{ display: "flex", justifyContent: "flex-end", marginTop: -14 }}><Button onClick={() => openEmail("hiring")}>Open in Outlook</Button></div><OutputBlock title="ATS Summary Block" badge="Operational" value={output.ats} theme={theme} /><OutputBlock title="Candidate Email" badge="Confirmation" value={output.candidateEmail} theme={theme} /><div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}><Button onClick={() => openEmail("candidate")}>Email Candidate</Button><Button primary onClick={submitCandidateFlow}>Approve + Execute Workflow</Button></div></div>}</Card>
+      <Card title="Generated Output" subtitle="Approve, send, log, confirm, remind, and age the submission." theme={theme}>{!output ? <div style={{ border: `1px dashed ${theme.cardBorder}`, borderRadius: 16, padding: 28, textAlign: "center", color: theme.muted }}>Generate output to preview submission content.</div> : <div style={{ display: "grid", gap: 22 }}><EmailDocumentBlock title="Hiring Manager Draft" badge={getStrengthLabel()} subject={output.hiringSubject} body={output.hiringEmail} theme={theme} onOpenDraft={() => openEmail("hiring")} /><EmailDocumentBlock title="ATS Summary Block" badge="Operational" subject={output.atsSubject} body={output.ats} theme={theme} /><EmailDocumentBlock title="Candidate Email Draft" badge="Confirmation" subject={output.candidateSubject} body={output.candidateEmail} theme={theme} onOpenDraft={() => openEmail("candidate")} /><div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}><Button primary onClick={submitCandidateFlow}>Approve + Execute Workflow</Button></div></div>}</Card>
     </div> : null}
 
     {activePage === "tracker" ? <Card title="Submission Tracker" subtitle="Control tower view: aging, owner, next action, risk, client response, and outcome." theme={theme}>{!tracker.length ? <div style={{ border: `1px dashed ${theme.cardBorder}`, borderRadius: 16, padding: 24, textAlign: "center", color: theme.muted }}>No tracked submissions yet.</div> : <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 10px", color: "#0f172a" }}><thead><tr>{["Candidate", "Role", "Facility", "Status", "Aging", "Risk", "Next Action", "Due", "Owner", "Feedback", "Outcome", "Reason"].map((h) => <th key={h} style={{ textAlign: "left", color: theme.muted, fontSize: 11, textTransform: "uppercase", padding: 8 }}>{h}</th>)}</tr></thead><tbody>{tracker.map((row) => { const risk = trackerRisk(row); const riskStyle = risk === "High" ? [theme.redBg, theme.redText] : risk === "Medium" ? [theme.goldBg, theme.goldText] : risk === "Closed" ? [theme.slateBg, theme.slateText] : [theme.greenBg, theme.greenText]; return <tr key={row.id} style={{ background: "#ffffff" }}><td style={{ padding: 8, borderRadius: "12px 0 0 12px" }}><strong>{row.candidate}</strong><div style={{ color: "#64748b", fontSize: 12 }}>{row.strength}</div></td><td style={{ padding: 8 }}>{row.position}</td><td style={{ padding: 8 }}>{row.facility}</td><td style={{ padding: 8 }}><SelectInput value={row.status} onChange={(e) => updateTracker(row.id, "status", e.target.value)} options={settings.options.trackerStatuses} border="#d7deea" /></td><td style={{ padding: 8 }}>{daysBetween(row.submittedDate)} days</td><td style={{ padding: 8 }}><Badge bg={riskStyle[0]} color={riskStyle[1]}>{risk}</Badge></td><td style={{ padding: 8 }}><TextInput value={row.nextAction} onChange={(e) => updateTracker(row.id, "nextAction", e.target.value)} border="#d7deea" /></td><td style={{ padding: 8 }}><TextInput type="date" value={row.dueDate} onChange={(e) => updateTracker(row.id, "dueDate", e.target.value)} border="#d7deea" /></td><td style={{ padding: 8 }}><TextInput value={row.recruiter} onChange={(e) => updateTracker(row.id, "recruiter", e.target.value)} border="#d7deea" /></td><td style={{ padding: 8 }}><TextInput value={row.clientFeedback} onChange={(e) => updateTracker(row.id, "clientFeedback", e.target.value)} border="#d7deea" /></td><td style={{ padding: 8 }}><SelectInput value={row.outcome} onChange={(e) => updateTracker(row.id, "outcome", e.target.value)} options={settings.options.outcomes} border="#d7deea" /></td><td style={{ padding: 8, borderRadius: "0 12px 12px 0" }}><TextInput value={row.reason} onChange={(e) => updateTracker(row.id, "reason", e.target.value)} border="#d7deea" /></td></tr>; })}</tbody></table></div>}</Card> : null}
@@ -422,3 +464,4 @@ export default function App() {
     <footer style={{ marginTop: 24, textAlign: "center", color: theme.muted, fontSize: 13 }}>{BRAND.footer}</footer>
   </div></div>;
 }
+
