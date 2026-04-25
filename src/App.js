@@ -1,257 +1,532 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useMemo, useState } from "react";
 
-const NL = String.fromCharCode(10);
-const STORAGE_KEY = "welcomeflow-full-ui-settings-v3";
-const TRACKER_KEY = "welcomeflow-full-ui-tracker-v3";
-const ARCHIVE_KEY = "welcomeflow-full-ui-archive-v3";
-const RECENT_KEY = "welcomeflow-full-ui-recent-v3";
+const NL = "\n";
 
-const BRAND = {
-  appName: "WelcomeFlow: Recruiting Assistant",
-  tagline: "Recruiter notes, submission drafts, tracker control tower, follow-ups, reports, and outcomes.",
-  footer: "© Central 54 Holdings LLC",
-};
-
-const THEMES = {
-  corporate: {
-    name: "Corporate Premium",
-    pageBg: "linear-gradient(180deg,#f8fafc 0%,#eef2f7 100%)",
-    cardBg: "rgba(255,255,255,0.98)",
-    cardBorder: "#e2e8f0",
-    text: "#0f172a",
-    muted: "#64748b",
-    inputBorder: "#d7deea",
-    sidebarBg: "linear-gradient(180deg,#ffffff 0%,#f8fafc 100%)",
-    accent: "#2563eb",
-    navy: "#0f172a",
-    blueBg: "#dbeafe",
-    blueText: "#1d4ed8",
-    greenBg: "#d1fae5",
-    greenText: "#047857",
-    goldBg: "#fef3c7",
-    goldText: "#92400e",
-    redBg: "#fee2e2",
-    redText: "#b91c1c",
-    slateBg: "#f1f5f9",
-    slateText: "#475569",
-  },
-  dark: {
-    name: "Dark Premium",
-    pageBg: "linear-gradient(180deg,#020617 0%,#0f172a 100%)",
-    cardBg: "rgba(15,23,42,0.96)",
-    cardBorder: "#334155",
-    text: "#f8fafc",
-    muted: "#cbd5e1",
-    inputBorder: "#475569",
-    sidebarBg: "linear-gradient(180deg,rgba(15,23,42,.98) 0%,rgba(2,6,23,.98) 100%)",
-    accent: "#38bdf8",
-    navy: "#020617",
-    blueBg: "#1e3a8a",
-    blueText: "#dbeafe",
-    greenBg: "#064e3b",
-    greenText: "#d1fae5",
-    goldBg: "#78350f",
-    goldText: "#fde68a",
-    redBg: "#7f1d1d",
-    redText: "#fecaca",
-    slateBg: "#334155",
-    slateText: "#e2e8f0",
-  },
-};
-
-const DEFAULT_SETTINGS = {
-  general: { workspaceName: "", companyName: "", recruiterName: "", recruiterEmail: "", recruiterPhone: "", signOffName: "", signOffLine: "" },
-  options: {
-    roleTypes: ["Healthcare", "Other"],
-    workTypes: ["On-site", "Remote", "Hybrid"],
-    employmentTypes: ["FT", "PT", "PRN", "Contract", "FT or PT"],
-    shiftOptions: ["Day", "Night", "Evening", "Day or Night", "Evening or Night", "Any Shift"],
-    startOptions: ["Immediate", "2–4 weeks", "4–6 weeks", "3 months", "6 months"],
-    educationLevels: ["High School", "Associate's", "Bachelor's", "Bachelor of Science in Nursing", "Master's", "Doctorate", "Certification / Trade"],
-    licenseStatuses: ["Active/Clear", "Active/Encumbered", "Inactive", "Pending", "Not Verified", "Not Required"],
-    cprStatuses: ["Active", "Inactive", "Pending", "Not Required"],
-    otOptions: ["None", "Occasional", "Required"],
-    weekendOptions: ["None", "Rotating", "Required"],
-    onCallOptions: ["None", "Occasional", "Required"],
-    trackerStatuses: ["Draft", "Submitted", "Awaiting Client Review", "Follow-Up Due", "Interview Requested", "Interview Scheduled", "Interview Completed", "Offer Pending", "Placed", "Rejected", "Closed"],
-    outcomes: ["Pending", "Interview", "Offer", "Placed", "Rejected", "No Response", "Withdrawn"],
-  },
-  sites: [{ id: "site-1", siteName: "Demo Facility", siteType: "24-hour", location: "Douglasville, GA", facilityEmail: "", status: "Active", notes: "" }],
-  roles: [
-    { id: "role-1", positionTitle: "Registered Nurse", roleCategory: "Healthcare", requiresLicense: true, requiresCpr: true, requiresFte: true, requiresShift: true, requiresWorkExpectations: true, status: "Active" },
-    { id: "role-2", positionTitle: "Administrative Assistant", roleCategory: "Other", requiresLicense: false, requiresCpr: false, requiresFte: false, requiresShift: false, requiresWorkExpectations: true, status: "Active" },
-  ],
-  compensationRules: [{ id: "rate-1", positionTitle: "Registered Nurse", scopeType: "Site Type", scopeValue: "24-hour", compensationType: "Hourly", basisType: "Years-based", experienceTier: "6–10", baseAmount: "$42.25/hr", nightDiff: "$2.00/hr", weekendDiff: "$1.50/hr", eveningDiff: "$1.00/hr" }],
-  templates: {
-    introLine: "Please review the candidate below for consideration.",
-    closingLine: "The candidate has been briefed on the role expectations and is prepared to move forward.",
-    followUpLine: "Please advise next steps within 24–48 hours.",
-    candidateIntro: "Thank you for taking the time to speak with me today.",
-    candidateStep1: "Your information is currently being reviewed by the hiring team.",
-    candidateStep2: "If selected, the facility may reach out directly regarding interview coordination.",
-    candidateStep3: "I will continue to monitor your submission and share updates as they become available.",
-    candidateTiming: "You can expect an update within 24–48 hours.",
-    candidateSupport: "If anything changes on your end, please feel free to reach out directly.",
-  },
-  workflow: { requireApprovalBeforeSending: true, openHiringEmail: true, openCandidateEmail: false, logToTracker: true, defaultFollowUpDays: 2, mediumRiskDays: 3, highRiskDays: 5, autoStatusAfterSubmit: "Awaiting Client Review" },
-};
-
-const FTE_OPTIONS = [
-  { label: "40 hrs/week (1.0)", value: "1.0" }, { label: "36 hrs/week (0.9)", value: "0.9" }, { label: "32 hrs/week (0.8)", value: "0.8" },
-  { label: "24 hrs/week (0.6)", value: "0.6" }, { label: "20 hrs/week (0.5)", value: "0.5" }, { label: "16 hrs/week (0.4)", value: "0.4" }, { label: "PRN", value: "PRN" },
-];
-
-const DEFAULT_FORM = { fullName: "", phoneNumber: "", emailAddress: "", location: "", position: "", roleCategory: "", siteName: "", employmentType: "FT", shiftPreference: "", workType: "", fte: "", yearsExperience: "", experienceNotes: "", educationLevel: "", compensationRequested: "", compensationType: "Hourly", startAvailability: "", startNotes: "", interviewAvailability: "", licenseStatus: "", cprStatus: "", licensedYear: "", workSchedule: "", otRequirement: "", weekendRequirement: "", onCallRequirement: "", workArea: "", scheduleConfirmed: false, otConfirmed: false, weekendConfirmed: false, onCallConfirmed: false, candidateNotes: "", recruiterNotes: "" };
-const DEMO_FORM = { ...DEFAULT_FORM, fullName: "Ashley Martin", phoneNumber: "770-318-8742", emailAddress: "Ashleysimpson0218@gmail.com", location: "Douglasville, GA", position: "Registered Nurse", roleCategory: "Healthcare", siteName: "Demo Facility", employmentType: "FT", shiftPreference: "Day", workType: "On-site", fte: "1.0", yearsExperience: "10", experienceNotes: "Corrections 3 yrs | Med-Surg 3 yrs | Strong communicator", educationLevel: "Bachelor of Science in Nursing", startAvailability: "2–4 weeks", startNotes: "Needs to give two-week notice", interviewAvailability: "Mon–Fri after 4 PM", licenseStatus: "Active/Clear", cprStatus: "Active", licensedYear: "2019", workSchedule: "36 hrs/week, nights", otRequirement: "Occasional", weekendRequirement: "Rotating", onCallRequirement: "None", workArea: "Corrections", scheduleConfirmed: true, otConfirmed: true, weekendConfirmed: true, onCallConfirmed: true, candidateNotes: "Responsive by text. Open to nights and long-term placement." };
-
-function id(prefix) { return `${prefix}-${Math.random().toString(36).slice(2, 9)}`; }
-function todayString() { return new Date().toLocaleDateString("en-US"); }
-function isoToday() { return new Date().toISOString().slice(0, 10); }
-function addDays(days) { const d = new Date(); d.setDate(d.getDate() + Number(days || 0)); return d.toISOString().slice(0, 10); }
-function daysBetween(dateText) { if (!dateText) return 0; const then = new Date(dateText); const now = new Date(); return Math.max(0, Math.floor((now - then) / 86400000)); }
-function save(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} }
-function load(key, fallback) { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; } catch { return fallback; } }
-function fteLabel(value) { const found = FTE_OPTIONS.find((item) => item.value === value); return found ? found.label : value || "N/A"; }
-function tierFromYears(value) { const y = Number(value || 0); if (y <= 2) return "0–2"; if (y <= 5) return "3–5"; if (y <= 10) return "6–10"; if (y <= 15) return "11–15"; return "16+"; }
-function copyText(text) { if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).catch(() => {}); }
-function downloadTextFile(name, content, type = "text/csv") { const blob = new Blob([content], { type }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = name; a.click(); URL.revokeObjectURL(url); }
-
-function parseNotesToForm(notes, settings, currentForm) {
-  const text = notes || ""; const lower = text.toLowerCase(); const next = { ...currentForm, recruiterNotes: notes };
-  const email = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i); if (email) next.emailAddress = email[0];
-  const phone = text.match(/(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}/); if (phone) next.phoneNumber = phone[0];
-  const years = text.match(/(\d{1,2})\s*(?:\+)?\s*(?:years|yrs|year)/i); if (years) next.yearsExperience = years[1];
-  const role = settings.roles.find((item) => lower.includes(item.positionTitle.toLowerCase()) || (item.positionTitle === "Registered Nurse" && lower.includes("rn")));
-  if (role) { next.position = role.positionTitle; next.roleCategory = role.roleCategory; } else if (lower.includes("rn")) { next.position = "Registered Nurse"; next.roleCategory = "Healthcare"; }
-  if (lower.includes("day")) next.shiftPreference = "Day"; if (lower.includes("night")) next.shiftPreference = "Night"; if (lower.includes("evening")) next.shiftPreference = "Evening";
-  if (lower.includes("remote")) next.workType = "Remote"; else if (lower.includes("hybrid")) next.workType = "Hybrid"; else if (lower.includes("on-site") || lower.includes("onsite")) next.workType = "On-site";
-  if (lower.includes("immediate")) next.startAvailability = "Immediate"; else if (lower.includes("2 week") || lower.includes("two week") || lower.includes("2-week")) { next.startAvailability = "2–4 weeks"; next.startNotes = "Needs to give two-week notice"; }
-  if (lower.includes("active license") || lower.includes("license active") || lower.includes("active/clear")) next.licenseStatus = "Active/Clear"; if (lower.includes("cpr")) next.cprStatus = "Active";
-  if (lower.includes("weekend")) next.weekendRequirement = lower.includes("rotating") ? "Rotating" : "Required"; if (lower.includes("no on-call") || lower.includes("no on call")) next.onCallRequirement = "None";
-  const bits = []; if (lower.includes("correction")) bits.push("Corrections experience"); if (lower.includes("med-surg") || lower.includes("med surg")) bits.push("Med-Surg experience"); if (lower.includes("behavioral")) bits.push("Behavioral Health experience"); if (lower.includes("er") || lower.includes("emergency")) bits.push("ER experience"); if (lower.includes("communication") || lower.includes("strong communicator")) bits.push("Strong communicator"); if (bits.length) next.experienceNotes = bits.join(" | ");
-  const nameMatch = text.match(/(?:candidate|name)[:\s]+([A-Z][a-z]+\s+[A-Z][a-z]+)/); if (nameMatch) next.fullName = nameMatch[1];
-  return next;
+function makeId(prefix = "id") {
+  return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function Button({ children, onClick, primary, style, type = "button" }) { return <button type={type} onClick={onClick} style={{ padding: "11px 16px", borderRadius: 12, border: primary ? "1px solid #0f172a" : "1px solid #d7deea", background: primary ? "linear-gradient(135deg,#0f172a 0%,#1e3a8a 100%)" : "#ffffff", color: primary ? "#ffffff" : "#0f172a", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "Arial, sans-serif", ...style }}>{children}</button>; }
-function Card({ title, subtitle, children, action, theme }) { return <section style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, borderRadius: 22, padding: 26, boxShadow: "0 10px 26px rgba(15,23,42,0.06)" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 22 }}><div><h2 style={{ margin: 0, color: theme.text, fontSize: 22 }}>{title}</h2>{subtitle ? <p style={{ margin: "8px 0 0", color: theme.muted, lineHeight: 1.6, fontSize: 13 }}>{subtitle}</p> : null}</div>{action}</div>{children}</section>; }
-function Field({ label, children, color }) { return <label style={{ display: "block" }}><div style={{ marginBottom: 7, color, fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</div>{children}</label>; }
-function TextInput({ value, onChange, placeholder, type = "text", readOnly, border }) { return <input value={value} onChange={onChange} placeholder={placeholder || ""} type={type} readOnly={readOnly} style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: `1px solid ${border}`, boxSizing: "border-box", background: readOnly ? "#f8fafc" : "#ffffff", color: "#0f172a", outline: "none", fontSize: 13, fontFamily: "Arial, sans-serif" }} />; }
-function TextArea({ value, onChange, placeholder, border, minHeight = 96 }) { return <textarea value={value} onChange={onChange} placeholder={placeholder || ""} style={{ width: "100%", minHeight, padding: "12px 14px", borderRadius: 12, border: `1px solid ${border}`, boxSizing: "border-box", resize: "vertical", background: "#ffffff", color: "#0f172a", outline: "none", fontSize: 13, fontFamily: "Arial, sans-serif" }} />; }
-function SelectInput({ value, onChange, options, placeholder, border }) { return <select value={value} onChange={onChange} style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: `1px solid ${border}`, boxSizing: "border-box", background: "#ffffff", color: "#0f172a", outline: "none", fontSize: 13, fontFamily: "Arial, sans-serif" }}><option value="">{placeholder || "Select"}</option>{options.map((option) => { const key = typeof option === "string" ? option : option.value; const label = typeof option === "string" ? option : option.label; return <option key={key} value={key}>{label}</option>; })}</select>; }
-function ToggleField({ label, checked, onChange, theme }) { return <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", border: `1px solid ${theme.cardBorder}`, borderRadius: 12, padding: 12, background: "#ffffff", color: "#0f172a" }}><span style={{ fontWeight: 700, fontSize: 13 }}>{label}</span><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} /></label>; }
-function Badge({ children, bg, color }) { return <span style={{ display: "inline-flex", alignItems: "center", padding: "7px 11px", borderRadius: 999, background: bg, color, fontSize: 12, fontWeight: 700 }}>{children}</span>; }
-function DashboardChip({ label, value, bg, color, onClick }) { return <button type="button" onClick={onClick} style={{ display: "grid", gap: 3, minWidth: 132, textAlign: "left", padding: "13px 15px", borderRadius: 18, border: "1px solid rgba(148,163,184,.35)", background: bg, color, cursor: "pointer", boxShadow: "0 8px 18px rgba(15,23,42,.06)", fontFamily: "Arial, sans-serif" }}><span style={{ fontSize: 18, fontWeight: 800 }}>{value}</span><span style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</span></button>; }
-function NavButton({ active, children, onClick }) { return <button type="button" onClick={onClick} style={{ width: "100%", textAlign: "left", padding: "12px 14px", borderRadius: 12, border: active ? "1px solid #1e3a8a" : "1px solid transparent", background: active ? "linear-gradient(135deg,#0f172a 0%,#1e3a8a 100%)" : "transparent", color: active ? "#ffffff" : "#334155", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>{children}</button>; }
-function TagEditor({ label, values, onChange, theme }) { const [draft, setDraft] = useState(""); function add() { const clean = draft.trim(); if (!clean || values.includes(clean)) return; onChange([...values, clean]); setDraft(""); } return <div style={{ background: "#ffffff", color: "#0f172a", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16 }}><strong>{label}</strong><div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "12px 0" }}>{values.map((value) => <span key={value} style={{ display: "inline-flex", gap: 8, alignItems: "center", padding: "6px 9px", borderRadius: 999, background: "#eef2ff", border: "1px solid #dbe4f0", fontSize: 12 }}>{value}<button type="button" onClick={() => onChange(values.filter((item) => item !== value))} style={{ border: "none", background: "transparent", cursor: "pointer" }}>×</button></span>)}</div><div style={{ display: "flex", gap: 8 }}><TextInput value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Add option" border={theme.inputBorder} /><Button onClick={add}>Add</Button></div></div>; }
-function EmailDocumentBlock({ title, badge, subject, body, theme, onOpenDraft }) { const titles = new Set(["Candidate Snapshot", "Why This Candidate Stands Out", "Experience & Credentials", "Work Expectations", "Additional Notes", "Next Steps", "Compensation Structure", "Candidate Details", "Quick Snapshot", "Recommended Action", "Outcome Summary", "Active Submission Details"]); return <div style={{ background: "#ffffff", color: "#0f172a", border: `1px solid ${theme.cardBorder}`, borderRadius: 20, padding: 20, boxShadow: "0 8px 22px rgba(15,23,42,.05)" }}><div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 14, flexWrap: "wrap" }}><div><div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><h3 style={{ margin: 0, fontSize: 17 }}>{title}</h3>{badge ? <Badge bg={theme.blueBg} color={theme.blueText}>{badge}</Badge> : null}</div>{subject ? <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 12, background: "#f8fafc", border: "1px solid #e2e8f0", fontSize: 13, lineHeight: 1.5 }}><strong>Subject:</strong> {subject}</div> : null}</div><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{subject ? <Button onClick={() => copyText(subject)}>Copy Subject</Button> : null}<Button onClick={() => copyText(body)}>Copy Body</Button>{onOpenDraft ? <Button primary onClick={onOpenDraft}>Open Draft Email</Button> : null}</div></div><div style={{ border: "1px solid #e2e8f0", borderRadius: 16, padding: 18, lineHeight: 1.75, fontSize: 13 }}>{String(body || "").split(NL).map((line, i) => { const clean = line.trim(); if (!clean) return <div key={i} style={{ height: 12 }} />; if (titles.has(clean)) return <div key={i} style={{ margin: i === 0 ? "0 0 8px" : "18px 0 8px", paddingBottom: 5, borderBottom: "1px solid #e2e8f0", fontWeight: 800, fontSize: 14 }}>{clean}</div>; if (clean.startsWith("•")) return <div key={i} style={{ margin: "4px 0 4px 8px" }}>{clean}</div>; return <div key={i} style={{ margin: "4px 0" }}>{clean}</div>; })}</div></div>; }
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+const DEFAULT_TEMPLATES = {
+  hiringManagerSubmission: {
+    name: "Hiring Manager Submission Email",
+    subject: "{{fullName}} | {{position}} | {{facility}}",
+    body: [
+      "Hello {{facilityLeadership}},",
+      "",
+      "Please review the candidate below.",
+      "",
+      "Submission Date: {{submissionDate}}",
+      "Candidate: {{fullName}}",
+      "Position: {{position}}",
+      "Facility: {{facility}}",
+      "Phone: {{phone}}",
+      "Email: {{email}}",
+      "",
+      "Please advise next steps within 24–48 hours."
+    ].join(NL)
+  },
+  atsUpdate: {
+    name: "ATS Update Note",
+    subject: "ATS Update | {{fullName}} | {{position}}",
+    body: [
+      "ATS Update",
+      "",
+      "Candidate: {{fullName}}",
+      "Position: {{position}}",
+      "Facility: {{facility}}",
+      "Status: {{status}}",
+      "Date: {{submissionDate}}"
+    ].join(NL)
+  },
+  hiringManagerFollowUp: {
+    name: "Hiring Manager Follow-Up Email",
+    subject: "Follow-Up Needed | {{fullName}} | {{facility}}",
+    body: [
+      "Hello {{facilityLeadership}},",
+      "",
+      "I wanted to follow up on the candidate below.",
+      "",
+      "Candidate: {{fullName}}",
+      "Position: {{position}}",
+      "Facility: {{facility}}",
+      "Submitted: {{submissionDate}}",
+      "",
+      "Please advise if you would like to move forward, decline, or request additional information."
+    ].join(NL)
+  },
+  candidateFollowUp: {
+    name: "Candidate Follow-Up Email",
+    subject: "Following Up | {{position}} at {{facility}}",
+    body: [
+      "Hello {{firstName}},",
+      "",
+      "I wanted to follow up regarding the {{position}} position at {{facility}}.",
+      "",
+      "Please let me know if you are still interested and available to speak about next steps.",
+      "",
+      "Thank you,",
+      "Ashley Martin-Simpson"
+    ].join(NL)
+  },
+  interviewRequest: {
+    name: "Interview Request Email",
+    subject: "Interview Request | {{position}} at {{facility}}",
+    body: [
+      "Hello {{firstName}},",
+      "",
+      "The hiring team would like to move forward with an interview for the {{position}} position at {{facility}}.",
+      "",
+      "Please send over your best availability for the next 2 business days.",
+      "",
+      "Thank you,",
+      "Ashley Martin-Simpson"
+    ].join(NL)
+  }
+};
+
+const initialForm = {
+  fullName: "",
+  position: "",
+  facility: "",
+  facilityLeadership: "Hiring Team",
+  email: "",
+  phone: "",
+  status: "Submitted",
+  submissionDate: today(),
+  notes: ""
+};
+
+function getFirstName(fullName) {
+  return (fullName || "there").trim().split(" ")[0] || "there";
+}
+
+function applyTemplate(templateText, data) {
+  const safeData = {
+    ...data,
+    firstName: getFirstName(data.fullName)
+  };
+
+  return templateText.replace(/{{(.*?)}}/g, (_, key) => {
+    const cleanKey = key.trim();
+    return safeData[cleanKey] || "";
+  });
+}
+
+function copyToClipboard(text) {
+  if (!text) return;
+  navigator.clipboard?.writeText(text);
+}
 
 export default function App() {
   const [activePage, setActivePage] = useState("submission");
-  const [activeSettingsTab, setActiveSettingsTab] = useState("general");
-  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
-  const [form, setForm] = useState(DEMO_FORM);
-  const [recentCandidates, setRecentCandidates] = useState([DEMO_FORM]);
+  const [form, setForm] = useState(initialForm);
   const [tracker, setTracker] = useState([]);
-  const [archived, setArchived] = useState([]);
-  const [notesPreview, setNotesPreview] = useState(null);
-  const [weeklyReport, setWeeklyReport] = useState(null);
-  const [archiveDraft, setArchiveDraft] = useState(null);
-  const [selectedCandidate, setSelectedCandidate] = useState(null);
-  const [atsUpdateDraft, setAtsUpdateDraft] = useState(null);
-  const [output, setOutput] = useState(null);
-  const [themeKey, setThemeKey] = useState("corporate");
-  const [loaded, setLoaded] = useState(false);
-  const [importMode, setImportMode] = useState("general");
-  const importInputRef = useRef(null);
+  const [selectedTemplateKey, setSelectedTemplateKey] = useState("hiringManagerSubmission");
+  const [templates, setTemplates] = useState(DEFAULT_TEMPLATES);
+  const [output, setOutput] = useState({ subject: "", body: "" });
+  const [expandedTemplate, setExpandedTemplate] = useState(null);
+  const [expandedAuditId, setExpandedAuditId] = useState(null);
 
-  useEffect(() => { setSettings(load(STORAGE_KEY, DEFAULT_SETTINGS)); setTracker(load(TRACKER_KEY, [])); setArchived(load(ARCHIVE_KEY, [])); setRecentCandidates(load(RECENT_KEY, [DEMO_FORM])); setLoaded(true); }, []);
-  useEffect(() => { if (loaded) save(STORAGE_KEY, settings); }, [settings, loaded]);
-  useEffect(() => { if (loaded) save(TRACKER_KEY, tracker); }, [tracker, loaded]);
-  useEffect(() => { if (loaded) save(ARCHIVE_KEY, archived); }, [archived, loaded]);
-  useEffect(() => { if (loaded) save(RECENT_KEY, recentCandidates); }, [recentCandidates, loaded]);
+  const selectedTemplate = templates[selectedTemplateKey];
 
-  const theme = THEMES[themeKey] || THEMES.corporate;
-  const activeRoles = useMemo(() => settings.roles.filter((role) => role.status === "Active"), [settings.roles]);
-  const activeSites = useMemo(() => settings.sites.filter((site) => site.status === "Active"), [settings.sites]);
-  const selectedRole = useMemo(() => activeRoles.find((role) => role.positionTitle === form.position) || null, [activeRoles, form.position]);
-  const selectedSite = useMemo(() => activeSites.find((site) => site.siteName === form.siteName) || null, [activeSites, form.siteName]);
-  const isHealthcare = (form.roleCategory || selectedRole?.roleCategory) === "Healthcare";
-  const setupProgress = useMemo(() => { const checks = [settings.general.recruiterName || settings.general.companyName, settings.sites.length, settings.roles.length, settings.compensationRules.length, settings.templates.introLine]; const complete = checks.filter(Boolean).length; return { complete, total: 5, percent: Math.round((complete / 5) * 100) }; }, [settings]);
-  const estimatedComp = useMemo(() => { if (!form.position) return ""; const tier = tierFromYears(form.yearsExperience); const match = settings.compensationRules.find((rule) => { const pos = rule.positionTitle === form.position; const scope = rule.scopeType === "Site Type" ? rule.scopeValue === (selectedSite?.siteType || "") : rule.scopeValue === form.siteName; const basis = rule.basisType === "Flat" || rule.basisType === "Custom" || rule.experienceTier === tier; return pos && scope && basis; }); if (!match) return ""; const extras = []; if (form.shiftPreference === "Night" && match.nightDiff) extras.push(`Night: ${match.nightDiff}`); if (form.shiftPreference === "Evening" && match.eveningDiff) extras.push(`Evening: ${match.eveningDiff}`); if ((form.weekendRequirement === "Required" || form.weekendRequirement === "Rotating") && match.weekendDiff) extras.push(`Weekend: ${match.weekendDiff}`); return extras.length ? `${match.baseAmount} base | ${extras.join(" | ")}` : match.baseAmount; }, [settings.compensationRules, form.position, form.yearsExperience, form.siteName, form.shiftPreference, form.weekendRequirement, selectedSite]);
+  const generatedPreview = useMemo(() => {
+    if (!selectedTemplate) return { subject: "", body: "" };
 
-  function updateForm(key, value) { setForm((prev) => ({ ...prev, [key]: value })); }
-  function updateSettings(section, key, value) { setSettings((prev) => ({ ...prev, [section]: { ...prev[section], [key]: value } })); }
-  function updateOptions(key, value) { setSettings((prev) => ({ ...prev, options: { ...prev.options, [key]: value } })); }
-  function updateArray(section, itemId, key, value) { setSettings((prev) => ({ ...prev, [section]: prev[section].map((item) => item.id === itemId ? { ...item, [key]: value } : item) })); }
-  function addSite() { setSettings((prev) => ({ ...prev, sites: [...prev.sites, { id: id("site"), siteName: "", siteType: "", location: "", facilityEmail: "", status: "Active", notes: "" }] })); }
-  function addRole() { setSettings((prev) => ({ ...prev, roles: [...prev.roles, { id: id("role"), positionTitle: "", roleCategory: "Other", requiresLicense: false, requiresCpr: false, requiresFte: false, requiresShift: false, requiresWorkExpectations: true, status: "Active" }] })); }
-  function addRate() { setSettings((prev) => ({ ...prev, compensationRules: [...prev.compensationRules, { id: id("rate"), positionTitle: "", scopeType: "Site Type", scopeValue: "", compensationType: "Hourly", basisType: "Years-based", experienceTier: "0–2", baseAmount: "", nightDiff: "", weekendDiff: "", eveningDiff: "" }] })); }
-  function removeFrom(section, itemId) { setSettings((prev) => ({ ...prev, [section]: prev[section].filter((item) => item.id !== itemId) })); }
-  function openImport(mode) { setImportMode(mode); importInputRef.current?.click(); }
-  function handleImport(files) { const incoming = Array.from(files || []); const bad = incoming.find((file) => !["PDF", "DOCX", "TXT", "XLSX", "CSV"].includes((file.name.split(".").pop() || "").toUpperCase())); if (bad) alert("Unsupported file format. Supported formats: PDF, Word, Text, Excel, and CSV."); else alert(`${incoming.length} file(s) accepted for ${importMode}. Parsing into records is a future backend layer.`); }
+    return {
+      subject: applyTemplate(selectedTemplate.subject, form),
+      body: applyTemplate(selectedTemplate.body, form)
+    };
+  }, [selectedTemplate, form]);
 
-  function getCredentials() { const values = []; if (!isHealthcare) return ""; if (form.licenseStatus) values.push(`License: ${form.licenseStatus}`); if (form.cprStatus) values.push(`CPR: ${form.cprStatus}`); if (form.licensedYear) values.push(`Licensed Since: ${form.licensedYear}`); return values.join(" | "); }
-  function getStrengthHighlights() { const notes = `${form.experienceNotes || ""} ${form.candidateNotes || ""}`.toLowerCase(); const years = Number(form.yearsExperience || 0); const h = []; if (years >= 8) h.push(`${years}+ years of relevant experience`); else if (years >= 5) h.push(`${years} years of solid experience`); if (notes.includes("correction")) h.push("correctional healthcare experience"); if (notes.includes("med-surg") || notes.includes("med surg")) h.push("Med-Surg background"); if (notes.includes("er") || notes.includes("emergency")) h.push("ER experience"); if (notes.includes("behavioral") || notes.includes("psych")) h.push("behavioral health experience"); if (notes.includes("communication") || notes.includes("strong communicator")) h.push("strong communication skills"); if (form.licenseStatus === "Active/Clear") h.push("active/clear license"); if (form.cprStatus === "Active") h.push("active CPR"); if (form.scheduleConfirmed && form.weekendConfirmed && form.otConfirmed && form.onCallConfirmed) h.push("role expectations confirmed"); return [...new Set(h)].slice(0, 5); }
-  function getStrengthLabel() { const years = Number(form.yearsExperience || 0); const count = getStrengthHighlights().length; if (years >= 8 && count >= 3) return "Strong Match"; if (years >= 5 && count >= 2) return "Good Match"; if (count >= 2) return "Potential Match"; return "Needs Review"; }
-  function getSubject(kind) { const name = form.fullName || "Candidate"; const position = form.position || "Position"; const site = form.siteName || "Facility"; if (kind === "hiring") return `${getStrengthLabel()}: ${name} | ${position} | ${site}`; if (kind === "candidate") return `Submission Confirmation: ${position} | ${site}`; return `ATS Summary: ${name} | ${position} | ${site}`; }
-  function buildHiringEmail(finalComp) { const facility = form.siteName || settings.general.companyName || "Hiring Team"; const name = form.fullName || "The candidate"; const position = form.position || "the position"; const credentials = getCredentials(); return [`Hello ${facility},`, "", settings.templates.introLine, "", `Submission Date: ${todayString()}`, "", `${name} is being submitted for the ${position} position at ${facility}.`, "", "Candidate Snapshot", `• Schedule: ${fteLabel(form.fte)}, ${form.shiftPreference || "N/A"}`, `• Location: ${form.location || selectedSite?.location || "N/A"}`, `• Compensation: ${form.compensationType || "Hourly"}, ${finalComp}`, `• Availability: ${form.startAvailability || "N/A"}`, `• Interview Availability: ${form.interviewAvailability || "N/A"}`, "", "Why This Candidate Stands Out", ...(getStrengthHighlights().length ? getStrengthHighlights().map((item) => `• ${item}`) : ["• Review full experience details before decision."]), "", "Experience & Credentials", `${name} brings ${form.yearsExperience || "N/A"} years of experience as a ${position}${form.experienceNotes ? `, including ${form.experienceNotes}.` : "."}`, form.educationLevel ? `Education: ${form.educationLevel}` : "", credentials ? credentials.replaceAll(" | ", NL) : "", "", "Work Expectations", `The candidate has confirmed availability for ${form.workSchedule || "N/A"}. OT is ${String(form.otRequirement || "N/A").toLowerCase()}, weekends are ${String(form.weekendRequirement || "N/A").toLowerCase()}, and on-call is ${String(form.onCallRequirement || "N/A").toLowerCase()}.`, form.workArea ? `Work Area: ${form.workArea}` : "", "", "Additional Notes", form.candidateNotes || "N/A", "", `${settings.templates.closingLine} ${settings.templates.followUpLine}`.trim(), "", settings.general.signOffName || settings.general.recruiterName || "", settings.general.signOffLine || ""].filter(Boolean).join(NL); }
-  function buildAts(finalComp) { return [`Submittal Date: ${todayString()}`, `Recruiter: ${settings.general.recruiterName || "N/A"}`, "", "Candidate Details", `• ${form.fullName || "N/A"} | ${form.position || "N/A"} | ${form.siteName || "N/A"}`, `• Status: ${getStrengthLabel()}`, "", "Why This Candidate Stands Out", ...(getStrengthHighlights().length ? getStrengthHighlights().map((item) => `• ${item}`) : ["• Review full experience details before submission decision."]), "", "Quick Snapshot", `• Experience: ${form.yearsExperience || "N/A"} yrs | Compensation: ${finalComp}`, `• Start: ${form.startAvailability || "N/A"} | Interview: ${form.interviewAvailability || "N/A"}`, `• ${form.workType || "N/A"} | ${fteLabel(form.fte)} | ${form.shiftPreference || "N/A"}`, "", "Work Expectations", `• Schedule: ${form.workSchedule || "N/A"}`, `• OT: ${form.otRequirement || "N/A"} | Weekend: ${form.weekendRequirement || "N/A"} | On-Call: ${form.onCallRequirement || "N/A"}`, form.workArea ? `• Work Area: ${form.workArea}` : "", "", "Recommended Action", getStrengthLabel() === "Strong Match" ? "• Submit to hiring manager for immediate review." : "• Review details and confirm alignment before final submission."].filter(Boolean).join(NL); }
-  function buildCandidateEmail(finalComp) { const position = `${form.position || "position"}${form.shiftPreference ? `, ${form.shiftPreference}` : ""}${form.employmentType ? `, ${form.employmentType}` : ""}`; return [`Hello ${form.fullName || "Candidate"},`, "", settings.templates.candidateIntro, "", `Your profile has been submitted for the ${position} position with ${form.siteName || "the facility"}.`, "", "Compensation Structure", `${form.compensationType || "Hourly"}: ${finalComp}`, "", "Next Steps", `• ${settings.templates.candidateStep1}`, `• ${settings.templates.candidateStep2}`, `• ${settings.templates.candidateStep3}`, "", settings.templates.candidateTiming, settings.templates.candidateSupport, "", settings.general.signOffName || settings.general.recruiterName || "", settings.general.signOffLine || ""].filter(Boolean).join(NL); }
-  function generateOutput() { const finalComp = form.compensationRequested || estimatedComp || "TBD"; const generated = { finalComp, date: todayString(), hiringEmail: buildHiringEmail(finalComp), ats: buildAts(finalComp), candidateEmail: buildCandidateEmail(finalComp), hiringSubject: getSubject("hiring"), candidateSubject: getSubject("candidate"), atsSubject: getSubject("ats") }; setOutput(generated); setRecentCandidates((prev) => [form, ...prev.filter((item) => item.fullName !== form.fullName)].slice(0, 8)); return generated; }
-  function logToTracker(generated = output) { const out = generated || generateOutput(); const record = { id: id("sub"), candidate: form.fullName || "Unnamed Candidate", position: form.position || "N/A", facility: form.siteName || "N/A", facilityEmail: selectedSite?.facilityEmail || "", recruiter: settings.general.recruiterName || "N/A", submittedDate: isoToday(), status: settings.workflow.autoStatusAfterSubmit, dueDate: addDays(settings.workflow.defaultFollowUpDays), nextAction: "Follow up with facility", clientFeedback: "", outcome: "Pending", reason: "", output: out, strength: getStrengthLabel(), interviewDate: "" }; setTracker((prev) => [record, ...prev]); return record; }
-  function openEmail(kind, generated = output) { const out = generated || generateOutput(); const to = kind === "hiring" ? selectedSite?.facilityEmail || "" : kind === "candidate" ? form.emailAddress || "" : ""; const subject = kind === "hiring" ? out.hiringSubject : kind === "candidate" ? out.candidateSubject : out.atsSubject; const body = kind === "hiring" ? out.hiringEmail : kind === "candidate" ? out.candidateEmail : out.ats; if (!to && kind !== "ats") { alert(kind === "hiring" ? "Add a Facility Email under Settings > Sites before opening the manager draft." : "Add the candidate email before opening the candidate draft."); return; } window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`; }
-  function submitCandidateFlow() { const generated = output || generateOutput(); if (settings.workflow.requireApprovalBeforeSending && !window.confirm("Approve this submission workflow?")) return; if (settings.workflow.logToTracker) logToTracker(generated); if (settings.workflow.openHiringEmail) openEmail("hiring", generated); if (settings.workflow.openCandidateEmail) setTimeout(() => openEmail("candidate", generated), 700); }
-  function clearForm() { if (!window.confirm("Are you sure you want to clear all fields?")) return; setForm(DEFAULT_FORM); setOutput(null); setNotesPreview(null); }
-  function previewNotes() { setNotesPreview(parseNotesToForm(form.recruiterNotes, settings, form)); }
-  function applyNotesPreview() { if (!notesPreview) return; setForm(notesPreview); setNotesPreview(null); }
-  function trackerRisk(row) { const age = daysBetween(row.submittedDate); if (["Placed", "Rejected", "Closed"].includes(row.status)) return "Closed"; if (age >= Number(settings.workflow.highRiskDays)) return "High"; if (age >= Number(settings.workflow.mediumRiskDays)) return "Medium"; return "Low"; }
-  function updateTracker(rowId, key, value) { setTracker((prev) => prev.map((row) => row.id === rowId ? { ...row, [key]: value } : row)); }
-  function buildAtsUpdate(row) { return [`ATS Update: ${row.candidate} | ${row.position}`, `Facility: ${row.facility}`, `Current Status: ${row.status}`, `Days in Current Status: ${daysBetween(row.submittedDate)}`, `Next Action: ${row.nextAction || "N/A"}`, `Client Feedback: ${row.clientFeedback || "Pending"}`, `Outcome: ${row.outcome || "Pending"}`, row.reason ? `Reason: ${row.reason}` : ""].filter(Boolean).join(NL); }
-  function requestArchive(row) { setArchiveDraft({ ...row, archiveReason: row.reason || "", futureStatus: "Candidate still viable for future review", archiveNotes: "" }); }
-  function confirmArchive() { if (!archiveDraft?.outcome || archiveDraft.outcome === "Pending") { alert("Select a final outcome before archiving."); return; } if (!archiveDraft.archiveReason) { alert("Add an archive reason before archiving."); return; } setArchived((prev) => [{ ...archiveDraft, archivedDate: isoToday(), status: "Archived" }, ...prev]); setTracker((prev) => prev.filter((row) => row.id !== archiveDraft.id)); setArchiveDraft(null); }
-  function buildCandidateFollowUp(row) { return [`Hello ${row.candidate},`, "", `I wanted to follow up regarding your submission for the ${row.position} position with ${row.facility}.`, "", "If you have not heard from the facility yet, I will be following up today and will keep you updated as soon as I receive feedback.", "", "Thank you for your patience."].join(NL); }
-  function buildInterviewReminder(row) { return [`Hello ${row.candidate},`, "", `This is a quick reminder regarding your upcoming interview for the ${row.position} position with ${row.facility}${row.interviewDate ? ` on ${row.interviewDate}` : ""}.`, "", "Please let me know if anything changes with your availability."].join(NL); }
-  function buildInterviewCompleteFollowUp(row) { return [`Hello ${row.candidate},`, "", `I wanted to check in after your interview for the ${row.position} position with ${row.facility}.`, "", "Please let me know how everything went when you have a chance."].join(NL); }
-  function buildManagerFeedbackEmail(rows) { return [`Hello Team,`, "", "I wanted to follow up regarding the candidates currently pending feedback.", "", "Candidates pending feedback:", ...rows.map((r) => `• ${r.candidate} | ${r.position} | ${r.facility} | Submitted: ${r.submittedDate} | Current Status: ${r.status}`), "", "Please advise on next steps when available."].join(NL); }
-  function markFollowed(rowId) { setTracker((prev) => prev.map((row) => row.id === rowId ? { ...row, status: "Follow-Up Due", nextAction: "Follow-up sent, awaiting response", dueDate: addDays(settings.workflow.defaultFollowUpDays) } : row)); }
-  function generateWeeklyReport() { const activeRows = tracker.filter((row) => !["Placed", "Rejected", "Closed"].includes(row.status)); const counts = settings.options.outcomes.reduce((acc, outcome) => ({ ...acc, [outcome]: tracker.filter((row) => row.outcome === outcome).length }), {}); const body = [`Weekly Submission Report`, "", `Total Active Submissions: ${activeRows.length}`, `High Risk Aging: ${tracker.filter((row) => trackerRisk(row) === "High").length}`, "", "Outcome Summary", ...Object.entries(counts).map(([key, value]) => `• ${key}: ${value}`), "", "Active Submission Details", ...activeRows.map((row) => `• ${row.submittedDate} | ${row.candidate} | ${row.position} | ${row.facility} | ${row.status} | ${daysBetween(row.submittedDate)} day(s) in process | ${row.nextAction || "N/A"}`), "", "Please review and advise on any submissions pending feedback or next steps."].join(NL); setWeeklyReport({ subject: `Weekly Submission Report | ${todayString()}`, body }); }
-  function metrics() { const total = tracker.length; const interviews = tracker.filter((r) => ["Interview", "Offer", "Placed"].includes(r.outcome)).length; const offers = tracker.filter((r) => ["Offer", "Placed"].includes(r.outcome)).length; const placed = tracker.filter((r) => r.outcome === "Placed" || r.status === "Placed").length; const highRisk = tracker.filter((r) => trackerRisk(r) === "High").length; return { total, interviews, offers, placed, highRisk, submitToInterview: total ? Math.round((interviews / total) * 100) : 0, interviewToOffer: interviews ? Math.round((offers / interviews) * 100) : 0, placementRate: total ? Math.round((placed / total) * 100) : 0 }; }
-  function downloadTemplate(kind) { const map = { sites: `siteName,siteType,location,facilityEmail,status,notes${NL}Demo Facility,24-hour,Douglasville GA,hiring@email.com,Active,`, roles: `positionTitle,roleCategory,requiresLicense,requiresCpr,requiresFte,requiresShift,requiresWorkExpectations,status${NL}Registered Nurse,Healthcare,true,true,true,true,true,Active`, rates: `positionTitle,scopeType,scopeValue,compensationType,basisType,experienceTier,baseAmount,nightDiff,weekendDiff,eveningDiff${NL}Registered Nurse,Site Type,24-hour,Hourly,Years-based,6–10,$42.25/hr,$2.00/hr,$1.50/hr,$1.00/hr`, shifts: `shiftOption${NL}Day${NL}Night${NL}Evening${NL}Any Shift` }; downloadTextFile(`${kind}-template.csv`, map[kind] || ""); }
+  function updateForm(key, value) {
+    setForm(prev => ({ ...prev, [key]: value }));
+  }
 
-  const m = metrics();
-  const followUps = tracker.filter((r) => ["Awaiting Client Review", "Follow-Up Due"].includes(r.status) && daysBetween(r.submittedDate) >= Number(settings.workflow.defaultFollowUpDays || 2));
-  const upcomingInterviews = tracker.filter((r) => r.status === "Interview Scheduled" && (!r.interviewDate || r.interviewDate >= isoToday()));
-  const completedInterviews = tracker.filter((r) => r.status === "Interview Completed" || (r.interviewDate === isoToday() && r.status === "Interview Scheduled"));
-  const managerFeedback = tracker.filter((r) => ["Interview Requested", "Interview Scheduled", "Awaiting Client Review", "Offer Pending"].includes(r.status) && !r.clientFeedback);
-  const fieldGrid = { display: "grid", gap: 18, gridTemplateColumns: "repeat(2,minmax(0,1fr))" };
-  const pageStyle = { minHeight: "100vh", background: theme.pageBg, color: theme.text, fontFamily: "Arial, sans-serif", fontSize: 13 };
-  const shellStyle = { maxWidth: 1420, margin: "0 auto", padding: 32 };
+  function generateOutput() {
+    setOutput(generatedPreview);
+  }
 
-  return <div style={pageStyle}><div style={shellStyle}>
-    <Card title={BRAND.appName} subtitle={BRAND.tagline} theme={theme} action={<div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}><Button primary={activePage === "submission"} onClick={() => setActivePage("submission")}>Submission</Button><Button primary={activePage === "tracker"} onClick={() => setActivePage("tracker")}>Submission Tracker</Button><Button primary={activePage === "action"} onClick={() => setActivePage("action")}>Action Center</Button><Button primary={activePage === "archive"} onClick={() => setActivePage("archive")}>Archived Candidates</Button><Button primary={activePage === "metrics"} onClick={() => setActivePage("metrics")}>Metrics</Button><Button primary={activePage === "settings"} onClick={() => setActivePage("settings")}>Settings</Button></div>}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 18, flexWrap: "wrap" }}><div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}><DashboardChip label="Tracked" value={tracker.length} bg={theme.goldBg} color={theme.goldText} onClick={() => setActivePage("tracker")} /><DashboardChip label="High Risk" value={m.highRisk} bg={theme.redBg} color={theme.redText} onClick={() => setActivePage("tracker")} /><DashboardChip label="Follow-Ups" value={followUps.length} bg={theme.slateBg} color={theme.slateText} onClick={() => setActivePage("action")} /><DashboardChip label="Interviews Today" value={completedInterviews.length} bg={theme.blueBg} color={theme.blueText} onClick={() => setActivePage("action")} /><DashboardChip label="Manager Feedback" value={managerFeedback.length} bg={theme.goldBg} color={theme.goldText} onClick={() => setActivePage("action")} /></div><div style={{ minWidth: 190 }}><SelectInput value={themeKey} onChange={(e) => setThemeKey(e.target.value)} options={[{ label: "Corporate Premium", value: "corporate" }, { label: "Dark Premium", value: "dark" }]} border={theme.inputBorder} /></div></div>
-    </Card>
+  function addAuditEntry(type, details) {
+    return {
+      id: makeId("audit"),
+      type,
+      details,
+      timestamp: new Date().toLocaleString()
+    };
+  }
 
-    <div style={{ margin: "22px 0 28px", background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, borderRadius: 20, padding: 20 }}><strong style={{ color: theme.muted, textTransform: "uppercase", fontSize: 11 }}>Setup Progress</strong><div style={{ marginTop: 9, height: 10, background: "#e2e8f0", borderRadius: 999, overflow: "hidden" }}><div style={{ width: `${setupProgress.percent}%`, height: "100%", background: `linear-gradient(135deg,${theme.navy} 0%,${theme.accent} 100%)` }} /></div><p style={{ margin: "9px 0 0", color: theme.muted }}>{setupProgress.complete} of {setupProgress.total} setup areas complete, {setupProgress.percent}% done</p></div>
+  function submitToTracker() {
+    const record = {
+      id: makeId("sub"),
+      ...form,
+      audit: [addAuditEntry("Candidate Submitted", "Candidate was added to the submission tracker.")],
+      emailHistory: generatedPreview.body
+        ? [
+            {
+              id: makeId("email"),
+              template: selectedTemplate.name,
+              subject: generatedPreview.subject,
+              body: generatedPreview.body,
+              timestamp: new Date().toLocaleString()
+            }
+          ]
+        : []
+    };
 
-    {activePage === "submission" ? <div style={{ display: "grid", gap: 26, gridTemplateColumns: "1fr .9fr", alignItems: "start" }}><div style={{ display: "grid", gap: 26 }}><Card title="Notes-to-Profile Intake" subtitle="Paste call notes or a transcript. Preview the extracted draft before applying it to the form." theme={theme} action={<div style={{ display: "flex", gap: 8 }}><Button onClick={previewNotes}>Preview Extract</Button>{notesPreview ? <Button primary onClick={applyNotesPreview}>Apply to Form</Button> : null}</div>}><Field label="Recruiter Notes / Transcript" color={theme.muted}><TextArea value={form.recruiterNotes} onChange={(e) => updateForm("recruiterNotes", e.target.value)} placeholder="Example: Candidate: Ashley Martin. RN with 10 years, corrections and med-surg, active license and CPR, needs two weeks notice, prefers day shift..." border={theme.inputBorder} minHeight={130} /></Field>{notesPreview ? <div style={{ marginTop: 16, background: "#ffffff", color: "#0f172a", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16 }}><strong>Extracted Draft Preview</strong><div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 10, marginTop: 12 }}><div><b>Name:</b> {notesPreview.fullName || "N/A"}</div><div><b>Role:</b> {notesPreview.position || "N/A"}</div><div><b>Experience:</b> {notesPreview.yearsExperience || "N/A"} yrs</div><div><b>Shift:</b> {notesPreview.shiftPreference || "N/A"}</div><div><b>Start:</b> {notesPreview.startAvailability || "N/A"}</div><div><b>Credentials:</b> {[notesPreview.licenseStatus, notesPreview.cprStatus].filter(Boolean).join(" | ") || "N/A"}</div><div style={{ gridColumn: "1 / -1" }}><b>Experience Notes:</b> {notesPreview.experienceNotes || "N/A"}</div></div></div> : null}</Card><Card title="Candidate Intake" subtitle="Submission page stays focused: no imports, no custom role creation, no candidate-comments clutter." theme={theme} action={<div style={{ display: "flex", gap: 8 }}><Button onClick={() => setForm(DEMO_FORM)}>Load Demo</Button><Button onClick={clearForm}>Clear</Button></div>}><div style={fieldGrid}>{[["Position", "position", "select"], ["Role Category", "roleCategory", "role"], ["Full Name", "fullName"], ["Phone", "phoneNumber"], ["Email", "emailAddress"], ["Location", "location"], ["Site / Facility", "siteName", "site"], ["Employment Type", "employmentType", "employment"], ["Shift", "shiftPreference", "shift"], ["Work Type", "workType", "work"], ["FTE", "fte", "fte"], ["Years Experience", "yearsExperience", "number"], ["Education", "educationLevel", "education"], ["Compensation Requested", "compensationRequested"], ["Estimated Compensation", "estimated", "readonly"], ["Start Date", "startAvailability", "start"], ["Interview Availability", "interviewAvailability"]].map(([label, key, type]) => <Field key={key} label={label} color={theme.muted}>{type === "select" ? <SelectInput value={form.position} onChange={(e) => updateForm("position", e.target.value)} options={activeRoles.map((r) => r.positionTitle)} border={theme.inputBorder} /> : type === "role" ? <SelectInput value={form.roleCategory || selectedRole?.roleCategory || ""} onChange={(e) => updateForm("roleCategory", e.target.value)} options={settings.options.roleTypes} border={theme.inputBorder} /> : type === "site" ? <SelectInput value={form.siteName} onChange={(e) => updateForm("siteName", e.target.value)} options={activeSites.map((s) => s.siteName)} border={theme.inputBorder} /> : type === "employment" ? <SelectInput value={form.employmentType} onChange={(e) => updateForm("employmentType", e.target.value)} options={settings.options.employmentTypes} border={theme.inputBorder} /> : type === "shift" ? <SelectInput value={form.shiftPreference} onChange={(e) => updateForm("shiftPreference", e.target.value)} options={settings.options.shiftOptions} border={theme.inputBorder} /> : type === "work" ? <SelectInput value={form.workType} onChange={(e) => updateForm("workType", e.target.value)} options={settings.options.workTypes} border={theme.inputBorder} /> : type === "fte" ? <SelectInput value={form.fte} onChange={(e) => updateForm("fte", e.target.value)} options={FTE_OPTIONS} border={theme.inputBorder} /> : type === "education" ? <SelectInput value={form.educationLevel} onChange={(e) => updateForm("educationLevel", e.target.value)} options={settings.options.educationLevels} border={theme.inputBorder} /> : type === "readonly" ? <TextInput value={estimatedComp} readOnly border={theme.inputBorder} /> : type === "start" ? <SelectInput value={form.startAvailability} onChange={(e) => updateForm("startAvailability", e.target.value)} options={settings.options.startOptions} border={theme.inputBorder} /> : <TextInput value={form[key]} onChange={(e) => updateForm(key, e.target.value)} type={type === "number" ? "number" : "text"} border={theme.inputBorder} />}</Field>)}<div style={{ gridColumn: "1 / -1" }}><Field label="Start Date Notes" color={theme.muted}><TextArea value={form.startNotes} onChange={(e) => updateForm("startNotes", e.target.value)} border={theme.inputBorder} /></Field></div>{isHealthcare ? <Field label="License Status" color={theme.muted}><SelectInput value={form.licenseStatus} onChange={(e) => updateForm("licenseStatus", e.target.value)} options={settings.options.licenseStatuses} border={theme.inputBorder} /></Field> : null}{isHealthcare ? <Field label="CPR Status" color={theme.muted}><SelectInput value={form.cprStatus} onChange={(e) => updateForm("cprStatus", e.target.value)} options={settings.options.cprStatuses} border={theme.inputBorder} /></Field> : null}{isHealthcare ? <Field label="Licensed Since" color={theme.muted}><TextInput value={form.licensedYear} onChange={(e) => updateForm("licensedYear", e.target.value)} border={theme.inputBorder} /></Field> : null}<div style={{ gridColumn: "1 / -1" }}><Field label="Experience Notes" color={theme.muted}><TextArea value={form.experienceNotes} onChange={(e) => updateForm("experienceNotes", e.target.value)} border={theme.inputBorder} /></Field></div></div><div style={{ marginTop: 22 }}><h3 style={{ margin: 0, color: theme.text }}>Work Expectations</h3><div style={{ ...fieldGrid, marginTop: 14 }}><Field label="Work Schedule" color={theme.muted}><TextInput value={form.workSchedule} onChange={(e) => updateForm("workSchedule", e.target.value)} border={theme.inputBorder} /></Field><Field label="Work Area" color={theme.muted}><TextInput value={form.workArea} onChange={(e) => updateForm("workArea", e.target.value)} border={theme.inputBorder} /></Field><Field label="OT" color={theme.muted}><SelectInput value={form.otRequirement} onChange={(e) => updateForm("otRequirement", e.target.value)} options={settings.options.otOptions} border={theme.inputBorder} /></Field><Field label="Weekend" color={theme.muted}><SelectInput value={form.weekendRequirement} onChange={(e) => updateForm("weekendRequirement", e.target.value)} options={settings.options.weekendOptions} border={theme.inputBorder} /></Field><Field label="On-Call" color={theme.muted}><SelectInput value={form.onCallRequirement} onChange={(e) => updateForm("onCallRequirement", e.target.value)} options={settings.options.onCallOptions} border={theme.inputBorder} /></Field></div><div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(2,minmax(0,1fr))", marginTop: 14 }}><ToggleField label="Schedule Confirmed" checked={form.scheduleConfirmed} onChange={(v) => updateForm("scheduleConfirmed", v)} theme={theme} /><ToggleField label="OT Confirmed" checked={form.otConfirmed} onChange={(v) => updateForm("otConfirmed", v)} theme={theme} /><ToggleField label="Weekend Confirmed" checked={form.weekendConfirmed} onChange={(v) => updateForm("weekendConfirmed", v)} theme={theme} /><ToggleField label="On-Call Confirmed" checked={form.onCallConfirmed} onChange={(v) => updateForm("onCallConfirmed", v)} theme={theme} /></div></div><div style={{ marginTop: 22 }}><Field label="Additional Notes" color={theme.muted}><TextArea value={form.candidateNotes} onChange={(e) => updateForm("candidateNotes", e.target.value)} border={theme.inputBorder} /></Field></div><div style={{ display: "flex", gap: 10, marginTop: 22, flexWrap: "wrap" }}><Button primary onClick={generateOutput}>Generate Output</Button><Button onClick={submitCandidateFlow}>Submit Candidate Workflow</Button></div></Card></div><Card title="Generated Output" subtitle="Approve, send, log, confirm, remind, and age the submission." theme={theme}>{!output ? <div style={{ border: `1px dashed ${theme.cardBorder}`, borderRadius: 16, padding: 28, textAlign: "center", color: theme.muted }}>Generate output to preview submission content.</div> : <div style={{ display: "grid", gap: 24 }}><EmailDocumentBlock title="Hiring Manager Draft" badge={getStrengthLabel()} subject={output.hiringSubject} body={output.hiringEmail} theme={theme} onOpenDraft={() => openEmail("hiring")} /><EmailDocumentBlock title="ATS Summary Block" badge="Operational" subject={output.atsSubject} body={output.ats} theme={theme} /><EmailDocumentBlock title="Candidate Email Draft" badge="Confirmation" subject={output.candidateSubject} body={output.candidateEmail} theme={theme} onOpenDraft={() => openEmail("candidate")} /><div style={{ display: "flex", justifyContent: "flex-end" }}><Button primary onClick={submitCandidateFlow}>Approve + Execute Workflow</Button></div></div>}</Card></div> : null}
+    setTracker(prev => [record, ...prev]);
+    setOutput(generatedPreview);
+  }
 
-    {activePage === "tracker" ? <div style={{ display: "grid", gap: 24 }}><Card title="Submission Tracker" subtitle="Control tower view: aging, owner, next action, risk, client response, and outcome." theme={theme}>{!tracker.length ? <div style={{ border: `1px dashed ${theme.cardBorder}`, borderRadius: 16, padding: 24, textAlign: "center", color: theme.muted }}>No tracked submissions yet.</div> : <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 10px", color: "#0f172a" }}><thead><tr>{["Candidate", "Role", "Facility", "Status", "Aging", "Risk", "Next Action", "Due", "Owner", "Feedback", "Outcome", "Reason", "Actions"].map((h) => <th key={h} style={{ textAlign: "left", color: theme.muted, fontSize: 11, textTransform: "uppercase", padding: 8 }}>{h}</th>)}</tr></thead><tbody>{tracker.map((row) => { const risk = trackerRisk(row); const riskStyle = risk === "High" ? [theme.redBg, theme.redText] : risk === "Medium" ? [theme.goldBg, theme.goldText] : risk === "Closed" ? [theme.slateBg, theme.slateText] : [theme.greenBg, theme.greenText]; return <tr key={row.id} style={{ background: "#ffffff" }}><td style={{ padding: 8, borderRadius: "12px 0 0 12px" }}><strong>{row.candidate}</strong><div style={{ color: "#64748b", fontSize: 12 }}>{row.strength}</div></td><td style={{ padding: 8 }}>{row.position}</td><td style={{ padding: 8 }}>{row.facility}</td><td style={{ padding: 8 }}><SelectInput value={row.status} onChange={(e) => updateTracker(row.id, "status", e.target.value)} options={settings.options.trackerStatuses} border="#d7deea" /></td><td style={{ padding: 8 }}>{daysBetween(row.submittedDate)} days</td><td style={{ padding: 8 }}><Badge bg={riskStyle[0]} color={riskStyle[1]}>{risk}</Badge></td><td style={{ padding: 8 }}><TextInput value={row.nextAction} onChange={(e) => updateTracker(row.id, "nextAction", e.target.value)} border="#d7deea" /></td><td style={{ padding: 8 }}><TextInput type="date" value={row.dueDate} onChange={(e) => updateTracker(row.id, "dueDate", e.target.value)} border="#d7deea" /></td><td style={{ padding: 8 }}><TextInput value={row.recruiter} onChange={(e) => updateTracker(row.id, "recruiter", e.target.value)} border="#d7deea" /></td><td style={{ padding: 8 }}><TextInput value={row.clientFeedback} onChange={(e) => updateTracker(row.id, "clientFeedback", e.target.value)} border="#d7deea" /></td><td style={{ padding: 8 }}><SelectInput value={row.outcome} onChange={(e) => updateTracker(row.id, "outcome", e.target.value)} options={settings.options.outcomes} border="#d7deea" /></td><td style={{ padding: 8 }}><TextInput value={row.reason} onChange={(e) => updateTracker(row.id, "reason", e.target.value)} border="#d7deea" /></td><td style={{ padding: 8, borderRadius: "0 12px 12px 0" }}><div style={{ display: "grid", gap: 6 }}><Button onClick={() => setAtsUpdateDraft({ subject: `ATS Update: ${row.candidate} | ${row.position} | ${row.facility}`, body: buildAtsUpdate(row) })}>ATS Update</Button><Button onClick={() => { setSelectedCandidate(row); setActivePage("candidateDetail"); }}>Review Details</Button><Button onClick={() => requestArchive(row)}>Archive</Button></div></td></tr>; })}</tbody></table></div>}</Card>{atsUpdateDraft ? <EmailDocumentBlock title="ATS Update Generator" badge="Tracker Update" subject={atsUpdateDraft.subject} body={atsUpdateDraft.body} theme={theme} /> : null}</div> : null}
+  function updateTrackerStatus(recordId, status) {
+    setTracker(prev =>
+      prev.map(record => {
+        if (record.id !== recordId) return record;
 
-    {activePage === "candidateDetail" && selectedCandidate ? <div style={{ display: "grid", gap: 24 }}><Card title={`${selectedCandidate.candidate} Candidate Details`} subtitle="Candidate record, timestamps, generated outputs, ATS updates, and tracker history." theme={theme} action={<Button onClick={() => setActivePage("tracker")}>Back to Tracker</Button>}><div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(3,minmax(0,1fr))", color: "#0f172a" }}><div style={{ background: "#ffffff", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16 }}><strong>Submission Details</strong><p>Candidate: {selectedCandidate.candidate}</p><p>Position: {selectedCandidate.position}</p><p>Facility: {selectedCandidate.facility}</p><p>Status: {selectedCandidate.status}</p></div><div style={{ background: "#ffffff", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16 }}><strong>Process Details</strong><p>Submitted: {selectedCandidate.submittedDate}</p><p>Due Date: {selectedCandidate.dueDate || "N/A"}</p><p>Days Aging: {daysBetween(selectedCandidate.submittedDate)}</p><p>Risk: {trackerRisk(selectedCandidate)}</p></div><div style={{ background: "#ffffff", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16 }}><strong>Outcome Details</strong><p>Outcome: {selectedCandidate.outcome || "Pending"}</p><p>Reason: {selectedCandidate.reason || "N/A"}</p><p>Client Feedback: {selectedCandidate.clientFeedback || "Pending"}</p><p>Next Action: {selectedCandidate.nextAction || "N/A"}</p></div></div></Card><Card title="Audit Timeline" subtitle="System-readable timestamp trail for recruiter actions." theme={theme}><div style={{ display: "grid", gap: 10, color: "#0f172a" }}>{[`${selectedCandidate.submittedDate} — Candidate logged to Submission Tracker`, `${selectedCandidate.dueDate || "N/A"} — Follow-up due`, `${isoToday()} — Current status reviewed as ${selectedCandidate.status}`, `${isoToday()} — ATS update available`].map((item, idx) => <div key={idx} style={{ background: "#ffffff", border: `1px solid ${theme.cardBorder}`, borderRadius: 14, padding: 12 }}>{item}</div>)}</div></Card><EmailDocumentBlock title="ATS Update Generator" badge="Candidate Detail" subject={`ATS Update: ${selectedCandidate.candidate} | ${selectedCandidate.position} | ${selectedCandidate.facility}`} body={buildAtsUpdate(selectedCandidate)} theme={theme} /><EmailDocumentBlock title="Hiring Manager Email History" badge="Generated Draft" subject={selectedCandidate.output?.hiringSubject || "N/A"} body={selectedCandidate.output?.hiringEmail || "No email draft available."} theme={theme} /><EmailDocumentBlock title="Candidate Email History" badge="Generated Draft" subject={selectedCandidate.output?.candidateSubject || "N/A"} body={selectedCandidate.output?.candidateEmail || "No candidate email draft available."} theme={theme} /></div> : null}
+        return {
+          ...record,
+          status,
+          audit: [
+            addAuditEntry("Status Updated", `Status changed to ${status}.`),
+            ...(record.audit || [])
+          ]
+        };
+      })
+    );
+  }
 
-    {activePage === "action" ? <div style={{ display: "grid", gap: 24 }}><Card title="Action Center" subtitle="Daily execution queue: follow-ups, interviews, completed interviews, and manager feedback." theme={theme}><div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(4,minmax(0,1fr))" }}><DashboardChip label="Follow-Ups" value={followUps.length} bg={theme.slateBg} color={theme.slateText} onClick={() => {}} /><DashboardChip label="Upcoming Interviews" value={upcomingInterviews.length} bg={theme.blueBg} color={theme.blueText} onClick={() => {}} /><DashboardChip label="Completed Interviews" value={completedInterviews.length} bg={theme.greenBg} color={theme.greenText} onClick={() => {}} /><DashboardChip label="Manager Feedback" value={managerFeedback.length} bg={theme.goldBg} color={theme.goldText} onClick={() => {}} /></div></Card><Card title="Follow-Up Emails" subtitle="Candidates submitted 48+ hours ago or pending follow-up." theme={theme}>{followUps.length ? followUps.map((row) => <div key={row.id} style={{ background: "#ffffff", color: "#0f172a", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16, marginBottom: 12 }}><strong>{row.candidate}</strong><div style={{ color: "#64748b", margin: "4px 0 12px" }}>{row.position} | {row.facility} | {daysBetween(row.submittedDate)} days</div><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button onClick={() => copyText(buildCandidateFollowUp(row))}>Copy Follow-Up</Button><Button onClick={() => markFollowed(row.id)}>Mark Followed Up</Button></div></div>) : <p style={{ color: theme.muted }}>No candidate follow-ups due.</p>}</Card><Card title="Upcoming Interviews" subtitle="Candidates with scheduled interviews coming up." theme={theme}>{upcomingInterviews.length ? upcomingInterviews.map((row) => <div key={row.id} style={{ background: "#ffffff", color: "#0f172a", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16, marginBottom: 12 }}><strong>{row.candidate}</strong><div style={{ color: "#64748b", margin: "4px 0 12px" }}>{row.position} | {row.facility}</div><Button onClick={() => copyText(buildInterviewReminder(row))}>Copy Reminder</Button></div>) : <p style={{ color: theme.muted }}>No upcoming interviews found.</p>}</Card><Card title="Interviews Completed" subtitle="Follow up with candidates after interviews." theme={theme}>{completedInterviews.length ? completedInterviews.map((row) => <div key={row.id} style={{ background: "#ffffff", color: "#0f172a", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16, marginBottom: 12 }}><strong>{row.candidate}</strong><div style={{ color: "#64748b", margin: "4px 0 12px" }}>{row.position} | {row.facility}</div><Button onClick={() => copyText(buildInterviewCompleteFollowUp(row))}>Copy Candidate Follow-Up</Button></div>) : <p style={{ color: theme.muted }}>No completed interviews needing follow-up.</p>}</Card><Card title="Manager Feedback Required" subtitle="Generate one manager follow-up for all pending candidates." theme={theme} action={<Button primary onClick={() => copyText(buildManagerFeedbackEmail(managerFeedback))}>Copy Bulk Manager Email</Button>}>{managerFeedback.length ? managerFeedback.map((row) => <div key={row.id} style={{ background: "#ffffff", color: "#0f172a", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16, marginBottom: 12 }}><strong>{row.candidate}</strong><div style={{ color: "#64748b" }}>{row.position} | {row.facility} | {row.status}</div></div>) : <p style={{ color: theme.muted }}>No manager feedback currently required.</p>}</Card></div> : null}
+  function saveTemplate(key, field, value) {
+    setTemplates(prev => ({
+      ...prev,
+      [key]: {
+        ...prev[key],
+        [field]: value
+      }
+    }));
+  }
 
-    {activePage === "archive" ? <Card title="Archived Candidates" subtitle="Final outcomes are documented here and removed from active tracker metrics." theme={theme}>{!archived.length ? <div style={{ border: `1px dashed ${theme.cardBorder}`, borderRadius: 16, padding: 24, textAlign: "center", color: theme.muted }}>No archived candidates yet.</div> : <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 10px", color: "#0f172a" }}><thead><tr>{["Candidate", "Role", "Facility", "Final Outcome", "Future Status", "Reason", "Archived"].map((h) => <th key={h} style={{ textAlign: "left", color: theme.muted, fontSize: 11, textTransform: "uppercase", padding: 8 }}>{h}</th>)}</tr></thead><tbody>{archived.map((row) => <tr key={row.id} style={{ background: "#ffffff" }}><td style={{ padding: 8, borderRadius: "12px 0 0 12px" }}><strong>{row.candidate}</strong></td><td style={{ padding: 8 }}>{row.position}</td><td style={{ padding: 8 }}>{row.facility}</td><td style={{ padding: 8 }}>{row.outcome}</td><td style={{ padding: 8 }}>{row.futureStatus}</td><td style={{ padding: 8 }}>{row.archiveReason}</td><td style={{ padding: 8, borderRadius: "0 12px 12px 0" }}>{row.archivedDate}</td></tr>)}</tbody></table></div>}</Card> : null}
+  function openEmail(subject = output.subject, body = output.body) {
+    const mailto = `mailto:?subject=${encodeURIComponent(subject || "")}&body=${encodeURIComponent(body || "")}`;
+    window.location.href = mailto;
+  }
 
-    {archiveDraft ? <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}><div style={{ width: "100%", maxWidth: 620, background: "#ffffff", color: "#0f172a", borderRadius: 20, padding: 24, boxShadow: "0 20px 50px rgba(0,0,0,.25)" }}><h2 style={{ marginTop: 0 }}>Archive Candidate</h2><p style={{ color: "#64748b" }}>Document the final outcome before removing this candidate from active tracking.</p><div style={{ display: "grid", gap: 14 }}><Field label="Final Outcome" color="#64748b"><SelectInput value={archiveDraft.outcome} onChange={(e) => setArchiveDraft((p) => ({ ...p, outcome: e.target.value }))} options={settings.options.outcomes.filter((o) => o !== "Pending")} border="#d7deea" /></Field><Field label="Archive Reason" color="#64748b"><TextArea value={archiveDraft.archiveReason} onChange={(e) => setArchiveDraft((p) => ({ ...p, archiveReason: e.target.value }))} border="#d7deea" /></Field><Field label="Future Review Status" color="#64748b"><SelectInput value={archiveDraft.futureStatus} onChange={(e) => setArchiveDraft((p) => ({ ...p, futureStatus: e.target.value }))} options={["Not a good candidate to proceed forward with in the future", "Candidate still viable for future review", "Reconsider for different role", "Reconsider after availability changes"]} border="#d7deea" /></Field><Field label="Archive Notes" color="#64748b"><TextArea value={archiveDraft.archiveNotes} onChange={(e) => setArchiveDraft((p) => ({ ...p, archiveNotes: e.target.value }))} border="#d7deea" /></Field></div><div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}><Button onClick={() => setArchiveDraft(null)}>Cancel</Button><Button primary onClick={confirmArchive}>Archive Candidate</Button></div></div></div> : null}
+  const pageButton = page => ({
+    padding: "10px 14px",
+    borderRadius: 10,
+    border: activePage === page ? "2px solid #111827" : "1px solid #d1d5db",
+    background: activePage === page ? "#111827" : "#ffffff",
+    color: activePage === page ? "#ffffff" : "#111827",
+    cursor: "pointer",
+    fontWeight: 700
+  });
 
-    {activePage === "metrics" ? <div style={{ display: "grid", gap: 24 }}><div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(5,minmax(0,1fr))" }}>{[["Total Submissions", m.total], ["Submit → Interview", `${m.submitToInterview}%`], ["Interview → Offer", `${m.interviewToOffer}%`], ["Placement Rate", `${m.placementRate}%`], ["High Risk", m.highRisk]].map(([label, value]) => <Card key={label} title={String(value)} subtitle={label} theme={theme} />)}</div><Card title="Weekly Report Generator" subtitle="Create a leadership or facility-ready update from the active tracker." theme={theme} action={<Button primary onClick={generateWeeklyReport}>Generate Weekly Report</Button>}>{weeklyReport ? <EmailDocumentBlock title="Weekly Report Draft" badge="Leadership Ready" subject={weeklyReport.subject} body={weeklyReport.body} theme={theme} onOpenDraft={() => { window.location.href = `mailto:?subject=${encodeURIComponent(weeklyReport.subject)}&body=${encodeURIComponent(weeklyReport.body)}`; }} /> : <p style={{ margin: 0, color: theme.muted, lineHeight: 1.7 }}>Generate a professional weekly report with active submissions, aging, current step, outcome counts, and high-risk items.</p>}</Card></div> : null}
+  return (
+    <div style={{ minHeight: "100vh", background: "#f8fafc", color: "#111827", fontFamily: "Arial, sans-serif" }}>
+      <header style={{ padding: 24, background: "#111827", color: "white" }}>
+        <h1 style={{ margin: 0 }}>WelcomeFlow</h1>
+        <p style={{ margin: "8px 0 0" }}>Clean recruiting workflow build</p>
+      </header>
 
-    {activePage === "settings" ? <div style={{ display: "grid", gap: 24, gridTemplateColumns: "270px 1fr" }}><aside style={{ background: theme.sidebarBg, border: `1px solid ${theme.cardBorder}`, borderRadius: 20, padding: 16 }}><div style={{ marginBottom: 12, padding: 12, borderRadius: 14, background: theme.blueBg, color: theme.blueText, fontWeight: 800 }}>{BRAND.appName} Setup</div><div style={{ display: "grid", gap: 8 }}>{[["general", "Workspace Setup"], ["sites", "Sites"], ["roles", "Roles"], ["compensation", "Compensation Structure"], ["shifts", "Shifts + Core Options"], ["workflow", "Workflow Settings"], ["templates", "Templates"], ["imports", "Imports + Templates"]].map(([key, label]) => <NavButton key={key} active={activeSettingsTab === key} onClick={() => setActiveSettingsTab(key)}>{label}</NavButton>)}</div></aside><div style={{ display: "grid", gap: 24 }}>{activeSettingsTab === "general" ? <Card title="Workspace Setup" subtitle="Company, recruiter, and signature details." theme={theme}><div style={fieldGrid}>{Object.keys(settings.general).map((key) => <Field key={key} label={key.replace(/([A-Z])/g, " $1")} color={theme.muted}><TextInput value={settings.general[key]} onChange={(e) => updateSettings("general", key, e.target.value)} border={theme.inputBorder} /></Field>)}</div></Card> : null}{activeSettingsTab === "sites" ? <Card title="Sites" subtitle="Add facilities and upload site files here." theme={theme} action={<div style={{ display: "flex", gap: 8 }}><Button onClick={addSite}>Add Site</Button><Button onClick={() => openImport("sites")}>Upload Sites</Button></div>}><div style={{ display: "grid", gap: 16 }}>{settings.sites.map((site) => <div key={site.id} style={{ background: "#ffffff", color: "#0f172a", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16 }}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}><strong>Site Record</strong><Button onClick={() => removeFrom("sites", site.id)} style={{ color: "#b91c1c" }}>Delete</Button></div><div style={fieldGrid}>{["siteName", "siteType", "location", "facilityEmail", "status"].map((key) => <Field key={key} label={key} color={theme.muted}>{key === "status" ? <SelectInput value={site[key]} onChange={(e) => updateArray("sites", site.id, key, e.target.value)} options={["Active", "Inactive"]} border={theme.inputBorder} /> : <TextInput value={site[key] || ""} onChange={(e) => updateArray("sites", site.id, key, e.target.value)} border={theme.inputBorder} />}</Field>)}</div></div>)}</div></Card> : null}{activeSettingsTab === "roles" ? <><Card title="Role Category Options" subtitle="Editable dropdown source for Role Category." theme={theme}><TagEditor label="Role Categories" values={settings.options.roleTypes} onChange={(v) => updateOptions("roleTypes", v)} theme={theme} /></Card><Card title="Roles" subtitle="Keep Add Role here. No custom role action on Submission page." theme={theme} action={<div style={{ display: "flex", gap: 8 }}><Button onClick={addRole}>Add Role</Button><Button onClick={() => openImport("roles")}>Upload Roles</Button></div>}><div style={{ display: "grid", gap: 16 }}>{settings.roles.map((role) => <div key={role.id} style={{ background: "#ffffff", color: "#0f172a", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16 }}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}><strong>Role Record</strong><Button onClick={() => removeFrom("roles", role.id)} style={{ color: "#b91c1c" }}>Delete</Button></div><div style={fieldGrid}><Field label="Position Title" color={theme.muted}><TextInput value={role.positionTitle} onChange={(e) => updateArray("roles", role.id, "positionTitle", e.target.value)} border={theme.inputBorder} /></Field><Field label="Role Category" color={theme.muted}><SelectInput value={role.roleCategory} onChange={(e) => updateArray("roles", role.id, "roleCategory", e.target.value)} options={settings.options.roleTypes} border={theme.inputBorder} /></Field>{["requiresLicense", "requiresCpr", "requiresFte", "requiresShift", "requiresWorkExpectations"].map((key) => <ToggleField key={key} label={key} checked={role[key]} onChange={(v) => updateArray("roles", role.id, key, v)} theme={theme} />)}<Field label="Status" color={theme.muted}><SelectInput value={role.status} onChange={(e) => updateArray("roles", role.id, "status", e.target.value)} options={["Active", "Inactive"]} border={theme.inputBorder} /></Field></div></div>)}</div></Card></> : null}{activeSettingsTab === "compensation" ? <Card title="Compensation Structure" subtitle="Hourly/salary, years-based/flat/custom, shift differentials." theme={theme} action={<div style={{ display: "flex", gap: 8 }}><Button onClick={addRate}>Add Rule</Button><Button onClick={() => openImport("rates")}>Upload Rates</Button></div>}><div style={{ display: "grid", gap: 16 }}>{settings.compensationRules.map((rule) => <div key={rule.id} style={{ background: "#ffffff", color: "#0f172a", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16 }}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}><strong>Compensation Rule</strong><Button onClick={() => removeFrom("compensationRules", rule.id)} style={{ color: "#b91c1c" }}>Delete</Button></div><div style={fieldGrid}>{["positionTitle", "scopeType", "scopeValue", "compensationType", "basisType", "experienceTier", "baseAmount", "nightDiff", "weekendDiff", "eveningDiff"].map((key) => <Field key={key} label={key} color={theme.muted}><TextInput value={rule[key] || ""} onChange={(e) => updateArray("compensationRules", rule.id, key, e.target.value)} border={theme.inputBorder} /></Field>)}</div></div>)}</div></Card> : null}{activeSettingsTab === "shifts" ? <Card title="Shifts + Core Options" subtitle="Shift, work type, start options, and FTE display." theme={theme} action={<Button onClick={() => openImport("shifts")}>Upload Shifts</Button>}><div style={fieldGrid}><TagEditor label="Shift Options" values={settings.options.shiftOptions} onChange={(v) => updateOptions("shiftOptions", v)} theme={theme} /><TagEditor label="Work Types" values={settings.options.workTypes} onChange={(v) => updateOptions("workTypes", v)} theme={theme} /><TagEditor label="Start Options" values={settings.options.startOptions} onChange={(v) => updateOptions("startOptions", v)} theme={theme} /><div style={{ background: "#ffffff", color: "#0f172a", border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16 }}><strong>FTE Display</strong><div style={{ display: "grid", gap: 8, marginTop: 10 }}>{FTE_OPTIONS.map((item) => <div key={item.value}>{item.label}</div>)}</div></div></div></Card> : null}{activeSettingsTab === "workflow" ? <Card title="Workflow Settings" subtitle="Customize approval, send, log, confirmation, reminders, and aging rules by company standard." theme={theme}><div style={fieldGrid}>{["requireApprovalBeforeSending", "openHiringEmail", "openCandidateEmail", "logToTracker"].map((key) => <ToggleField key={key} label={key} checked={settings.workflow[key]} onChange={(v) => updateSettings("workflow", key, v)} theme={theme} />)}<Field label="Default Follow-Up Days" color={theme.muted}><TextInput type="number" value={settings.workflow.defaultFollowUpDays} onChange={(e) => updateSettings("workflow", "defaultFollowUpDays", e.target.value)} border={theme.inputBorder} /></Field><Field label="Medium Risk Days" color={theme.muted}><TextInput type="number" value={settings.workflow.mediumRiskDays} onChange={(e) => updateSettings("workflow", "mediumRiskDays", e.target.value)} border={theme.inputBorder} /></Field><Field label="High Risk Days" color={theme.muted}><TextInput type="number" value={settings.workflow.highRiskDays} onChange={(e) => updateSettings("workflow", "highRiskDays", e.target.value)} border={theme.inputBorder} /></Field><Field label="Auto Status After Submit" color={theme.muted}><SelectInput value={settings.workflow.autoStatusAfterSubmit} onChange={(e) => updateSettings("workflow", "autoStatusAfterSubmit", e.target.value)} options={settings.options.trackerStatuses} border={theme.inputBorder} /></Field></div></Card> : null}{activeSettingsTab === "templates" ? <Card title="Templates" subtitle="Customize generated email language." theme={theme}><div style={fieldGrid}>{Object.keys(settings.templates).map((key) => <div key={key} style={{ gridColumn: key.toLowerCase().includes("candidate") || key.toLowerCase().includes("line") ? "1 / -1" : "auto" }}><Field label={key} color={theme.muted}><TextArea value={settings.templates[key]} onChange={(e) => updateSettings("templates", key, e.target.value)} border={theme.inputBorder} /></Field></div>)}</div></Card> : null}{activeSettingsTab === "imports" ? <><Card title="Downloadable Templates" subtitle="Uploads live on the page they feed into. This page is for templates and guidance." theme={theme}><div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}><Button onClick={() => downloadTemplate("sites")}>Sites Template</Button><Button onClick={() => downloadTemplate("roles")}>Roles Template</Button><Button onClick={() => downloadTemplate("rates")}>Rates Template</Button><Button onClick={() => downloadTemplate("shifts")}>Shifts Template</Button></div></Card><Card title="Upload Guidance" subtitle="Sites, Roles, Compensation, and Shifts each have their own upload button." theme={theme}><p style={{ margin: 0, color: theme.muted, lineHeight: 1.7 }}>Supported formats: PDF, DOCX, TXT, XLSX, CSV. Current build accepts files and routes the upload intent. Full parsing into live records is the next backend layer.</p></Card></> : null}</div></div> : null}
+      <main style={{ padding: 24, maxWidth: 1180, margin: "0 auto" }}>
+        <nav style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 24 }}>
+          <button style={pageButton("submission")} onClick={() => setActivePage("submission")}>Submission</button>
+          <button style={pageButton("tracker")} onClick={() => setActivePage("tracker")}>Tracker</button>
+          <button style={pageButton("actionCenter")} onClick={() => setActivePage("actionCenter")}>Action Center</button>
+          <button style={pageButton("templates")} onClick={() => setActivePage("templates")}>Settings → Templates</button>
+        </nav>
 
-    <input ref={importInputRef} type="file" multiple style={{ display: "none" }} onChange={(e) => handleImport(e.target.files)} />
-    <footer style={{ marginTop: 28, textAlign: "center", color: theme.muted, fontSize: 13 }}>{BRAND.footer}</footer>
-  </div></div>;
+        {activePage === "submission" && (
+          <section style={{ display: "grid", gridTemplateColumns: "minmax(280px, 430px) 1fr", gap: 24 }}>
+            <div style={cardStyle}>
+              <h2 style={sectionTitle}>Candidate Submission</h2>
+
+              <FormInput label="Full Name" value={form.fullName} onChange={value => updateForm("fullName", value)} />
+              <FormInput label="Position" value={form.position} onChange={value => updateForm("position", value)} />
+              <FormInput label="Facility" value={form.facility} onChange={value => updateForm("facility", value)} />
+              <FormInput label="Facility Leadership" value={form.facilityLeadership} onChange={value => updateForm("facilityLeadership", value)} />
+              <FormInput label="Email" value={form.email} onChange={value => updateForm("email", value)} />
+              <FormInput label="Phone" value={form.phone} onChange={value => updateForm("phone", value)} />
+              <FormInput label="Submission Date" type="date" value={form.submissionDate} onChange={value => updateForm("submissionDate", value)} />
+
+              <label style={labelStyle}>Template</label>
+              <select value={selectedTemplateKey} onChange={e => setSelectedTemplateKey(e.target.value)} style={inputStyle}>
+                {Object.entries(templates).map(([key, template]) => (
+                  <option key={key} value={key}>{template.name}</option>
+                ))}
+              </select>
+
+              <label style={labelStyle}>Notes</label>
+              <textarea value={form.notes} onChange={e => updateForm("notes", e.target.value)} style={{ ...inputStyle, minHeight: 90 }} />
+
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
+                <button style={primaryButton} onClick={generateOutput}>Generate</button>
+                <button style={secondaryButton} onClick={submitToTracker}>Add to Tracker</button>
+              </div>
+            </div>
+
+            <div style={cardStyle}>
+              <h2 style={sectionTitle}>Email Preview</h2>
+              <p style={{ fontWeight: 700 }}>Subject</p>
+              <div style={previewBox}>{output.subject || generatedPreview.subject || "Generate an email to preview subject."}</div>
+
+              <p style={{ fontWeight: 700 }}>Body</p>
+              <pre style={{ ...previewBox, whiteSpace: "pre-wrap", minHeight: 260 }}>
+                {output.body || generatedPreview.body || "Generate an email to preview body."}
+              </pre>
+
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button style={primaryButton} onClick={() => openEmail(output.subject || generatedPreview.subject, output.body || generatedPreview.body)}>Open Email</button>
+                <button style={secondaryButton} onClick={() => copyToClipboard(output.body || generatedPreview.body)}>Copy Body</button>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {activePage === "tracker" && (
+          <section style={cardStyle}>
+            <h2 style={sectionTitle}>Submission Tracker</h2>
+
+            {tracker.length === 0 ? (
+              <p>No submissions yet.</p>
+            ) : (
+              <div style={{ display: "grid", gap: 14 }}>
+                {tracker.map(record => (
+                  <div key={record.id} style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 16, background: "#ffffff" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                      <div>
+                        <h3 style={{ margin: 0 }}>{record.fullName || "Unnamed Candidate"}</h3>
+                        <p style={{ margin: "6px 0" }}>{record.position} | {record.facility}</p>
+                        <p style={{ margin: 0, color: "#4b5563" }}>{record.submissionDate} | {record.status}</p>
+                      </div>
+
+                      <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
+                        <select value={record.status} onChange={e => updateTrackerStatus(record.id, e.target.value)} style={inputStyle}>
+                          <option>Submitted</option>
+                          <option>Hiring Manager Review</option>
+                          <option>Interview Requested</option>
+                          <option>Interview Scheduled</option>
+                          <option>Offer Pending</option>
+                          <option>Hired</option>
+                          <option>Closed</option>
+                          <option>Not Selected</option>
+                        </select>
+                        <button style={secondaryButton} onClick={() => setExpandedAuditId(expandedAuditId === record.id ? null : record.id)}>
+                          Review Details
+                        </button>
+                      </div>
+                    </div>
+
+                    {expandedAuditId === record.id && (
+                      <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
+                        <div style={softPanel}>
+                          <h4 style={{ marginTop: 0 }}>Audit History</h4>
+                          {(record.audit || []).map(item => (
+                            <div key={item.id} style={{ borderTop: "1px solid #e5e7eb", paddingTop: 8, marginTop: 8 }}>
+                              <strong>{item.type}</strong>
+                              <p style={{ margin: "4px 0" }}>{item.details}</p>
+                              <small>{item.timestamp}</small>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div style={softPanel}>
+                          <h4 style={{ marginTop: 0 }}>Email History</h4>
+                          {(record.emailHistory || []).length === 0 ? (
+                            <p>No email history yet.</p>
+                          ) : (
+                            record.emailHistory.map(email => (
+                              <details key={email.id} style={{ marginBottom: 10 }}>
+                                <summary style={{ cursor: "pointer", fontWeight: 700 }}>{email.template} | {email.timestamp}</summary>
+                                <p><strong>Subject:</strong> {email.subject}</p>
+                                <pre style={{ ...previewBox, whiteSpace: "pre-wrap" }}>{email.body}</pre>
+                                <button style={secondaryButton} onClick={() => openEmail(email.subject, email.body)}>Open Again</button>
+                              </details>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {activePage === "actionCenter" && (
+          <section style={cardStyle}>
+            <h2 style={sectionTitle}>Action Center</h2>
+            <p style={{ color: "#4b5563" }}>
+              Quick actions for candidates who need movement, follow-up, or review.
+            </p>
+
+            {tracker.length === 0 ? (
+              <p>No candidates in the action center yet. Add a candidate from the Submission page first.</p>
+            ) : (
+              <div style={{ display: "grid", gap: 14 }}>
+                {tracker.map(record => {
+                  const needsAction = ["Submitted", "Hiring Manager Review", "Interview Requested"].includes(record.status);
+                  return (
+                    <div key={record.id} style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 16, background: needsAction ? "#fff7ed" : "#ffffff" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                        <div>
+                          <h3 style={{ margin: 0 }}>{record.fullName || "Unnamed Candidate"}</h3>
+                          <p style={{ margin: "6px 0" }}>{record.position} | {record.facility}</p>
+                          <p style={{ margin: 0, color: "#4b5563" }}>Current Status: {record.status}</p>
+                        </div>
+
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-start" }}>
+                          <button
+                            style={primaryButton}
+                            onClick={() => {
+                              const subject = applyTemplate(templates.hiringManagerFollowUp.subject, record);
+                              const body = applyTemplate(templates.hiringManagerFollowUp.body, record);
+                              openEmail(subject, body);
+                            }}
+                          >
+                            HM Follow-Up
+                          </button>
+
+                          <button
+                            style={secondaryButton}
+                            onClick={() => {
+                              const subject = applyTemplate(templates.candidateFollowUp.subject, record);
+                              const body = applyTemplate(templates.candidateFollowUp.body, record);
+                              openEmail(subject, body);
+                            }}
+                          >
+                            Candidate Follow-Up
+                          </button>
+
+                          <button
+                            style={secondaryButton}
+                            onClick={() => updateTrackerStatus(record.id, "Interview Requested")}
+                          >
+                            Mark Interview Requested
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        )}
+
+        {activePage === "templates" && (
+          <section style={cardStyle}>
+            <h2 style={sectionTitle}>Settings → Templates</h2>
+            <p style={{ color: "#4b5563" }}>
+              All outbound email templates live here. Customize each section without cluttering the candidate page.
+            </p>
+
+            <div style={{ display: "grid", gap: 14 }}>
+              {Object.entries(templates).map(([key, template]) => (
+                <div key={key} style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 16 }}>
+                  <button
+                    style={{ ...secondaryButton, width: "100%", textAlign: "left" }}
+                    onClick={() => setExpandedTemplate(expandedTemplate === key ? null : key)}
+                  >
+                    {template.name}
+                  </button>
+
+                  {expandedTemplate === key && (
+                    <div style={{ marginTop: 14 }}>
+                      <FormInput label="Template Name" value={template.name} onChange={value => saveTemplate(key, "name", value)} />
+                      <FormInput label="Subject" value={template.subject} onChange={value => saveTemplate(key, "subject", value)} />
+                      <label style={labelStyle}>Body</label>
+                      <textarea
+                        value={template.body}
+                        onChange={e => saveTemplate(key, "body", e.target.value)}
+                        style={{ ...inputStyle, minHeight: 220, fontFamily: "monospace" }}
+                      />
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+      </main>
+    </div>
+  );
 }
+
+function FormInput({ label, value, onChange, type = "text" }) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <label style={labelStyle}>{label}</label>
+      <input type={type} value={value} onChange={e => onChange(e.target.value)} style={inputStyle} />
+    </div>
+  );
+}
+
+const cardStyle = {
+  background: "#ffffff",
+  border: "1px solid #e5e7eb",
+  borderRadius: 18,
+  padding: 22,
+  boxShadow: "0 10px 25px rgba(15, 23, 42, 0.06)"
+};
+
+const sectionTitle = {
+  marginTop: 0,
+  marginBottom: 16
+};
+
+const labelStyle = {
+  display: "block",
+  fontSize: 13,
+  fontWeight: 700,
+  marginBottom: 6,
+  color: "#374151"
+};
+
+const inputStyle = {
+  width: "100%",
+  boxSizing: "border-box",
+  border: "1px solid #d1d5db",
+  borderRadius: 10,
+  padding: "10px 12px",
+  fontSize: 14,
+  background: "#ffffff"
+};
+
+const primaryButton = {
+  border: "none",
+  background: "#111827",
+  color: "white",
+  borderRadius: 10,
+  padding: "10px 14px",
+  cursor: "pointer",
+  fontWeight: 700
+};
+
+const secondaryButton = {
+  border: "1px solid #d1d5db",
+  background: "#ffffff",
+  color: "#111827",
+  borderRadius: 10,
+  padding: "10px 14px",
+  cursor: "pointer",
+  fontWeight: 700
+};
+
+const previewBox = {
+  border: "1px solid #e5e7eb",
+  background: "#f9fafb",
+  borderRadius: 12,
+  padding: 12,
+  marginBottom: 14
+};
+
+const softPanel = {
+  border: "1px solid #e5e7eb",
+  background: "#f9fafb",
+  borderRadius: 12,
+  padding: 14
+};
