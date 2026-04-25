@@ -389,59 +389,49 @@ export default function App() {
     if (form.cprStatus) values.push(`CPR: ${form.cprStatus}`);
     if (form.licensedYear) values.push(`Licensed Since: ${form.licensedYear}`);
     return values.join(" | ");
-  }
+ function buildHiringManagerEmail(finalComp) {
+  const facilityName = form.siteName || settings.general.companyName || "Hiring Team";
+  const candidateName = form.fullName || "The candidate";
+  const positionName = form.position || "the position";
+  const educationLine = settings.templates.includeEducation ? buildEducation(form) : "";
+  const credentialsLine = settings.templates.includeCredentials ? buildCredentials() : "";
 
-  function buildHiringManagerEmail(finalComp) {
-    const facilityName = form.siteName || settings.general.companyName || "Hiring Team";
-    const candidateName = form.fullName || "The candidate";
-    const positionName = form.position || "N/A";
-    const siteLine = `${facilityName} | ${form.location || "N/A"}`;
-    const educationLine = settings.templates.includeEducation ? buildEducation(form) : "";
-    const credentialsLine = settings.templates.includeCredentials ? buildCredentials() : "";
-    const topFitLine = form.experienceNotes
-      ? `Top Fit: ${form.experienceNotes}`
-      : `Top Fit: Strong candidate for the ${positionName} position.`;
-
-    return [
-      `Hello ${facilityName},`,
-      "",
-      settings.templates.introLine || "Please review the candidate details below.",
-      "",
-      settings.templates.includeSubmissionDate ? `Submission Date: ${todayString()}` : "",
-      "",
-      "Candidate Summary",
-      `• ${candidateName} | ${positionName} | ${fteLabel(form.fte)} | ${form.shiftPreference || "N/A"}`,
-      `• ${form.phoneNumber || "N/A"} | ${form.emailAddress || "N/A"}`,
-      `• ${siteLine}`,
-      `• Compensation: ${form.compensationType || "Hourly"} | ${finalComp}`,
-      `• ${topFitLine}`,
-      "",
-      "Quick Snapshot",
-      `• ${form.yearsExperience || "N/A"} yrs experience`,
-      `• Start: ${form.startAvailability || "N/A"} | Interview: ${form.interviewAvailability || "N/A"}`,
-      `• ${form.workType || "N/A"} | ${fteLabel(form.fte)}`,
-      "",
-      "Experience Summary",
-      `${candidateName} brings ${form.yearsExperience || "N/A"} years of experience as a ${positionName}. ${form.experienceNotes || ""}`.trim(),
-      educationLine && educationLine !== "N/A" ? `Education: ${educationLine}` : "",
-      credentialsLine ? credentialsLine : "",
-      "",
-      "Work Expectations",
-      `Schedule: ${form.workSchedule || "N/A"}`,
-      `OT: ${form.otRequirement || "N/A"} | Weekend: ${form.weekendRequirement || "N/A"} | On-Call: ${form.onCallRequirement || "N/A"}`,
-      "",
-      `Work Area: ${form.workArea || "N/A"}`,
-      "",
-      "Additional Notes",
-      form.candidateNotes || "N/A",
-      "",
-      settings.templates.closingLine,
-      settings.templates.followUpLine,
-      "",
-      settings.general.signOffName || settings.general.recruiterName || "",
-      settings.general.signOffLine || "",
-    ].filter(Boolean).join(NL);
-  }
+  return [
+    `Hello ${facilityName},`,
+    "",
+    "Please review the candidate below for consideration.",
+    "",
+    settings.templates.includeSubmissionDate ? `Submission Date: ${todayString()}` : "",
+    "",
+    `${candidateName} is being submitted for the ${positionName} position at ${facilityName}.`,
+    "",
+    "Candidate Snapshot",
+    `• Schedule: ${fteLabel(form.fte)}, ${form.shiftPreference || "N/A"}`,
+    `• Location: ${form.location || "N/A"}`,
+    `• Compensation: ${form.compensationType || "Hourly"}, ${finalComp}`,
+    `• Availability: ${form.startAvailability || "N/A"}`,
+    `• Interview Availability: ${form.interviewAvailability || "N/A"}`,
+    "",
+    "Experience & Credentials",
+    `${candidateName} brings ${form.yearsExperience || "N/A"} years of experience as a ${positionName}${form.experienceNotes ? `, including ${form.experienceNotes}.` : "."}`,
+    "",
+    educationLine && educationLine !== "N/A" ? `Education: ${educationLine}` : "",
+    credentialsLine ? credentialsLine.replaceAll(" | ", NL) : "",
+    "",
+    "Work Expectations",
+    `The candidate has confirmed availability for ${form.workSchedule || "N/A"}. OT is ${String(form.otRequirement || "N/A").toLowerCase()}, weekends are ${String(form.weekendRequirement || "N/A").toLowerCase()}, and on-call is ${String(form.onCallRequirement || "N/A").toLowerCase()}.`,
+    "",
+    form.workArea ? `Work Area: ${form.workArea}` : "",
+    "",
+    "Additional Notes",
+    form.candidateNotes || "N/A",
+    "",
+    `${settings.templates.closingLine} ${settings.templates.followUpLine}`.trim(),
+    "",
+    settings.general.signOffName || settings.general.recruiterName || "",
+    settings.general.signOffLine || "",
+  ].filter(Boolean).join(NL);
+}
 
   function buildAtsShort(finalComp) {
     return [`Submittal Date: ${todayString()}`, `Recruiter: ${settings.general.recruiterName || "N/A"}`, "", "Candidate Details", `• ${form.fullName || "N/A"} | ${form.position || "N/A"} | ${form.siteName || "N/A"}`, "", "Quick Snapshot", `• ${form.yearsExperience || "N/A"} yrs | ${finalComp}`, `• Start ${form.startAvailability || "N/A"} | Interview ${form.interviewAvailability || "N/A"}`, `• ${form.workType || "N/A"} | ${fteLabel(form.fte)} | ${form.shiftPreference || "N/A"}`, "", "Work Expectations", `• Schedule: ${form.workSchedule || "N/A"} | OT: ${form.otRequirement || "N/A"} | Weekend: ${form.weekendRequirement || "N/A"} | On-Call: ${form.onCallRequirement || "N/A"}`, "", "Work Area", `• ${form.workArea || "N/A"}`, "", "Status", "• Ready for submission", "", "Full details available in submission."].join(NL);
