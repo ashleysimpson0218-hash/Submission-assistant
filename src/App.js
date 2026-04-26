@@ -40,7 +40,15 @@ const WORK_TYPES = ["On-site", "Remote", "Hybrid"];
 const SHIFT_OPTIONS = ["Day", "Night", "Evening", "Day or Night", "Evening or Night", "Any Shift"];
 const START_OPTIONS = ["Immediate", "2-4 weeks", "4-6 weeks", "3 months", "6 months"];
 const OWNER_OPTIONS = ["Recruiter", "Hiring Manager", "Candidate"];
-const NEXT_ACTION_OPTIONS = [
+const SOURCE_OPTIONS = [
+  "Indeed",
+  "LinkedIn",
+  "Referral",
+  "Direct Apply",
+  "Internal",
+  "Rehire",
+  "Other"
+];const NEXT_ACTION_OPTIONS = [
   "Follow up with facility",
   "Follow up with candidate",
   "Awaiting manager review",
@@ -124,9 +132,47 @@ const DEFAULT_SETTINGS = {
     candidateEmailTiming: "You can expect an update within 24-48 hours.",
     candidateEmailSupportLine: "If anything changes on your end, please feel free to reach out directly.",
   },
-};
-
 const DEFAULT_FORM = {
+  fullName: "",
+  phoneNumber: "",
+  emailAddress: "",
+  location: "",
+
+  // ✅ NEW (Sprint 1)
+  reqNumber: "",
+  candidateSource: "",
+
+  position: "",
+  roleCategory: "",
+  siteName: "",
+  employmentType: "FT",
+  shiftPreference: "",
+  workType: "",
+  fte: "",
+  yearsExperience: "",
+  experienceNotes: "",
+  educationLevel: "",
+  fieldOfStudy: "",
+  compensationRequested: "",
+  compensationType: "Hourly",
+  startAvailability: "",
+  startNotes: "",
+  interviewAvailability: "",
+  interviewDate: "",
+  licenseStatus: "",
+  cprStatus: "",
+  licensedYear: "",
+  workSchedule: "",
+  otRequirement: "",
+  weekendRequirement: "",
+  onCallRequirement: "",
+  workArea: "",
+  scheduleConfirmed: false,
+  otConfirmed: false,
+  weekendConfirmed: false,
+  onCallConfirmed: false,
+  candidateNotes: "",
+};
   fullName: "",
   phoneNumber: "",
   emailAddress: "",
@@ -1087,7 +1133,20 @@ export default function App() {
               <Card title="Candidate Intake" subtitle="Auto-filled submission date, notes preview, work expectations, and compensation logic stay editable.">
                 <div style={fieldGrid}>
                   <Field label="Submission Date"><TextInput type="date" value={submissionDate} onChange={(event) => setSubmissionDate(event.target.value)} /></Field>
-                  <Field label="Position"><SelectInput value={form.position} onChange={(event) => updateForm("position", event.target.value)} options={activeRoles.map((role) => role.positionTitle)} placeholder="Select role" /></Field>
+                  <Field label="Position"><SelectInput value={form.position} onChange={(event) => updateForm("position", event.target.value)} <Field label="Req Number">
+  <TextInput
+    value={form.reqNumber}
+    onChange={(e) => updateForm("reqNumber", e.target.value)}
+  />
+</Field>
+
+<Field label="Candidate Source">
+  <SelectInput
+    value={form.candidateSource}
+    onChange={(e) => updateForm("candidateSource", e.target.value)}
+    options={SOURCE_OPTIONS}
+  />
+</Field>options={activeRoles.map((role) => role.positionTitle)} placeholder="Select role" /></Field>
                   <Field label="Role Category"><SelectInput value={form.roleCategory || selectedRole?.roleCategory || ""} onChange={(event) => updateForm("roleCategory", event.target.value)} options={settings.options.roleTypes} /></Field>
                   <Field label="Site / Facility"><SelectInput value={form.siteName} onChange={(event) => updateForm("siteName", event.target.value)} options={activeSites.map((site) => site.siteName)} /></Field>
                   <Field label="Full Name"><TextInput value={form.fullName} onChange={(event) => updateForm("fullName", event.target.value)} /></Field>
