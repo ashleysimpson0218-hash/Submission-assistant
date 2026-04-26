@@ -40,15 +40,7 @@ const WORK_TYPES = ["On-site", "Remote", "Hybrid"];
 const SHIFT_OPTIONS = ["Day", "Night", "Evening", "Day or Night", "Evening or Night", "Any Shift"];
 const START_OPTIONS = ["Immediate", "2-4 weeks", "4-6 weeks", "3 months", "6 months"];
 const OWNER_OPTIONS = ["Recruiter", "Hiring Manager", "Candidate"];
-const SOURCE_OPTIONS = [
-  "Indeed",
-  "LinkedIn",
-  "Referral",
-  "Direct Apply",
-  "Internal",
-  "Rehire",
-  "Other"
-];const NEXT_ACTION_OPTIONS = [
+const NEXT_ACTION_OPTIONS = [
   "Follow up with facility",
   "Follow up with candidate",
   "Awaiting manager review",
@@ -70,6 +62,9 @@ const FTE_OPTIONS = [
   { label: "16 hrs/week (0.4)", value: "0.4" },
   { label: "PRN", value: "PRN" },
 ];
+
+const SOURCE_OPTIONS = ["Indeed", "LinkedIn", "Referral", "Direct Apply", "Internal", "Rehire", "Job Fair", "Agency", "Other"];
+const REQUISITION_STATUS_OPTIONS = ["Active", "Pause", "Filled", "Closed"];
 
 const DEFAULT_SETTINGS = {
   general: {
@@ -96,13 +91,18 @@ const DEFAULT_SETTINGS = {
       weekend: ["None", "Rotating", "Required"],
       onCall: ["None", "Occasional", "Required"],
     },
+    candidateSourceOptions: SOURCE_OPTIONS,
+    requisitionStatusOptions: REQUISITION_STATUS_OPTIONS,
   },
   sites: [
-    { id: "site-1", siteName: "Demo Facility", siteType: "24-hour", location: "Douglasville, GA", status: "Active", notes: "" },
+    { id: "site-1", siteName: "Demo Facility", siteType: "24-hour", location: "Douglasville, GA", hiringManagerName: "", hiringManagerEmail: "", adminContactName: "", adminContactEmail: "", status: "Active", notes: "" },
   ],
   roles: [
     { id: "role-1", positionTitle: "Registered Nurse", roleCategory: "Healthcare", requiresLicense: true, requiresCpr: true, requiresFte: true, requiresShift: true, requiresWorkExpectations: true, status: "Active" },
     { id: "role-2", positionTitle: "Administrative Assistant", roleCategory: "Other", requiresLicense: false, requiresCpr: false, requiresFte: false, requiresShift: false, requiresWorkExpectations: true, status: "Active" },
+  ],
+  requisitions: [
+    { id: "req-1", reqNumber: "REQ-1001", positionTitle: "Registered Nurse", siteName: "Demo Facility", employmentType: "FT", shiftPreference: "Day", fte: "1.0", status: "Active", notes: "Demo active requisition" },
   ],
   compensationStructure: {
     enabled: true,
@@ -132,51 +132,16 @@ const DEFAULT_SETTINGS = {
     candidateEmailTiming: "You can expect an update within 24-48 hours.",
     candidateEmailSupportLine: "If anything changes on your end, please feel free to reach out directly.",
   },
+};
+
 const DEFAULT_FORM = {
   fullName: "",
   phoneNumber: "",
   emailAddress: "",
   location: "",
-
-  // ✅ NEW (Sprint 1)
+  selectedRequisitionId: "",
   reqNumber: "",
   candidateSource: "",
-
-  position: "",
-  roleCategory: "",
-  siteName: "",
-  employmentType: "FT",
-  shiftPreference: "",
-  workType: "",
-  fte: "",
-  yearsExperience: "",
-  experienceNotes: "",
-  educationLevel: "",
-  fieldOfStudy: "",
-  compensationRequested: "",
-  compensationType: "Hourly",
-  startAvailability: "",
-  startNotes: "",
-  interviewAvailability: "",
-  interviewDate: "",
-  licenseStatus: "",
-  cprStatus: "",
-  licensedYear: "",
-  workSchedule: "",
-  otRequirement: "",
-  weekendRequirement: "",
-  onCallRequirement: "",
-  workArea: "",
-  scheduleConfirmed: false,
-  otConfirmed: false,
-  weekendConfirmed: false,
-  onCallConfirmed: false,
-  candidateNotes: "",
-};
-  fullName: "",
-  phoneNumber: "",
-  emailAddress: "",
-  location: "",
   position: "",
   roleCategory: "",
   siteName: "",
@@ -215,6 +180,9 @@ const DEMO_FORM = {
   phoneNumber: "770-318-8742",
   emailAddress: "Ashleysimpson0218@gmail.com",
   location: "Douglasville, GA",
+  selectedRequisitionId: "req-1",
+  reqNumber: "REQ-1001",
+  candidateSource: "Indeed",
   position: "Registered Nurse",
   roleCategory: "Healthcare",
   siteName: "Demo Facility",
@@ -405,6 +373,9 @@ function migrateTrackerRecords(records, settings) {
       position,
       site: item.site || snapshot.siteName || "N/A",
       candidateEmail: item.candidateEmail || snapshot.emailAddress || "",
+      reqNumber: item.reqNumber || snapshot.reqNumber || "",
+      candidateSource: item.candidateSource || snapshot.candidateSource || "",
+      requisitionId: item.requisitionId || snapshot.selectedRequisitionId || "",
       managerEmail: managerEmailFor(settings, item),
       submissionDate: item.submissionDate || todayIso(),
       status: item.status || "Submitted",
@@ -470,6 +441,8 @@ function tokenMap(form, settings, extra = {}) {
     candidate_name: form.fullName || "Candidate",
     position: form.position || "position",
     facility: form.siteName || settings.general.companyName || "the facility",
+    req_number: form.reqNumber || "N/A",
+    candidate_source: form.candidateSource || "N/A",
     experience: form.yearsExperience || "N/A",
     start_date: form.startAvailability || "N/A",
     interview_availability: form.interviewAvailability || "N/A",
@@ -710,6 +683,7 @@ export default function App() {
 
   const activeRoles = useMemo(() => settings.roles.filter((role) => role.status === "Active"), [settings.roles]);
   const activeSites = useMemo(() => settings.sites.filter((site) => site.status === "Active"), [settings.sites]);
+  const activeRequisitions = useMemo(() => (settings.requisitions || []).filter((req) => req.status === "Active"), [settings.requisitions]);
   const selectedRole = useMemo(() => activeRoles.find((role) => role.positionTitle === form.position) || null, [activeRoles, form.position]);
   const selectedSite = useMemo(() => activeSites.find((site) => site.siteName === form.siteName) || null, [activeSites, form.siteName]);
   const isHealthcare = (form.roleCategory || selectedRole?.roleCategory) === "Healthcare";
@@ -746,6 +720,17 @@ export default function App() {
       rejected: tracker.filter((item) => item.status === "Rejected").length,
       highRisk: tracker.filter((item) => riskFor(item) === "High").length,
     };
+  }, [tracker]);
+
+  const sourceMetrics = useMemo(() => {
+    const counts = {};
+    tracker.forEach((item) => {
+      const source = item.candidateSource || item.formSnapshot?.candidateSource || "Unspecified";
+      counts[source] = (counts[source] || 0) + 1;
+    });
+    return Object.entries(counts)
+      .map(([source, count]) => ({ source, count }))
+      .sort((a, b) => b.count - a.count || a.source.localeCompare(b.source));
   }, [tracker]);
 
   const actionQueues = useMemo(() => {
@@ -797,6 +782,28 @@ export default function App() {
     });
   }
 
+  function applyRequisitionToForm(requisitionId) {
+    const req = activeRequisitions.find((item) => item.id === requisitionId);
+    if (!req) {
+      updateForm("selectedRequisitionId", "");
+      return;
+    }
+    const role = activeRoles.find((item) => item.positionTitle === req.positionTitle);
+    const site = activeSites.find((item) => item.siteName === req.siteName);
+    setForm((prev) => ({
+      ...prev,
+      selectedRequisitionId: req.id,
+      reqNumber: req.reqNumber || prev.reqNumber,
+      position: req.positionTitle || prev.position,
+      roleCategory: role?.roleCategory || prev.roleCategory,
+      siteName: req.siteName || prev.siteName,
+      location: site?.location || prev.location,
+      employmentType: req.employmentType || prev.employmentType,
+      shiftPreference: req.shiftPreference || prev.shiftPreference,
+      fte: req.fte || prev.fte,
+    }));
+  }
+
   function updateSettings(path, value) {
     setSettings((prev) => {
       const next = structuredClone(prev);
@@ -841,7 +848,7 @@ export default function App() {
     const positionName = form.position || "N/A";
     const educationLine = settings.templates.includeEducation ? buildEducation(form) : "";
     const credentials = settings.templates.includeCredentials ? credentialsLine() : "";
-    return [`Hello ${facilityName},`, "", settings.templates.introLine || "Please review the candidate details below.", "", settings.templates.includeSubmissionDate ? `Submission Date: ${displayDate(submissionDate)}` : "", "", "Candidate Summary", `- ${candidateName} | ${positionName} | ${fteLabel(form.fte)} | ${form.shiftPreference || "N/A"}`, `- ${form.phoneNumber || "N/A"} | ${form.emailAddress || "N/A"}`, `- ${facilityName} | ${form.location || "N/A"}`, `- Compensation: ${form.compensationType || "Hourly"} | ${finalComp}`, "", "Experience Summary", `- ${candidateName} brings ${form.yearsExperience || "N/A"} years of experience as a ${positionName}. ${form.experienceNotes || ""}`.trim(), educationLine && educationLine !== "N/A" ? `- Education: ${educationLine}` : "", credentials ? `- ${credentials}` : "", "", "Availability", `- Available to start ${form.startAvailability || "N/A"}${form.startNotes ? `, with the following note: ${form.startNotes}` : ""}. Interview availability is ${form.interviewAvailability || "N/A"}.`, "", "Work Expectations", `- The candidate has confirmed a schedule of ${form.workSchedule || "N/A"}, with OT set to ${form.otRequirement || "N/A"}, weekend requirement set to ${form.weekendRequirement || "N/A"}, and on-call requirement set to ${form.onCallRequirement || "N/A"}.`, "", "Work Area", `- ${form.workArea || "N/A"}`, "", "Additional Notes", `${form.candidateNotes || ""} ${settings.templates.closingLine} ${settings.templates.followUpLine}`.trim(), "", settings.general.signOffName || settings.general.recruiterName || "", settings.general.signOffLine || ""].filter(Boolean).join(NL);
+    return [`Hello ${facilityName},`, "", settings.templates.introLine || "Please review the candidate details below.", "", settings.templates.includeSubmissionDate ? `Submission Date: ${displayDate(submissionDate)}` : "", "", "Candidate Summary", `- ${candidateName} | ${positionName} | ${fteLabel(form.fte)} | ${form.shiftPreference || "N/A"}`, `- Req Number: ${form.reqNumber || "N/A"} | Source: ${form.candidateSource || "N/A"}`, `- ${form.phoneNumber || "N/A"} | ${form.emailAddress || "N/A"}`, `- ${facilityName} | ${form.location || "N/A"}`, `- Compensation: ${form.compensationType || "Hourly"} | ${finalComp}`, "", "Experience Summary", `- ${candidateName} brings ${form.yearsExperience || "N/A"} years of experience as a ${positionName}. ${form.experienceNotes || ""}`.trim(), educationLine && educationLine !== "N/A" ? `- Education: ${educationLine}` : "", credentials ? `- ${credentials}` : "", "", "Availability", `- Available to start ${form.startAvailability || "N/A"}${form.startNotes ? `, with the following note: ${form.startNotes}` : ""}. Interview availability is ${form.interviewAvailability || "N/A"}.`, "", "Work Expectations", `- The candidate has confirmed a schedule of ${form.workSchedule || "N/A"}, with OT set to ${form.otRequirement || "N/A"}, weekend requirement set to ${form.weekendRequirement || "N/A"}, and on-call requirement set to ${form.onCallRequirement || "N/A"}.`, "", "Work Area", `- ${form.workArea || "N/A"}`, "", "Additional Notes", `${form.candidateNotes || ""} ${settings.templates.closingLine} ${settings.templates.followUpLine}`.trim(), "", settings.general.signOffName || settings.general.recruiterName || "", settings.general.signOffLine || ""].filter(Boolean).join(NL);
   }
 
   function defaultCandidateBody(finalComp) {
@@ -850,7 +857,7 @@ export default function App() {
   }
 
   function atsBlock(finalComp, long = false) {
-    return [`Submittal Date: ${displayDate(submissionDate)}`, `Recruiter: ${settings.general.recruiterName || "N/A"}`, "", "Candidate Details", `- ${form.fullName || "N/A"} | ${form.position || "N/A"} | ${form.siteName || "N/A"}`, "", "Quick Snapshot", `- ${form.yearsExperience || "N/A"} yrs | ${finalComp}`, `- Start ${form.startAvailability || "N/A"} | Interview ${form.interviewAvailability || "N/A"}`, `- ${form.workType || "N/A"} | ${fteLabel(form.fte)} | ${form.shiftPreference || "N/A"}`, "", "Work Expectations", `- Schedule: ${form.workSchedule || "N/A"} | OT: ${form.otRequirement || "N/A"} | Weekend: ${form.weekendRequirement || "N/A"} | On-Call: ${form.onCallRequirement || "N/A"}`, long ? "" : null, long ? "Notes" : null, long ? `- ${form.candidateNotes || "No additional notes"}` : null, "", "Status", "- Ready for submission"].filter(Boolean).join(NL);
+    return [`Submittal Date: ${displayDate(submissionDate)}`, `Recruiter: ${settings.general.recruiterName || "N/A"}`, "", "Candidate Details", `- ${form.fullName || "N/A"} | ${form.position || "N/A"} | ${form.siteName || "N/A"}`, "", "Quick Snapshot", `- Req Number: ${form.reqNumber || "N/A"} | Source: ${form.candidateSource || "N/A"}`, `- ${form.yearsExperience || "N/A"} yrs | ${finalComp}`, `- Start ${form.startAvailability || "N/A"} | Interview ${form.interviewAvailability || "N/A"}`, `- ${form.workType || "N/A"} | ${fteLabel(form.fte)} | ${form.shiftPreference || "N/A"}`, "", "Work Expectations", `- Schedule: ${form.workSchedule || "N/A"} | OT: ${form.otRequirement || "N/A"} | Weekend: ${form.weekendRequirement || "N/A"} | On-Call: ${form.onCallRequirement || "N/A"}`, long ? "" : null, long ? "Notes" : null, long ? `- ${form.candidateNotes || "No additional notes"}` : null, "", "Status", "- Ready for submission"].filter(Boolean).join(NL);
   }
 
   function buildOutput() {
@@ -886,8 +893,11 @@ export default function App() {
       candidate: form.fullName || "Unnamed Candidate",
       position: form.position || "N/A",
       site: form.siteName || "N/A",
+      reqNumber: form.reqNumber || "",
+      candidateSource: form.candidateSource || "",
+      requisitionId: form.selectedRequisitionId || "",
       candidateEmail: form.emailAddress || "",
-      managerEmail: managerEmailFor(settings),
+      managerEmail: selectedSite?.hiringManagerEmail || managerEmailFor(settings),
       submissionDate,
       status: "Submitted",
       owner: "Recruiter",
@@ -917,6 +927,8 @@ export default function App() {
       candidate: item.candidate,
       position: item.position,
       site: item.site,
+      reqNumber: item.reqNumber || item.formSnapshot?.reqNumber || "",
+      candidateSource: item.candidateSource || item.formSnapshot?.candidateSource || "",
       candidateEmail: item.candidateEmail,
       managerEmail: managerEmailFor(settings, item),
       submissionDate: item.submissionDate,
@@ -929,12 +941,39 @@ export default function App() {
       archiveOutcome: item.archiveOutcome,
       archiveReason: item.archiveReason,
     }));
-    downloadTextFile("welcomeflow-tracker.csv", toCsv(rows, ["candidate", "position", "site", "candidateEmail", "managerEmail", "submissionDate", "status", "owner", "nextAction", "interviewDate", "risk", "agingDays", "archiveOutcome", "archiveReason"]), "text/csv");
+    downloadTextFile("welcomeflow-tracker.csv", toCsv(rows, ["candidate", "position", "site", "reqNumber", "candidateSource", "candidateEmail", "managerEmail", "submissionDate", "status", "owner", "nextAction", "interviewDate", "risk", "agingDays", "archiveOutcome", "archiveReason"]), "text/csv");
   }
 
   function exportHistoryCsv() {
     const rows = history.map((item) => ({ type: item.type, timestamp: item.timestamp, subject: item.subject, candidate: item.candidate, facility: item.facility, trackerId: item.trackerId, body: item.body }));
     downloadTextFile("welcomeflow-email-history.csv", toCsv(rows, ["type", "timestamp", "subject", "candidate", "facility", "trackerId", "body"]), "text/csv");
+  }
+
+  function exportFullBackup() {
+    const backup = {
+      exportedAt: new Date().toISOString(),
+      appName: BRAND.appName,
+      version: "sprint-1",
+      settings,
+      tracker,
+      history,
+      notes: notesText,
+    };
+    downloadTextFile(`welcomeflow-backup-${todayIso()}.json`, JSON.stringify(backup, null, 2), "application/json");
+  }
+
+  function importFullBackup(text) {
+    try {
+      const data = JSON.parse(text);
+      const nextSettings = mergeDefaults(DEFAULT_SETTINGS, data.settings || {});
+      setSettings(nextSettings);
+      setTracker(migrateTrackerRecords(data.tracker || [], nextSettings));
+      setHistory(Array.isArray(data.history) ? data.history : []);
+      setNotesText(typeof data.notes === "string" ? data.notes : "");
+      setCopyNotice("Full backup imported");
+    } catch {
+      window.alert("Backup import failed. Please use a valid WelcomeFlow backup JSON file.");
+    }
   }
 
   function updateTracker(id, key, value) {
@@ -1133,20 +1172,10 @@ export default function App() {
               <Card title="Candidate Intake" subtitle="Auto-filled submission date, notes preview, work expectations, and compensation logic stay editable.">
                 <div style={fieldGrid}>
                   <Field label="Submission Date"><TextInput type="date" value={submissionDate} onChange={(event) => setSubmissionDate(event.target.value)} /></Field>
-                  <Field label="Position"><SelectInput value={form.position} onChange={(event) => updateForm("position", event.target.value)} <Field label="Req Number">
-  <TextInput
-    value={form.reqNumber}
-    onChange={(e) => updateForm("reqNumber", e.target.value)}
-  />
-</Field>
-
-<Field label="Candidate Source">
-  <SelectInput
-    value={form.candidateSource}
-    onChange={(e) => updateForm("candidateSource", e.target.value)}
-    options={SOURCE_OPTIONS}
-  />
-</Field>options={activeRoles.map((role) => role.positionTitle)} placeholder="Select role" /></Field>
+                  <Field label="Active Requisition"><SelectInput value={form.selectedRequisitionId} onChange={(event) => applyRequisitionToForm(event.target.value)} options={activeRequisitions.map((req) => ({ value: req.id, label: `${req.reqNumber || "No Req"} | ${req.positionTitle || "No Position"} | ${req.siteName || "No Site"}` }))} placeholder="Optional: select active req" /></Field>
+                  <Field label="Req Number"><TextInput value={form.reqNumber} onChange={(event) => updateForm("reqNumber", event.target.value)} placeholder="Manual entry allowed" /></Field>
+                  <Field label="Candidate Source"><SelectInput value={form.candidateSource} onChange={(event) => updateForm("candidateSource", event.target.value)} options={settings.options.candidateSourceOptions || SOURCE_OPTIONS} placeholder="Select source" /></Field>
+                  <Field label="Position"><SelectInput value={form.position} onChange={(event) => updateForm("position", event.target.value)} options={activeRoles.map((role) => role.positionTitle)} placeholder="Select role" /></Field>
                   <Field label="Role Category"><SelectInput value={form.roleCategory || selectedRole?.roleCategory || ""} onChange={(event) => updateForm("roleCategory", event.target.value)} options={settings.options.roleTypes} /></Field>
                   <Field label="Site / Facility"><SelectInput value={form.siteName} onChange={(event) => updateForm("siteName", event.target.value)} options={activeSites.map((site) => site.siteName)} /></Field>
                   <Field label="Full Name"><TextInput value={form.fullName} onChange={(event) => updateForm("fullName", event.target.value)} /></Field>
@@ -1181,7 +1210,7 @@ export default function App() {
                     <Field label="Weekend Requirement"><SelectInput value={form.weekendRequirement} onChange={(event) => updateForm("weekendRequirement", event.target.value)} options={settings.options.workExpectationOptions.weekend} /></Field>
                     <Field label="On-Call Requirement"><SelectInput value={form.onCallRequirement} onChange={(event) => updateForm("onCallRequirement", event.target.value)} options={settings.options.workExpectationOptions.onCall} /></Field>
                   </div>
-                <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))", marginTop: 12 }}>
+                  <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : "repeat(4, minmax(0, 1fr))", marginTop: 12 }}>
                     <ToggleField label="Schedule" checked={form.scheduleConfirmed} onChange={(value) => updateForm("scheduleConfirmed", value)} />
                     <ToggleField label="OT" checked={form.otConfirmed} onChange={(value) => updateForm("otConfirmed", value)} />
                     <ToggleField label="Weekend" checked={form.weekendConfirmed} onChange={(value) => updateForm("weekendConfirmed", value)} />
@@ -1189,113 +1218,55 @@ export default function App() {
                   </div>
                 </div> : null}
                 <div style={{ marginTop: 18 }}><Field label="Candidate Notes"><TextArea value={form.candidateNotes} onChange={(event) => updateForm("candidateNotes", event.target.value)} /></Field></div>
-                {validationErrors.length ? <div style={{ marginTop: 14, border: `1px solid #fecdca`, borderRadius: 8, padding: 12, background: "#fff1f3", color: THEME.red }}>
-                  <strong>Before generating</strong>
-                  <ul style={{ margin: "8px 0 0 18px", padding: 0 }}>{validationErrors.map((error) => <li key={error}>{error}</li>)}</ul>
-                </div> : null}
-                <div style={{ marginTop: 18, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  <Button primary onClick={generateOutput} disabled={validationErrors.length}>Generate Output + Tracker Record</Button>
-                  <Button subtle onClick={() => { setForm(DEMO_FORM); setSubmissionDate(todayIso()); setOutput(null); }}>Load Demo</Button>
-                  <Button danger onClick={() => { if (window.confirm("Clear all candidate intake fields?")) { setForm(DEFAULT_FORM); setSubmissionDate(todayIso()); setOutput(null); } }}>Clear Form</Button>
+                {validationErrors.length ? <div style={{ marginTop: 14, border: `1px solid #fecdca`, background: THEME.redBg, color: THEME.red, borderRadius: 8, padding: 12, fontWeight: 700 }}>{validationErrors.map((error) => <div key={error}>• {error}</div>)}</div> : null}
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 18 }}>
+                  <Button primary onClick={generateOutput}>Generate Output + Tracker Record</Button>
+                  <Button subtle onClick={() => setForm(DEMO_FORM)}>Load Demo</Button>
+                  <Button danger onClick={() => { setForm(DEFAULT_FORM); setOutput(null); }}>Clear Form</Button>
                 </div>
               </Card>
 
               <Card title="Notes-to-Profile Preview" subtitle="Paste recruiter notes, preview extracted data, then apply only when it looks right.">
                 <div style={{ display: "grid", gap: 14, gridTemplateColumns: isNarrow ? "1fr" : "1fr 1fr" }}>
-                  <div>
-                    <Field label="Recruiter Notes / Transcript"><TextArea value={notesText} onChange={(event) => setNotesText(event.target.value)} placeholder="Example: Name: Ashley Martin | Role: Registered Nurse | 10 yrs experience | Shift: Day" minHeight={184} /></Field>
-                    <div style={{ marginTop: 10, display: "flex", gap: 8 }}><Button primary onClick={parseNotesPreview}>Preview Extracted Data</Button><Button subtle onClick={() => setNotesPreview(null)}>Clear Preview</Button></div>
-                  </div>
-                  <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 14, background: THEME.panelAlt }}>
-                    <SectionHeader title="Extracted Preview" />
-                    {!notesPreview ? <EmptyState>No preview yet.</EmptyState> : <div style={{ display: "grid", gap: 8 }}>{Object.entries(notesPreview).map(([key, value]) => <div key={key} style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "150px 1fr", gap: 10, fontSize: 13 }}><strong>{labelFromKey(key)}</strong><span>{value || "N/A"}</span></div>)}<Button primary onClick={applyNotesPreview} style={{ marginTop: 8 }}>Apply to Form</Button></div>}
-                  </div>
+                  <div><Field label="Recruiter Notes / Transcript"><TextArea value={notesText} onChange={(event) => setNotesText(event.target.value)} placeholder="Example: Name: Ashley Martin | Role: Registered Nurse | 10 yrs experience | Shift: Day" minHeight={180} /></Field><div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}><Button primary onClick={parseNotesPreview}>Preview Extracted Data</Button><Button subtle onClick={() => setNotesPreview(null)}>Clear Preview</Button></div></div>
+                  <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 14, background: THEME.panelAlt }}><h3 style={{ marginTop: 0 }}>Extracted Preview</h3>{notesPreview ? <pre style={{ whiteSpace: "pre-wrap", fontFamily: "Inter, Arial, sans-serif", lineHeight: 1.6 }}>{JSON.stringify(notesPreview, null, 2)}</pre> : <EmptyState>No preview yet.</EmptyState>}{notesPreview ? <Button primary onClick={applyNotesPreview}>Apply to Form</Button> : null}</div>
                 </div>
               </Card>
             </div>
 
-            <Card title="Generated Output" subtitle="Styled like documents, with visible subjects and Outlook-ready links.">
-              {!visibleOutput ? <EmptyState>Generate a submission to see emails, ATS blocks, and tracking history.</EmptyState> : <div style={{ display: "grid", gap: 16 }}>
-                <Accordion title="Hiring Manager Submission Email" subtitle={visibleOutput.hiringManagerSubject}><EmailDocument title="Hiring Manager Submission Email" subject={visibleOutput.hiringManagerSubject} body={visibleOutput.hiringManagerEmail} to={managerEmailFor(settings, selectedSubmission || {})} onOpenDraft={() => addHistory("Hiring Manager Draft Opened", visibleOutput.hiringManagerSubject, visibleOutput.hiringManagerEmail, visibleOutput.trackerId || selectedSubmission?.id || "", { candidate: selectedSubmission?.candidate || form.fullName, facility: selectedSubmission?.site || form.siteName })} /></Accordion>
-                <Accordion title="Candidate Confirmation Email" subtitle={visibleOutput.candidateSubject}><EmailDocument title="Candidate Confirmation Email" subject={visibleOutput.candidateSubject} body={visibleOutput.candidateEmail} to={selectedSubmission?.candidateEmail || form.emailAddress} onOpenDraft={() => addHistory("Candidate Draft Opened", visibleOutput.candidateSubject, visibleOutput.candidateEmail, visibleOutput.trackerId || selectedSubmission?.id || "", { candidate: selectedSubmission?.candidate || form.fullName, facility: selectedSubmission?.site || form.siteName })} /></Accordion>
-                <Accordion title="ATS Short Block" subtitle="Copy-ready short version for ATS notes."><EmailDocument title="ATS Short Block" subject="ATS Summary" body={visibleOutput.atsShort} /></Accordion>
-                <Accordion title="ATS Long Block" subtitle="Expanded version with notes."><EmailDocument title="ATS Long Block" subject="ATS Detailed Summary" body={visibleOutput.atsLong} /></Accordion>
-              </div>}
-            </Card>
+            <div style={{ position: isMedium ? "static" : "sticky", top: 18 }}>
+              <Card title="Generated Output" subtitle="Styled like documents, with visible subjects and Outlook-ready links.">
+                {!visibleOutput ? <EmptyState>Generate a submission to see emails, ATS blocks, and tracking history.</EmptyState> : <div style={{ display: "grid", gap: 14 }}>
+                  <EmailDocument title="Hiring Manager Submission" subject={visibleOutput.hiringManagerSubject} body={visibleOutput.hiringManagerEmail} to={managerEmailFor(settings, selectedSubmission || {})} onOpenDraft={() => addHistory("Hiring Manager Draft Opened", visibleOutput.hiringManagerSubject, visibleOutput.hiringManagerEmail, visibleOutput.trackerId)} />
+                  <EmailDocument title="Candidate Confirmation" subject={visibleOutput.candidateSubject} body={visibleOutput.candidateEmail} to={form.emailAddress || selectedSubmission?.candidateEmail} onOpenDraft={() => addHistory("Candidate Draft Opened", visibleOutput.candidateSubject, visibleOutput.candidateEmail, visibleOutput.trackerId)} />
+                  <Accordion title="ATS Short Update" defaultOpen><pre style={{ margin: 0, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{visibleOutput.atsShort}</pre><div style={{ marginTop: 10 }}><Button subtle onClick={() => safeCopy(visibleOutput.atsShort)}>Copy ATS Short</Button></div></Accordion>
+                  <Accordion title="ATS Long Update"><pre style={{ margin: 0, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{visibleOutput.atsLong}</pre><div style={{ marginTop: 10 }}><Button subtle onClick={() => safeCopy(visibleOutput.atsLong)}>Copy ATS Long</Button></div></Accordion>
+                </div>}
+              </Card>
+            </div>
           </div>
         ) : null}
 
         {activePage === "tracker" ? (
           <Card title="Submission Tracker Control Tower" subtitle="Status, owner, next action, aging, risk, and quick actions stay in one clean table." action={<Button subtle onClick={exportTrackerCsv} disabled={!filteredTracker.length}>Export CSV</Button>}>
-            {!tracker.length ? <EmptyState>No submissions yet. Generate one from the Submission page.</EmptyState> : <div style={{ display: "grid", gap: 14 }}>
-              <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : "1fr 220px 140px", alignItems: "end" }}>
-                <Field label="Search Tracker"><TextInput value={trackerSearch} onChange={(event) => setTrackerSearch(event.target.value)} placeholder="Candidate, role, site, status" /></Field>
-                <Field label="Status Filter"><SelectInput value={trackerStatusFilter} onChange={(event) => setTrackerStatusFilter(event.target.value)} options={["Active", "All", ...STATUS_OPTIONS]} /></Field>
-                <Button subtle onClick={() => { setTrackerSearch(""); setTrackerStatusFilter("Active"); }}>Clear Filters</Button>
-              </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <Badge tone="Low">{tracker.filter((item) => !isClosedStatus(item.status)).length} active</Badge>
-                <Badge tone="Medium">{tracker.filter((item) => item.status === "Archived").length} archived</Badge>
-                <Badge tone="High">{filteredTracker.length} shown</Badge>
-              </div>
-              {!filteredTracker.length ? <EmptyState>No tracker records match these filters.</EmptyState> : isNarrow ? <div style={{ display: "grid", gap: 12 }}>
-              {filteredTracker.map((item) => {
-                const risk = riskFor(item);
-                const tint = risk === "High" ? "#fff7f7" : risk === "Medium" ? "#fffbeb" : "#f7fdf9";
-                return <div key={item.id} style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 14, background: tint }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 12 }}>
-                    <div>
-                      <button type="button" onClick={() => { setSelectedId(item.id); setActivePage("review"); }} style={{ border: "none", background: "transparent", padding: 0, fontWeight: 900, color: THEME.primary2, cursor: "pointer", fontSize: 16 }}>{item.candidate}</button>
-                      <div style={{ marginTop: 4, color: THEME.muted }}>{item.position} | {item.site}</div>
-                    </div>
-                    <Badge tone={risk}>{risk}</Badge>
-                  </div>
-                  <div style={{ display: "grid", gap: 10 }}>
-                    <Field label="Status"><SelectInput value={item.status} onChange={(event) => updateTracker(item.id, "status", event.target.value)} options={STATUS_OPTIONS} /></Field>
-                    <Field label="Owner"><SelectInput value={item.owner} onChange={(event) => updateTracker(item.id, "owner", event.target.value)} options={OWNER_OPTIONS} /></Field>
-                    <Field label="Next Action"><SelectInput value={item.nextAction} onChange={(event) => updateTracker(item.id, "nextAction", event.target.value)} options={NEXT_ACTION_OPTIONS} /></Field>
-                    <Field label="Interview Date"><TextInput type="date" value={item.interviewDate} onChange={(event) => updateTracker(item.id, "interviewDate", event.target.value)} /></Field>
-                    <div style={{ color: THEME.muted, fontWeight: 800 }}>Aging: {daysBetween(item.submissionDate)} days</div>
-                    <Field label="Actions"><SelectInput value="" onChange={(event) => handleTrackerAction(item, event.target.value)} placeholder="Choose action" options={[{ value: "details", label: "Review Details" }, { value: "generateAts", label: "Generate ATS Update" }, { value: "copyAts", label: "Copy ATS Update" }, { value: "openManager", label: "Open Hiring Manager Draft" }, { value: "openCandidate", label: "Open Candidate Draft" }, { value: "archive", label: "Archive Candidate" }]} /></Field>
-                  </div>
-                </div>;
-              })}
-            </div> : <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 10px", minWidth: 1120 }}>
-                <thead><tr>{["Candidate", "Role", "Facility", "Status", "Owner", "Next Action", "Interview", "Aging", "Risk", "Actions"].map((head) => <th key={head} style={{ textAlign: "left", color: THEME.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4, padding: "0 10px 4px" }}>{head}</th>)}</tr></thead>
-                <tbody>{filteredTracker.map((item) => {
-                  const risk = riskFor(item);
-                  const tint = risk === "High" ? "#fff7f7" : risk === "Medium" ? "#fffbeb" : "#f7fdf9";
-                  return <tr key={item.id} style={{ background: tint }}>
-                    <td style={{ padding: 10, borderTopLeftRadius: 8, borderBottomLeftRadius: 8 }}><button type="button" onClick={() => { setSelectedId(item.id); setActivePage("review"); }} style={{ border: "none", background: "transparent", padding: 0, fontWeight: 900, color: THEME.primary2, cursor: "pointer" }}>{item.candidate}</button></td>
-                    <td style={{ padding: 10 }}>{item.position}</td>
-                    <td style={{ padding: 10 }}>{item.site}</td>
-                    <td style={{ padding: 10 }}><SelectInput value={item.status} onChange={(event) => updateTracker(item.id, "status", event.target.value)} options={STATUS_OPTIONS} /></td>
-                    <td style={{ padding: 10 }}><SelectInput value={item.owner} onChange={(event) => updateTracker(item.id, "owner", event.target.value)} options={OWNER_OPTIONS} /></td>
-                    <td style={{ padding: 10 }}><SelectInput value={item.nextAction} onChange={(event) => updateTracker(item.id, "nextAction", event.target.value)} options={NEXT_ACTION_OPTIONS} /></td>
-                    <td style={{ padding: 10 }}><TextInput type="date" value={item.interviewDate} onChange={(event) => updateTracker(item.id, "interviewDate", event.target.value)} /></td>
-                    <td style={{ padding: 10 }}>{daysBetween(item.submissionDate)} days</td>
-                    <td style={{ padding: 10 }}><Badge tone={risk}>{risk}</Badge></td>
-                    <td style={{ padding: 10, borderTopRightRadius: 8, borderBottomRightRadius: 8 }}><SelectInput value="" onChange={(event) => handleTrackerAction(item, event.target.value)} placeholder="Actions" options={[{ value: "details", label: "Review Details" }, { value: "generateAts", label: "Generate ATS Update" }, { value: "copyAts", label: "Copy ATS Update" }, { value: "openManager", label: "Open Hiring Manager Draft" }, { value: "openCandidate", label: "Open Candidate Draft" }, { value: "archive", label: "Archive Candidate" }]} /></td>
-                  </tr>;
-                })}</tbody>
-              </table>
-            </div>}
-            </div>}
+            <div style={{ display: "grid", gap: 12, gridTemplateColumns: isNarrow ? "1fr" : "1fr 220px", marginBottom: 14 }}>
+              <TextInput value={trackerSearch} onChange={(event) => setTrackerSearch(event.target.value)} placeholder="Search candidate, position, site, status, action..." />
+              <SelectInput value={trackerStatusFilter} onChange={(event) => setTrackerStatusFilter(event.target.value)} options={["Active", "All", ...STATUS_OPTIONS]} />
+            </div>
+            {!filteredTracker.length ? <EmptyState>No submissions yet. Generate one from the Submission page.</EmptyState> : <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 10px", minWidth: 980 }}><thead><tr>{["Candidate", "Role / Site", "Status", "Owner", "Next Action", "Aging", "Risk", "Actions"].map((head) => <th key={head} style={{ textAlign: "left", color: THEME.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, padding: "0 10px" }}>{head}</th>)}</tr></thead><tbody>{filteredTracker.map((item) => <tr key={item.id} style={{ background: "#ffffff", boxShadow: "0 6px 18px rgba(16,24,40,0.04)" }}><td style={{ padding: 10, borderTopLeftRadius: 8, borderBottomLeftRadius: 8 }}><strong>{item.candidate}</strong><div style={{ marginTop: 4, color: THEME.muted }}>{item.candidateEmail || "No email"}</div></td><td style={{ padding: 10 }}><strong>{item.position}</strong><div style={{ marginTop: 4, color: THEME.muted }}>{item.site}</div></td><td style={{ padding: 10 }}><SelectInput value={item.status} onChange={(event) => updateTracker(item.id, "status", event.target.value)} options={STATUS_OPTIONS} /></td><td style={{ padding: 10 }}><SelectInput value={item.owner} onChange={(event) => updateTracker(item.id, "owner", event.target.value)} options={OWNER_OPTIONS} /></td><td style={{ padding: 10 }}><SelectInput value={item.nextAction} onChange={(event) => updateTracker(item.id, "nextAction", event.target.value)} options={NEXT_ACTION_OPTIONS} /></td><td style={{ padding: 10 }}>{daysBetween(item.submissionDate)} days</td><td style={{ padding: 10 }}><Badge tone={riskFor(item)}>{riskFor(item)}</Badge></td><td style={{ padding: 10, borderTopRightRadius: 8, borderBottomRightRadius: 8 }}><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}><Button subtle onClick={() => handleTrackerAction(item, "details")}>Details</Button><Button subtle onClick={() => handleTrackerAction(item, "copyAts")}>ATS</Button><Button subtle onClick={() => handleTrackerAction(item, "openCandidate")} disabled={!item.candidateEmail}>Candidate</Button><Button subtle onClick={() => handleTrackerAction(item, "openManager")}>Manager</Button><Button danger onClick={() => handleTrackerAction(item, "archive")}>Archive</Button></div></td></tr>)}</tbody></table></div>}
           </Card>
         ) : null}
 
         {activePage === "review" ? (
           <div style={{ display: "grid", gap: 18, gridTemplateColumns: isMedium ? "1fr" : "320px 1fr", alignItems: "start" }}>
             <Card title="Review Queue" compact>
-              {!tracker.length ? <EmptyState>No records.</EmptyState> : <div style={{ display: "grid", gap: 8 }}>{tracker.map((item) => <button key={item.id} type="button" onClick={() => setSelectedId(item.id)} style={{ textAlign: "left", border: `1px solid ${selectedSubmission?.id === item.id ? THEME.primary2 : THEME.borderSoft}`, borderRadius: 8, padding: 12, background: selectedSubmission?.id === item.id ? "#eff6ff" : "#ffffff", cursor: "pointer" }}><strong>{item.candidate}</strong><div style={{ marginTop: 4, color: THEME.muted }}>{item.position} | {item.site}</div></button>)}</div>}
+              {!tracker.length ? <EmptyState>No records.</EmptyState> : <div style={{ display: "grid", gap: 8 }}>{tracker.map((item) => <button key={item.id} type="button" onClick={() => setSelectedId(item.id)} style={{ textAlign: "left", border: `1px solid ${selectedSubmission?.id === item.id ? THEME.primary2 : THEME.borderSoft}`, borderRadius: 8, padding: 10, background: selectedSubmission?.id === item.id ? THEME.blueBg : "#ffffff", cursor: "pointer" }}><strong>{item.candidate}</strong><div style={{ color: THEME.muted, marginTop: 4 }}>{item.position} | {item.site}</div></button>)}</div>}
             </Card>
             <Card title="Review Details" subtitle="Audit stays visible; histories and resend tools are tucked into dropdown sections.">
               {!selectedSubmission ? <EmptyState>Select a tracker record.</EmptyState> : <div style={{ display: "grid", gap: 14 }}>
-                <div style={threeGrid}>
-                  <MiniStat label="Status" value={selectedSubmission.status} tone={selectedSubmission.status} />
-                  <MiniStat label="Aging" value={`${daysBetween(selectedSubmission.submissionDate)}d`} tone={riskFor(selectedSubmission)} />
-                  <MiniStat label="Owner" value={selectedSubmission.owner} />
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "space-between" }}>
+                  <div><h2 style={{ margin: 0 }}>{selectedSubmission.candidate}</h2><p style={{ margin: "6px 0 0", color: THEME.muted }}>{selectedSubmission.position} | {selectedSubmission.site} | Submitted {displayDate(selectedSubmission.submissionDate)}</p></div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Badge tone={riskFor(selectedSubmission)}>{riskFor(selectedSubmission)} Risk</Badge><Badge>{selectedSubmission.status}</Badge></div>
                 </div>
                 <Accordion title="Candidate Snapshot" subtitle="Contact, submission, and intake details for quick review." defaultOpen>
                   <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : "repeat(2, minmax(0, 1fr))" }}>
@@ -1303,6 +1274,8 @@ export default function App() {
                       ["Candidate", selectedSubmission.candidate],
                       ["Candidate Email", selectedSubmission.candidateEmail],
                       ["Manager Email", managerEmailFor(settings, selectedSubmission)],
+                      ["Req Number", selectedSubmission.reqNumber || selectedSubmission.formSnapshot?.reqNumber],
+                      ["Candidate Source", selectedSubmission.candidateSource || selectedSubmission.formSnapshot?.candidateSource],
                       ["Submitted", displayDate(selectedSubmission.submissionDate)],
                       ["Phone", selectedSubmission.formSnapshot?.phoneNumber],
                       ["Location", selectedSubmission.formSnapshot?.location],
@@ -1371,6 +1344,9 @@ export default function App() {
                 <MiniStat label="High Risk" value={metrics.highRisk} tone={metrics.highRisk ? "High" : "Low"} />
               </div>
             </Card>
+            <Card title="Source Breakdown" subtitle="Shows where candidates are coming from when leadership asks for source visibility.">
+              {!sourceMetrics.length ? <EmptyState>No candidate source data yet.</EmptyState> : <div style={{ display: "grid", gap: 12, gridTemplateColumns: isNarrow ? "1fr" : "repeat(3, minmax(0, 1fr))" }}>{sourceMetrics.map((item) => <MiniStat key={item.source} label={item.source} value={item.count} />)}</div>}
+            </Card>
             <Card title="Weekly Report Output">{weeklyReport ? <EmailDocument title="Weekly Report" subject={weeklySubject} body={weeklyReport} /> : <EmptyState>Click Generate Weekly Report.</EmptyState>}</Card>
           </div>
         ) : null}
@@ -1378,9 +1354,9 @@ export default function App() {
         {activePage === "settings" ? (
           <div style={{ display: "grid", gap: 18, gridTemplateColumns: isMedium ? "1fr" : "260px 1fr", alignItems: "start" }}>
             <Card compact>
-              <div style={{ display: "grid", gap: 8 }}>{[["general", "Workspace Setup"], ["sites", "Sites"], ["roles", "Roles"], ["compensation", "Compensation"], ["options", "Core Options"], ["templates", "Templates"]].map(([key, label]) => <Button key={key} primary={activeSettingsTab === key} subtle={activeSettingsTab !== key} onClick={() => setActiveSettingsTab(key)} style={{ width: "100%", textAlign: "left" }}>{label}</Button>)}</div>
+              <div style={{ display: "grid", gap: 8 }}>{[["general", "Workspace Setup"], ["sites", "Sites"], ["requisitions", "Requisitions"], ["roles", "Roles"], ["compensation", "Compensation"], ["options", "Core Options"], ["templates", "Templates"]].map(([key, label]) => <Button key={key} primary={activeSettingsTab === key} subtle={activeSettingsTab !== key} onClick={() => setActiveSettingsTab(key)} style={{ width: "100%", textAlign: "left" }}>{label}</Button>)}</div>
             </Card>
-            <SettingsPanel activeSettingsTab={activeSettingsTab} settings={settings} setSettings={setSettings} updateSettings={updateSettings} activeRoles={activeRoles} activeSites={activeSites} />
+            <SettingsPanel activeSettingsTab={activeSettingsTab} settings={settings} setSettings={setSettings} updateSettings={updateSettings} activeRoles={activeRoles} activeSites={activeSites} exportFullBackup={exportFullBackup} importFullBackup={importFullBackup} />
           </div>
         ) : null}
 
@@ -1408,7 +1384,7 @@ function QueueCard({ title, rows, empty, actionLabel, onAction }) {
   );
 }
 
-function SettingsPanel({ activeSettingsTab, settings, setSettings, updateSettings, activeRoles, activeSites }) {
+function SettingsPanel({ activeSettingsTab, settings, setSettings, updateSettings, activeRoles, activeSites, exportFullBackup, importFullBackup }) {
   const width = useWindowWidth();
   const fieldGrid = { display: "grid", gap: 14, gridTemplateColumns: width < 900 ? "1fr" : "repeat(2, minmax(0, 1fr))" };
 
@@ -1417,7 +1393,11 @@ function SettingsPanel({ activeSettingsTab, settings, setSettings, updateSetting
   }
 
   function addSite() {
-    setSettings((prev) => ({ ...prev, sites: [...prev.sites, { id: makeId("site"), siteName: "", siteType: "", location: "", status: "Active", notes: "" }] }));
+    setSettings((prev) => ({ ...prev, sites: [...prev.sites, { id: makeId("site"), siteName: "", siteType: "", location: "", hiringManagerName: "", hiringManagerEmail: "", adminContactName: "", adminContactEmail: "", status: "Active", notes: "" }] }));
+  }
+
+  function addRequisition() {
+    setSettings((prev) => ({ ...prev, requisitions: [...(prev.requisitions || []), { id: makeId("req"), reqNumber: "", positionTitle: "", siteName: "", employmentType: "FT", shiftPreference: "", fte: "", status: "Active", notes: "" }] }));
   }
 
   function addRole() {
@@ -1452,60 +1432,31 @@ function SettingsPanel({ activeSettingsTab, settings, setSettings, updateSetting
   }
 
   function importSitesCsv(text) {
-    const rows = parseCsv(text).map((row) => ({
-      id: makeId("site"),
-      siteName: row.siteName || row.name || "",
-      siteType: row.siteType || row.type || "",
-      location: row.location || "",
-      status: row.status || "Active",
-      notes: row.notes || "",
-    })).filter((row) => row.siteName);
-    if (!rows.length) return window.alert("No valid site rows found.");
-    setSettings((prev) => ({ ...prev, sites: [...prev.sites, ...rows] }));
+    const rows = parseCsv(text).map((row) => ({ id: makeId("site"), siteName: row.siteName || row["Site Name"] || "", siteType: row.siteType || row["Site Type"] || "", location: row.location || row.Location || "", status: row.status || "Active", notes: row.notes || "" })).filter((row) => row.siteName);
+    if (rows.length) setSettings((prev) => ({ ...prev, sites: [...prev.sites, ...rows] }));
   }
 
   function importRolesCsv(text) {
-    const boolValue = (value) => String(value).toLowerCase() === "true";
-    const rows = parseCsv(text).map((row) => ({
-      id: makeId("role"),
-      positionTitle: row.positionTitle || row.title || "",
-      roleCategory: row.roleCategory || "Other",
-      requiresLicense: boolValue(row.requiresLicense),
-      requiresCpr: boolValue(row.requiresCpr),
-      requiresFte: row.requiresFte === "" ? false : boolValue(row.requiresFte),
-      requiresShift: row.requiresShift === "" ? false : boolValue(row.requiresShift),
-      requiresWorkExpectations: row.requiresWorkExpectations === "" ? true : boolValue(row.requiresWorkExpectations),
-      status: row.status || "Active",
-    })).filter((row) => row.positionTitle);
-    if (!rows.length) return window.alert("No valid role rows found.");
-    setSettings((prev) => ({ ...prev, roles: [...prev.roles, ...rows] }));
+    const rows = parseCsv(text).map((row) => ({ id: makeId("role"), positionTitle: row.positionTitle || row["Position Title"] || "", roleCategory: row.roleCategory || row["Role Category"] || "Other", requiresLicense: String(row.requiresLicense || "").toLowerCase() === "true", requiresCpr: String(row.requiresCpr || "").toLowerCase() === "true", requiresFte: String(row.requiresFte ?? "true").toLowerCase() !== "false", requiresShift: String(row.requiresShift ?? "true").toLowerCase() !== "false", requiresWorkExpectations: String(row.requiresWorkExpectations ?? "true").toLowerCase() !== "false", status: row.status || "Active" })).filter((row) => row.positionTitle);
+    if (rows.length) setSettings((prev) => ({ ...prev, roles: [...prev.roles, ...rows] }));
   }
 
   function importCompCsv(text) {
-    const rows = parseCsv(text).map((row) => ({
-      id: makeId("comp"),
-      positionTitle: row.positionTitle || "",
-      scopeType: row.scopeType || "Site Type",
-      scopeValue: row.scopeValue || "",
-      compensationType: row.compensationType || "Hourly",
-      basisType: row.basisType || "Years-based",
-      experienceTier: row.experienceTier || "0-2",
-      baseAmount: row.baseAmount || "",
-      shiftDifferentialNight: row.shiftDifferentialNight || "",
-      shiftDifferentialWeekend: row.shiftDifferentialWeekend || "",
-      shiftDifferentialEvening: row.shiftDifferentialEvening || "",
-      customNotes: row.customNotes || "",
-    })).filter((row) => row.positionTitle && row.baseAmount);
-    if (!rows.length) return window.alert("No valid compensation rows found.");
-    setSettings((prev) => ({ ...prev, compensationStructure: { ...prev.compensationStructure, rules: [...prev.compensationStructure.rules, ...rows] } }));
+    const rows = parseCsv(text).map((row) => ({ id: makeId("comp"), positionTitle: row.positionTitle || row["Position Title"] || "", scopeType: row.scopeType || "Site Type", scopeValue: row.scopeValue || "", compensationType: row.compensationType || "Hourly", basisType: row.basisType || "Years-based", experienceTier: row.experienceTier || "0-2", baseAmount: row.baseAmount || "", shiftDifferentialNight: row.shiftDifferentialNight || "", shiftDifferentialWeekend: row.shiftDifferentialWeekend || "", shiftDifferentialEvening: row.shiftDifferentialEvening || "", customNotes: row.customNotes || "" })).filter((row) => row.positionTitle);
+    if (rows.length) setSettings((prev) => ({ ...prev, compensationStructure: { ...prev.compensationStructure, rules: [...prev.compensationStructure.rules, ...rows] } }));
   }
 
   if (activeSettingsTab === "general") {
-    return <Card title="Workspace Setup" subtitle="Personalizes generated emails, reports, and signatures." action={<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button subtle onClick={exportSettingsJson}>Export Settings</Button><FileButton accept="application/json,.json" onText={importSettingsJson}>Import Settings</FileButton><Button danger onClick={() => { if (window.confirm("Reset settings to the built-in defaults?")) setSettings(DEFAULT_SETTINGS); }}>Reset Defaults</Button></div>}><div style={fieldGrid}>{Object.entries(settings.general).map(([key, value]) => <Field key={key} label={labelFromKey(key)}><TextInput value={value} onChange={(event) => updateSettings(["general", key], event.target.value)} /></Field>)}</div></Card>;
+    return <Card title="Workspace Setup" subtitle="Personalizes generated emails, reports, and signatures." action={<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button subtle onClick={exportSettingsJson}>Export Settings</Button><FileButton accept="application/json,.json" onText={importSettingsJson}>Import Settings</FileButton><Button subtle onClick={exportFullBackup}>Export Full Backup</Button><FileButton accept="application/json,.json" onText={importFullBackup}>Import Full Backup</FileButton><Button danger onClick={() => { if (window.confirm("Reset settings to the built-in defaults?")) setSettings(DEFAULT_SETTINGS); }}>Reset Defaults</Button></div>}><div style={fieldGrid}>{Object.entries(settings.general).map(([key, value]) => <Field key={key} label={labelFromKey(key)}><TextInput value={value} onChange={(event) => updateSettings(["general", key], event.target.value)} /></Field>)}</div></Card>;
   }
 
   if (activeSettingsTab === "sites") {
-    return <Card title="Sites" subtitle="Locations and site types feed compensation matching and tracker labels." action={<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><FileButton accept=".csv,text/csv" onText={importSitesCsv}>Import Sites CSV</FileButton><Button primary onClick={addSite}>Add Site</Button></div>}><div style={{ display: "grid", gap: 14 }}>{settings.sites.map((site) => <div key={site.id} style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 14, background: "#ffffff" }}><div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 12, alignItems: "center" }}><strong>Site Record</strong><Button danger onClick={() => removeRecord("sites", site.id)}>Delete</Button></div><div style={fieldGrid}><Field label="Site Name"><TextInput value={site.siteName} onChange={(event) => updateArrayRecord("sites", site.id, "siteName", event.target.value)} /></Field><Field label="Site Type"><TextInput value={site.siteType} onChange={(event) => updateArrayRecord("sites", site.id, "siteType", event.target.value)} /></Field><Field label="Location"><TextInput value={site.location} onChange={(event) => updateArrayRecord("sites", site.id, "location", event.target.value)} /></Field><Field label="Status"><SelectInput value={site.status} onChange={(event) => updateArrayRecord("sites", site.id, "status", event.target.value)} options={["Active", "Inactive"]} /></Field><div style={{ gridColumn: "1 / -1" }}><Field label="Notes"><TextArea value={site.notes} onChange={(event) => updateArrayRecord("sites", site.id, "notes", event.target.value)} minHeight={72} /></Field></div></div></div>)}</div></Card>;
+    return <Card title="Sites" subtitle="Locations and site types feed compensation matching and tracker labels." action={<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><FileButton accept=".csv,text/csv" onText={importSitesCsv}>Import Sites CSV</FileButton><Button primary onClick={addSite}>Add Site</Button></div>}><div style={{ display: "grid", gap: 14 }}>{settings.sites.map((site) => <div key={site.id} style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 14, background: "#ffffff" }}><div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 12, alignItems: "center" }}><strong>Site Record</strong><Button danger onClick={() => removeRecord("sites", site.id)}>Delete</Button></div><div style={fieldGrid}><Field label="Site Name"><TextInput value={site.siteName} onChange={(event) => updateArrayRecord("sites", site.id, "siteName", event.target.value)} /></Field><Field label="Site Type"><TextInput value={site.siteType} onChange={(event) => updateArrayRecord("sites", site.id, "siteType", event.target.value)} /></Field><Field label="Location"><TextInput value={site.location} onChange={(event) => updateArrayRecord("sites", site.id, "location", event.target.value)} /></Field><Field label="Hiring Manager Name"><TextInput value={site.hiringManagerName} onChange={(event) => updateArrayRecord("sites", site.id, "hiringManagerName", event.target.value)} /></Field><Field label="Hiring Manager Email"><TextInput value={site.hiringManagerEmail} onChange={(event) => updateArrayRecord("sites", site.id, "hiringManagerEmail", event.target.value)} /></Field><Field label="Administrative Contact Name"><TextInput value={site.adminContactName} onChange={(event) => updateArrayRecord("sites", site.id, "adminContactName", event.target.value)} /></Field><Field label="Administrative Contact Email"><TextInput value={site.adminContactEmail} onChange={(event) => updateArrayRecord("sites", site.id, "adminContactEmail", event.target.value)} /></Field><Field label="Status"><SelectInput value={site.status} onChange={(event) => updateArrayRecord("sites", site.id, "status", event.target.value)} options={["Active", "Inactive"]} /></Field><div style={{ gridColumn: "1 / -1" }}><Field label="Notes"><TextArea value={site.notes} onChange={(event) => updateArrayRecord("sites", site.id, "notes", event.target.value)} minHeight={72} /></Field></div></div></div>)}</div></Card>;
+  }
+
+  if (activeSettingsTab === "requisitions") {
+    const statusOptions = settings.options.requisitionStatusOptions || REQUISITION_STATUS_OPTIONS;
+    return <div style={{ display: "grid", gap: 16 }}><Card title="Requisition Status Options"><TagListEditor label="Req Statuses" values={statusOptions} onChange={(value) => updateSettings(["options", "requisitionStatusOptions"], value)} /></Card><Card title="Requisitions" subtitle="Only Active requisitions appear in Candidate Intake. Recruiters can still manually type a req number when needed." action={<Button primary onClick={addRequisition}>Add Requisition</Button>}><div style={{ display: "grid", gap: 14 }}>{(settings.requisitions || []).map((req) => <div key={req.id} style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 14, background: "#ffffff" }}><div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 12, alignItems: "center" }}><strong>Requisition Record</strong><Button danger onClick={() => removeRecord("requisitions", req.id)}>Delete</Button></div><div style={fieldGrid}><Field label="Req Number"><TextInput value={req.reqNumber} onChange={(event) => updateArrayRecord("requisitions", req.id, "reqNumber", event.target.value)} /></Field><Field label="Position"><SelectInput value={req.positionTitle} onChange={(event) => updateArrayRecord("requisitions", req.id, "positionTitle", event.target.value)} options={activeRoles.map((role) => role.positionTitle).filter(Boolean)} /></Field><Field label="Site / Facility"><SelectInput value={req.siteName} onChange={(event) => updateArrayRecord("requisitions", req.id, "siteName", event.target.value)} options={activeSites.map((site) => site.siteName).filter(Boolean)} /></Field><Field label="Employment Type"><SelectInput value={req.employmentType} onChange={(event) => updateArrayRecord("requisitions", req.id, "employmentType", event.target.value)} options={settings.options.employmentTypes} /></Field><Field label="Shift"><SelectInput value={req.shiftPreference} onChange={(event) => updateArrayRecord("requisitions", req.id, "shiftPreference", event.target.value)} options={settings.options.shiftOptions} /></Field><Field label="FTE"><SelectInput value={req.fte} onChange={(event) => updateArrayRecord("requisitions", req.id, "fte", event.target.value)} options={FTE_OPTIONS} /></Field><Field label="Status"><SelectInput value={req.status} onChange={(event) => updateArrayRecord("requisitions", req.id, "status", event.target.value)} options={statusOptions} /></Field><div style={{ gridColumn: "1 / -1" }}><Field label="Notes"><TextArea value={req.notes} onChange={(event) => updateArrayRecord("requisitions", req.id, "notes", event.target.value)} minHeight={70} /></Field></div></div></div>)}</div></Card></div>;
   }
 
   if (activeSettingsTab === "roles") {
@@ -1519,7 +1470,7 @@ function SettingsPanel({ activeSettingsTab, settings, setSettings, updateSetting
   }
 
   if (activeSettingsTab === "options") {
-    return <Card title="Core Options" subtitle="Dropdown values used across intake, tracker, and templates."><div style={fieldGrid}><TagListEditor label="Shift Preferences" values={settings.options.shiftOptions} onChange={(value) => updateSettings(["options", "shiftOptions"], value)} /><TagListEditor label="Work Types" values={settings.options.workTypes} onChange={(value) => updateSettings(["options", "workTypes"], value)} /><TagListEditor label="Start Date Options" values={settings.options.startAvailabilityOptions} onChange={(value) => updateSettings(["options", "startAvailabilityOptions"], value)} /><TagListEditor label="Employment Types" values={settings.options.employmentTypes} onChange={(value) => updateSettings(["options", "employmentTypes"], value)} /><TagListEditor label="Education Levels" values={settings.options.educationLevels} onChange={(value) => updateSettings(["options", "educationLevels"], value)} /><TagListEditor label="License Status Options" values={settings.options.licenseStatusOptions} onChange={(value) => updateSettings(["options", "licenseStatusOptions"], value)} /><TagListEditor label="CPR Status Options" values={settings.options.cprStatusOptions} onChange={(value) => updateSettings(["options", "cprStatusOptions"], value)} /><TagListEditor label="OT Requirement Options" values={settings.options.workExpectationOptions.ot} onChange={(value) => updateSettings(["options", "workExpectationOptions", "ot"], value)} /><TagListEditor label="Weekend Requirement Options" values={settings.options.workExpectationOptions.weekend} onChange={(value) => updateSettings(["options", "workExpectationOptions", "weekend"], value)} /><TagListEditor label="On-Call Requirement Options" values={settings.options.workExpectationOptions.onCall} onChange={(value) => updateSettings(["options", "workExpectationOptions", "onCall"], value)} /></div></Card>;
+    return <Card title="Core Options" subtitle="Dropdown values used across intake, tracker, and templates."><div style={fieldGrid}><TagListEditor label="Shift Preferences" values={settings.options.shiftOptions} onChange={(value) => updateSettings(["options", "shiftOptions"], value)} /><TagListEditor label="Work Types" values={settings.options.workTypes} onChange={(value) => updateSettings(["options", "workTypes"], value)} /><TagListEditor label="Start Date Options" values={settings.options.startAvailabilityOptions} onChange={(value) => updateSettings(["options", "startAvailabilityOptions"], value)} /><TagListEditor label="Employment Types" values={settings.options.employmentTypes} onChange={(value) => updateSettings(["options", "employmentTypes"], value)} /><TagListEditor label="Candidate Sources" values={settings.options.candidateSourceOptions || SOURCE_OPTIONS} onChange={(value) => updateSettings(["options", "candidateSourceOptions"], value)} /><TagListEditor label="Requisition Statuses" values={settings.options.requisitionStatusOptions || REQUISITION_STATUS_OPTIONS} onChange={(value) => updateSettings(["options", "requisitionStatusOptions"], value)} /><TagListEditor label="Education Levels" values={settings.options.educationLevels} onChange={(value) => updateSettings(["options", "educationLevels"], value)} /><TagListEditor label="License Status Options" values={settings.options.licenseStatusOptions} onChange={(value) => updateSettings(["options", "licenseStatusOptions"], value)} /><TagListEditor label="CPR Status Options" values={settings.options.cprStatusOptions} onChange={(value) => updateSettings(["options", "cprStatusOptions"], value)} /><TagListEditor label="OT Requirement Options" values={settings.options.workExpectationOptions.ot} onChange={(value) => updateSettings(["options", "workExpectationOptions", "ot"], value)} /><TagListEditor label="Weekend Requirement Options" values={settings.options.workExpectationOptions.weekend} onChange={(value) => updateSettings(["options", "workExpectationOptions", "weekend"], value)} /><TagListEditor label="On-Call Requirement Options" values={settings.options.workExpectationOptions.onCall} onChange={(value) => updateSettings(["options", "workExpectationOptions", "onCall"], value)} /></div></Card>;
   }
 
   const templateDefs = [
