@@ -652,6 +652,7 @@ export default function App() {
   const [copyNotice, setCopyNotice] = useState("");
   const [trackerSearch, setTrackerSearch] = useState("");
   const [trackerStatusFilter, setTrackerStatusFilter] = useState("Active");
+  const [trackerReqFilter, setTrackerReqFilter] = useState("All");
   const [hasLoaded, setHasLoaded] = useState(false);
 
   useEffect(() => {
@@ -733,6 +734,20 @@ export default function App() {
       .sort((a, b) => b.count - a.count || a.source.localeCompare(b.source));
   }, [tracker]);
 
+  const requisitionMetrics = useMemo(() => {
+    const counts = {};
+    tracker.forEach((item) => {
+      const reqNumber = item.reqNumber || item.formSnapshot?.reqNumber || "No Req";
+      const position = item.position || item.formSnapshot?.position || "No Position";
+      const site = item.site || item.formSnapshot?.siteName || "No Site";
+      const key = `${reqNumber} | ${position} | ${site}`;
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    return Object.entries(counts)
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+  }, [tracker]);
+
   const actionQueues = useMemo(() => {
     const today = todayIso();
     const isOpen = (item) => !isClosedStatus(item.status);
@@ -762,10 +777,12 @@ export default function App() {
     const search = trackerSearch.trim().toLowerCase();
     return tracker.filter((item) => {
       const statusMatch = trackerStatusFilter === "All" || (trackerStatusFilter === "Active" ? !isClosedStatus(item.status) : item.status === trackerStatusFilter);
-      const searchMatch = !search || [item.candidate, item.position, item.site, item.status, item.nextAction, item.owner].join(" ").toLowerCase().includes(search);
-      return statusMatch && searchMatch;
+      const reqValue = item.requisitionId || item.formSnapshot?.selectedRequisitionId || item.reqNumber || item.formSnapshot?.reqNumber || "";
+      const reqMatch = trackerReqFilter === "All" || reqValue === trackerReqFilter || item.reqNumber === trackerReqFilter || item.formSnapshot?.reqNumber === trackerReqFilter;
+      const searchMatch = !search || [item.candidate, item.position, item.site, item.status, item.nextAction, item.owner, item.reqNumber, item.candidateSource].join(" ").toLowerCase().includes(search);
+      return statusMatch && reqMatch && searchMatch;
     });
-  }, [tracker, trackerSearch, trackerStatusFilter]);
+  }, [tracker, trackerSearch, trackerStatusFilter, trackerReqFilter]);
 
   function updateForm(key, value) {
     setForm((prev) => {
@@ -1118,8 +1135,21 @@ export default function App() {
       rejected: weeklyRows.filter((item) => item.status === "Rejected").length,
       highRisk: weeklyRows.filter((item) => riskFor(item) === "High").length,
     };
+    const sourceCounts = {};
+    const reqCounts = {};
+    weeklyRows.forEach((item) => {
+      const source = item.candidateSource || item.formSnapshot?.candidateSource || "Unspecified";
+      const reqNumber = item.reqNumber || item.formSnapshot?.reqNumber || "No Req";
+      const position = item.position || item.formSnapshot?.position || "No Position";
+      const site = item.site || item.formSnapshot?.siteName || "No Site";
+      sourceCounts[source] = (sourceCounts[source] || 0) + 1;
+      const reqLabel = `${reqNumber} | ${position} | ${site}`;
+      reqCounts[reqLabel] = (reqCounts[reqLabel] || 0) + 1;
+    });
     const highRiskRows = weeklyRows.filter((item) => riskFor(item) === "High").map((item) => `- ${item.candidate} | ${item.position} | ${item.site} | ${daysBetween(item.submissionDate)} days old`);
-    const defaultReport = [`Weekly Submission Summary`, `Generated: ${displayDate(todayIso())}`, "", `Submitted This Week: ${weeklyMetrics.total}`, `Active This Week: ${weeklyMetrics.active}`, `Awaiting Review: ${weeklyMetrics.awaiting}`, `Interview Activity: ${weeklyMetrics.interview}`, `Placed: ${weeklyMetrics.placed}`, `Rejected: ${weeklyMetrics.rejected}`, `High Risk: ${weeklyMetrics.highRisk}`, "", "High Risk Candidates", ...(highRiskRows.length ? highRiskRows : ["- None"])].join(NL);
+    const sourceRows = Object.entries(sourceCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([source, count]) => `- ${source}: ${count}`);
+    const reqRows = Object.entries(reqCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([req, count]) => `- ${req}: ${count}`);
+    const defaultReport = [`Weekly Submission Summary`, `Generated: ${displayDate(todayIso())}`, "", `Submitted This Week: ${weeklyMetrics.total}`, `Active This Week: ${weeklyMetrics.active}`, `Awaiting Review: ${weeklyMetrics.awaiting}`, `Interview Activity: ${weeklyMetrics.interview}`, `Placed: ${weeklyMetrics.placed}`, `Rejected: ${weeklyMetrics.rejected}`, `High Risk: ${weeklyMetrics.highRisk}`, "", "Source Breakdown", ...(sourceRows.length ? sourceRows : ["- None"]), "", "Requisition Breakdown", ...(reqRows.length ? reqRows : ["- None"]), "", "High Risk Candidates", ...(highRiskRows.length ? highRiskRows : ["- None"])].join(NL);
     const reportValues = tokenMap(form, settings, { ...weeklyMetrics, totalSubmitted: weeklyMetrics.total });
     const report = settings.templates.weeklyReport?.useCustom && settings.templates.weeklyReport.body ? applyTokens(settings.templates.weeklyReport.body, reportValues) : defaultReport;
     const subject = settings.templates.weeklyReport?.useCustom && settings.templates.weeklyReport.subject ? applyTokens(settings.templates.weeklyReport.subject, reportValues) : "Weekly Submission Summary";
@@ -1249,9 +1279,10 @@ export default function App() {
 
         {activePage === "tracker" ? (
           <Card title="Submission Tracker Control Tower" subtitle="Status, owner, next action, aging, risk, and quick actions stay in one clean table." action={<Button subtle onClick={exportTrackerCsv} disabled={!filteredTracker.length}>Export CSV</Button>}>
-            <div style={{ display: "grid", gap: 12, gridTemplateColumns: isNarrow ? "1fr" : "1fr 220px", marginBottom: 14 }}>
-              <TextInput value={trackerSearch} onChange={(event) => setTrackerSearch(event.target.value)} placeholder="Search candidate, position, site, status, action..." />
+            <div style={{ display: "grid", gap: 12, gridTemplateColumns: isNarrow ? "1fr" : "1fr 220px 260px", marginBottom: 14 }}>
+              <TextInput value={trackerSearch} onChange={(event) => setTrackerSearch(event.target.value)} placeholder="Search candidate, req, source, position, site, status, action..." />
               <SelectInput value={trackerStatusFilter} onChange={(event) => setTrackerStatusFilter(event.target.value)} options={["Active", "All", ...STATUS_OPTIONS]} />
+              <SelectInput value={trackerReqFilter} onChange={(event) => setTrackerReqFilter(event.target.value)} options={[{ value: "All", label: "All Requisitions" }, ...activeRequisitions.map((req) => ({ value: req.id, label: `${req.reqNumber || "No Req"} | ${req.positionTitle || "No Position"}` }))]} />
             </div>
             {!filteredTracker.length ? <EmptyState>No submissions yet. Generate one from the Submission page.</EmptyState> : <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 10px", minWidth: 980 }}><thead><tr>{["Candidate", "Role / Site", "Status", "Owner", "Next Action", "Aging", "Risk", "Actions"].map((head) => <th key={head} style={{ textAlign: "left", color: THEME.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, padding: "0 10px" }}>{head}</th>)}</tr></thead><tbody>{filteredTracker.map((item) => <tr key={item.id} style={{ background: "#ffffff", boxShadow: "0 6px 18px rgba(16,24,40,0.04)" }}><td style={{ padding: 10, borderTopLeftRadius: 8, borderBottomLeftRadius: 8 }}><strong>{item.candidate}</strong><div style={{ marginTop: 4, color: THEME.muted }}>{item.candidateEmail || "No email"}</div></td><td style={{ padding: 10 }}><strong>{item.position}</strong><div style={{ marginTop: 4, color: THEME.muted }}>{item.site}</div></td><td style={{ padding: 10 }}><SelectInput value={item.status} onChange={(event) => updateTracker(item.id, "status", event.target.value)} options={STATUS_OPTIONS} /></td><td style={{ padding: 10 }}><SelectInput value={item.owner} onChange={(event) => updateTracker(item.id, "owner", event.target.value)} options={OWNER_OPTIONS} /></td><td style={{ padding: 10 }}><SelectInput value={item.nextAction} onChange={(event) => updateTracker(item.id, "nextAction", event.target.value)} options={NEXT_ACTION_OPTIONS} /></td><td style={{ padding: 10 }}>{daysBetween(item.submissionDate)} days</td><td style={{ padding: 10 }}><Badge tone={riskFor(item)}>{riskFor(item)}</Badge></td><td style={{ padding: 10, borderTopRightRadius: 8, borderBottomRightRadius: 8 }}><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}><Button subtle onClick={() => handleTrackerAction(item, "details")}>Details</Button><Button subtle onClick={() => handleTrackerAction(item, "copyAts")}>ATS</Button><Button subtle onClick={() => handleTrackerAction(item, "openCandidate")} disabled={!item.candidateEmail}>Candidate</Button><Button subtle onClick={() => handleTrackerAction(item, "openManager")}>Manager</Button><Button danger onClick={() => handleTrackerAction(item, "archive")}>Archive</Button></div></td></tr>)}</tbody></table></div>}
           </Card>
@@ -1346,6 +1377,9 @@ export default function App() {
             </Card>
             <Card title="Source Breakdown" subtitle="Shows where candidates are coming from when leadership asks for source visibility.">
               {!sourceMetrics.length ? <EmptyState>No candidate source data yet.</EmptyState> : <div style={{ display: "grid", gap: 12, gridTemplateColumns: isNarrow ? "1fr" : "repeat(3, minmax(0, 1fr))" }}>{sourceMetrics.map((item) => <MiniStat key={item.source} label={item.source} value={item.count} />)}</div>}
+            </Card>
+            <Card title="Requisition Breakdown" subtitle="Groups candidates by requisition so you can see which openings are generating activity.">
+              {!requisitionMetrics.length ? <EmptyState>No requisition activity yet.</EmptyState> : <div style={{ display: "grid", gap: 12 }}>{requisitionMetrics.map((item) => <div key={item.label} style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 14, background: "#ffffff", display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><strong>{item.label}</strong><Badge>{item.count} candidate{item.count === 1 ? "" : "s"}</Badge></div>)}</div>}
             </Card>
             <Card title="Weekly Report Output">{weeklyReport ? <EmailDocument title="Weekly Report" subject={weeklySubject} body={weeklyReport} /> : <EmptyState>Click Generate Weekly Report.</EmptyState>}</Card>
           </div>
