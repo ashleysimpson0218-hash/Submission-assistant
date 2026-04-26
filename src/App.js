@@ -1125,37 +1125,86 @@ export default function App() {
   }
 
   function generateWeeklyReport() {
-    const weeklyRows = tracker.filter((item) => isThisWeek(item.submissionDate));
-    const weeklyMetrics = {
-      total: weeklyRows.length,
-      active: weeklyRows.filter((item) => !isClosedStatus(item.status)).length,
-      awaiting: weeklyRows.filter((item) => item.status === "Awaiting Review" || item.nextAction === "Awaiting manager review").length,
-      interview: weeklyRows.filter((item) => item.status.includes("Interview")).length,
-      placed: weeklyRows.filter((item) => item.status === "Placed").length,
-      rejected: weeklyRows.filter((item) => item.status === "Rejected").length,
-      highRisk: weeklyRows.filter((item) => riskFor(item) === "High").length,
-    };
-    const sourceCounts = {};
-    const reqCounts = {};
+    const weeklyRows = tracker.filter((item) => isThisWeek(item.submissionDate) && !isClosedStatus(item.status));
+
+    const facilityGroups = {};
     weeklyRows.forEach((item) => {
-      const source = item.candidateSource || item.formSnapshot?.candidateSource || "Unspecified";
-      const reqNumber = item.reqNumber || item.formSnapshot?.reqNumber || "No Req";
-      const position = item.position || item.formSnapshot?.position || "No Position";
-      const site = item.site || item.formSnapshot?.siteName || "No Site";
-      sourceCounts[source] = (sourceCounts[source] || 0) + 1;
-      const reqLabel = `${reqNumber} | ${position} | ${site}`;
-      reqCounts[reqLabel] = (reqCounts[reqLabel] || 0) + 1;
+      const facility = item.site || item.formSnapshot?.siteName || "Unknown Facility";
+      if (!facilityGroups[facility]) facilityGroups[facility] = [];
+      facilityGroups[facility].push(item);
     });
-    const highRiskRows = weeklyRows.filter((item) => riskFor(item) === "High").map((item) => `- ${item.candidate} | ${item.position} | ${item.site} | ${daysBetween(item.submissionDate)} days old`);
-    const sourceRows = Object.entries(sourceCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([source, count]) => `- ${source}: ${count}`);
-    const reqRows = Object.entries(reqCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([req, count]) => `- ${req}: ${count}`);
-    const defaultReport = [`Weekly Submission Summary`, `Generated: ${displayDate(todayIso())}`, "", `Submitted This Week: ${weeklyMetrics.total}`, `Active This Week: ${weeklyMetrics.active}`, `Awaiting Review: ${weeklyMetrics.awaiting}`, `Interview Activity: ${weeklyMetrics.interview}`, `Placed: ${weeklyMetrics.placed}`, `Rejected: ${weeklyMetrics.rejected}`, `High Risk: ${weeklyMetrics.highRisk}`, "", "Source Breakdown", ...(sourceRows.length ? sourceRows : ["- None"]), "", "Requisition Breakdown", ...(reqRows.length ? reqRows : ["- None"]), "", "High Risk Candidates", ...(highRiskRows.length ? highRiskRows : ["- None"])].join(NL);
-    const reportValues = tokenMap(form, settings, { ...weeklyMetrics, totalSubmitted: weeklyMetrics.total });
-    const report = settings.templates.weeklyReport?.useCustom && settings.templates.weeklyReport.body ? applyTokens(settings.templates.weeklyReport.body, reportValues) : defaultReport;
-    const subject = settings.templates.weeklyReport?.useCustom && settings.templates.weeklyReport.subject ? applyTokens(settings.templates.weeklyReport.subject, reportValues) : "Weekly Submission Summary";
-    setWeeklyReport(report);
-    setWeeklySubject(subject);
-    addHistory("Weekly Report", subject, report, "");
+
+    const reportSections = Object.entries(facilityGroups).map(([facility, candidates]) => {
+      const rows = candidates.map((item) => {
+        const req = item.reqNumber || item.formSnapshot?.reqNumber || "N/A";
+        const position = item.position || item.formSnapshot?.position || "N/A";
+        const status = item.status || "N/A";
+        const nextAction = item.nextAction || "N/A";
+        const submitted = displayDate(item.submissionDate);
+        const aging = `${daysBetween(item.submissionDate)} days`;
+        return `${item.candidate || "Unnamed Candidate"} | ${req} | ${position} | ${status} | ${nextAction} | ${submitted} | ${aging}`;
+      });
+
+      return [
+        `Facility: ${facility}`,
+        "Candidate | Req # | Position | Status | Next Action | Submitted | Aging",
+        ...rows,
+      ].join(NL);
+    });
+
+    const statusCounts = {};
+    const reqCounts = {};
+    const facilityCounts = {};
+
+    weeklyRows.forEach((item) => {
+      const status = item.status || "Unknown";
+      const req = item.reqNumber || item.formSnapshot?.reqNumber || "No Req";
+      const position = item.position || item.formSnapshot?.position || "No Position";
+      const facility = item.site || item.formSnapshot?.siteName || "Unknown Facility";
+      const reqLabel = `${req} | ${position}`;
+
+      statusCounts[status] = (statusCounts[status] || 0) + 1;
+      reqCounts[reqLabel] = (reqCounts[reqLabel] || 0) + 1;
+      facilityCounts[facility] = (facilityCounts[facility] || 0) + 1;
+    });
+
+    const facilitySection = [
+      "Facility Breakdown",
+      ...Object.entries(facilityCounts)
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .map(([facility, count]) => `- ${facility}: ${count} active candidate${count === 1 ? "" : "s"}`),
+    ];
+
+    const statusSection = [
+      "Status Breakdown",
+      ...Object.entries(statusCounts)
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .map(([status, count]) => `- ${status}: ${count}`),
+    ];
+
+    const reqSection = [
+      "Requisition Breakdown",
+      ...Object.entries(reqCounts)
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .map(([req, count]) => `- ${req}: ${count}`),
+    ];
+
+    const finalReport = [
+      "Weekly Active Candidate Report",
+      `Generated: ${displayDate(todayIso())}`,
+      "",
+      reportSections.length ? reportSections.join(`${NL}${NL}`) : "No active candidates submitted this week.",
+      "",
+      ...facilitySection,
+      "",
+      ...statusSection,
+      "",
+      ...reqSection,
+    ].join(NL);
+
+    setWeeklyReport(finalReport);
+    setWeeklySubject("Weekly Active Candidate Report");
+    addHistory("Weekly Report", "Weekly Active Candidate Report", finalReport, "");
   }
 
   const isNarrow = viewportWidth < 900;
