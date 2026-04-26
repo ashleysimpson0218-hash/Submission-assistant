@@ -1002,16 +1002,16 @@ export default function App() {
     const cleanValue = (value) => String(value || "").split("|")[0].trim();
     const find = (regex) => cleanValue(text.match(regex)?.[1]);
     const preview = {
-      fullName: find(/(?:name|candidate)[:\-]\s*([^\n|]+)/i) || form.fullName,
-      phoneNumber: find(/(?:phone|cell|mobile)[:\-]\s*([^\n|]+)/i) || cleanValue(text.match(/(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/)?.[0]) || form.phoneNumber,
-      emailAddress: find(/(?:email)[:\-]\s*([^\n|]+)/i) || cleanValue(text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]) || form.emailAddress,
-      position: find(/(?:role|position)[:\-]\s*([^\n|]+)/i) || form.position,
+      fullName: find(/(?:name|candidate)[:-]\s*([^\n|]+)/i) || form.fullName,
+      phoneNumber: find(/(?:phone|cell|mobile)[:-]\s*([^\n|]+)/i) || cleanValue(text.match(/(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/)?.[0]) || form.phoneNumber,
+      emailAddress: find(/(?:email)[:-]\s*([^\n|]+)/i) || cleanValue(text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]) || form.emailAddress,
+      position: find(/(?:role|position)[:-]\s*([^\n|]+)/i) || form.position,
       yearsExperience: find(/(\d+)\s*(?:years|yrs)/i) || form.yearsExperience,
-      shiftPreference: find(/(?:shift)[:\-]\s*([^\n|]+)/i) || form.shiftPreference,
-      startAvailability: find(/(?:start|availability)[:\-]\s*([^\n|]+)/i) || form.startAvailability,
+      shiftPreference: find(/(?:shift)[:-]\s*([^\n|]+)/i) || form.shiftPreference,
+      startAvailability: find(/(?:start|availability)[:-]\s*([^\n|]+)/i) || form.startAvailability,
       licenseStatus: /active/i.test(text) ? "Active/Clear" : form.licenseStatus,
       cprStatus: /cpr[^.\n]*(active|current|valid)/i.test(text) ? "Active" : form.cprStatus,
-      workSchedule: find(/(?:schedule)[:\-]\s*([^\n|]+)/i) || form.workSchedule,
+      workSchedule: find(/(?:schedule)[:-]\s*([^\n|]+)/i) || form.workSchedule,
       candidateNotes: text.slice(0, 600),
     };
     setNotesPreview(preview);
