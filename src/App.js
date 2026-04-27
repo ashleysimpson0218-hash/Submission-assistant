@@ -51,7 +51,7 @@ const NEXT_ACTION_OPTIONS = [
   "Archive candidate",
   "No action needed",
 ];
-const STATUS_OPTIONS = ["Submitted", "Awaiting Review", "Interview Requested", "Interview Scheduled", "Interview Completed", "Offer", "Placed", "Rejected", "Archived"];
+const STATUS_OPTIONS = ["Submitted", "Awaiting Review", "Interview Requested", "Interview Scheduled", "Interview Completed", "Offer", "Hired", "Rejected", "Archived"];
 const OUTCOME_OPTIONS = ["Placed", "Rejected", "Withdrawn", "No response", "Future consideration", "Duplicate", "Other"];
 const FTE_OPTIONS = [
   { label: "40 hrs/week (1.0)", value: "1.0" },
@@ -102,7 +102,7 @@ const DEFAULT_SETTINGS = {
     { id: "role-2", positionTitle: "Administrative Assistant", roleCategory: "Other", requiresLicense: false, requiresCpr: false, requiresFte: false, requiresShift: false, requiresWorkExpectations: true, status: "Active" },
   ],
   requisitions: [
-    { id: "req-1", reqNumber: "REQ-1001", positionTitle: "Registered Nurse", siteName: "Demo Facility", employmentType: "FT", shiftPreference: "Day", fte: "1.0", status: "Active", notes: "Demo active requisition" },
+    { id: "req-1", reqNumber: "REQ-1001", positionTitle: "Registered Nurse", siteName: "Demo Facility", employmentType: "FT", shiftPreference: "Day", fte: "1.0", status: "Active", requiredInfo: "Active license, CPR, shift availability", credentialRequirements: "Active license and CPR", payNotes: "Use compensation structure or manual override", notes: "Demo active requisition" },
   ],
   compensationStructure: {
     enabled: true,
@@ -433,7 +433,7 @@ function riskFor(item) {
 }
 
 function isClosedStatus(status) {
-  return ["Archived", "Placed", "Rejected"].includes(status);
+  return ["Archived", "Hired", "Placed", "Rejected"].includes(status);
 }
 
 function tokenMap(form, settings, extra = {}) {
@@ -653,6 +653,7 @@ export default function App() {
   const [trackerSearch, setTrackerSearch] = useState("");
   const [trackerStatusFilter, setTrackerStatusFilter] = useState("Active");
   const [trackerReqFilter, setTrackerReqFilter] = useState("All");
+  const [selectedTrackerIds, setSelectedTrackerIds] = useState([]);
   const [hasLoaded, setHasLoaded] = useState(false);
 
   useEffect(() => {
@@ -717,7 +718,7 @@ export default function App() {
       active: active.length,
       awaiting: tracker.filter((item) => item.status === "Awaiting Review" || item.nextAction === "Awaiting manager review").length,
       interview: tracker.filter((item) => item.status.includes("Interview")).length,
-      placed: tracker.filter((item) => item.status === "Placed").length,
+      placed: tracker.filter((item) => item.status === "Hired" || item.status === "Placed").length,
       rejected: tracker.filter((item) => item.status === "Rejected").length,
       highRisk: tracker.filter((item) => riskFor(item) === "High").length,
     };
@@ -776,7 +777,7 @@ export default function App() {
   const filteredTracker = useMemo(() => {
     const search = trackerSearch.trim().toLowerCase();
     return tracker.filter((item) => {
-      const statusMatch = trackerStatusFilter === "All" || (trackerStatusFilter === "Active" ? !isClosedStatus(item.status) : item.status === trackerStatusFilter);
+      const statusMatch = trackerStatusFilter === "All" || (trackerStatusFilter === "Active" ? !isClosedStatus(item.status) && !item.archived : item.status === trackerStatusFilter);
       const reqValue = item.requisitionId || item.formSnapshot?.selectedRequisitionId || item.reqNumber || item.formSnapshot?.reqNumber || "";
       const reqMatch = trackerReqFilter === "All" || reqValue === trackerReqFilter || item.reqNumber === trackerReqFilter || item.formSnapshot?.reqNumber === trackerReqFilter;
       const searchMatch = !search || [item.candidate, item.position, item.site, item.status, item.nextAction, item.owner, item.reqNumber, item.candidateSource].join(" ").toLowerCase().includes(search);
@@ -966,6 +967,77 @@ export default function App() {
     downloadTextFile("welcomeflow-email-history.csv", toCsv(rows, ["type", "timestamp", "subject", "candidate", "facility", "trackerId", "body"]), "text/csv");
   }
 
+  function toggleTrackerSelection(id) {
+    setSelectedTrackerIds((prev) => prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]);
+  }
+
+  function clearTrackerSelection() {
+    setSelectedTrackerIds([]);
+  }
+
+  function bulkArchiveSelected() {
+    if (!selectedTrackerIds.length) return;
+    const selectedRows = tracker.filter((item) => selectedTrackerIds.includes(item.id));
+    const message = `Archive ${selectedRows.length} selected candidate${selectedRows.length === 1 ? "" : "s"}? Their current statuses will remain the same, but they will move out of the active workflow.`;
+    if (!window.confirm(message)) return;
+    setTracker((prev) => prev.map((row) => selectedTrackerIds.includes(row.id) ? {
+      ...row,
+      archived: true,
+      nextAction: row.nextAction || "No action needed",
+      audit: [...(row.audit || []), { id: makeId("audit"), timestamp: new Date().toISOString(), label: "Bulk archived", detail: "Moved out of active workflow through bulk archive" }],
+    } : row));
+    setSelectedTrackerIds([]);
+  }
+
+  function atsCleanupRows() {
+    const weeklyIds = new Set(tracker.filter((item) => isThisWeek(item.submissionDate)).map((item) => item.id));
+    const relatedHistory = history.filter((item) => weeklyIds.has(item.trackerId) || isThisWeek(String(item.timestamp || "").slice(0, 10)));
+    return tracker
+      .filter((item) => isThisWeek(item.submissionDate) || relatedHistory.some((event) => event.trackerId === item.id))
+      .map((item) => {
+        const itemHistory = history.filter((event) => event.trackerId === item.id);
+        const lastTouch = itemHistory[0]?.timestamp || item.audit?.[item.audit.length - 1]?.timestamp || item.submissionDate;
+        return {
+          candidate: item.candidate,
+          reqNumber: item.reqNumber || item.formSnapshot?.reqNumber || "",
+          position: item.position,
+          facility: item.site,
+          status: item.status,
+          nextAction: item.nextAction,
+          submitted: item.submissionDate,
+          agingDays: daysBetween(item.submissionDate),
+          lastTouch,
+          historyCount: itemHistory.length,
+        };
+      });
+  }
+
+  function exportAtsCleanupCsv() {
+    const rows = atsCleanupRows();
+    downloadTextFile("welcomeflow-ats-cleanup.csv", toCsv(rows, ["candidate", "reqNumber", "position", "facility", "status", "nextAction", "submitted", "agingDays", "lastTouch", "historyCount"]), "text/csv");
+  }
+
+  function downloadSelectedSubmittals() {
+    const rows = tracker.filter((item) => selectedTrackerIds.includes(item.id));
+    if (!rows.length) return;
+    const body = rows.map((item) => [
+      `Candidate: ${item.candidate}`,
+      `Req: ${item.reqNumber || item.formSnapshot?.reqNumber || "N/A"}`,
+      `Position: ${item.position}`,
+      `Facility: ${item.site}`,
+      `Status: ${item.status}`,
+      `Next Action: ${item.nextAction}`,
+      `Submitted: ${displayDate(item.submissionDate)}`,
+      "",
+      "ATS Short Update",
+      item.output?.atsShort || "No ATS update generated.",
+      "",
+      "Email / Follow-Up History",
+      ...(history.filter((event) => event.trackerId === item.id).map((event) => `- ${new Date(event.timestamp).toLocaleString()} | ${event.type} | ${event.subject}`) || ["- None"]),
+    ].join(NL)).join(`${NL}${NL}------------------------------${NL}${NL}`);
+    downloadTextFile(`welcomeflow-selected-submittals-${todayIso()}.txt`, body, "text/plain");
+  }
+
   function exportFullBackup() {
     const backup = {
       exportedAt: new Date().toISOString(),
@@ -998,11 +1070,23 @@ export default function App() {
       if (item.id !== id) return item;
       const derived = {};
       if (key === "status") {
+        if (value === "Hired" && item.status !== "Hired") {
+          const confirmed = window.confirm(`${item.candidate} will be marked as Hired and moved out of the active workflow. Continue?`);
+          if (!confirmed) return item;
+          derived.archived = true;
+          derived.nextAction = "No action needed";
+          derived.archiveOutcome = "Hired";
+          derived.archiveReason = item.archiveReason || "Candidate hired";
+        }
         if (value === "Interview Scheduled") derived.nextAction = "Send interview reminder";
         if (value === "Interview Completed") derived.nextAction = "Request feedback";
-        if (isClosedStatus(value)) {
+        if (value === "Archived") {
           derived.nextAction = "No action needed";
-          derived.archived = value === "Archived" ? true : item.archived;
+          derived.archived = true;
+        }
+        if (value === "Rejected") {
+          derived.nextAction = "No action needed";
+          derived.archived = true;
         }
       }
       const audit = [...(item.audit || []), { id: makeId("audit"), timestamp: new Date().toISOString(), label: `${labelFromKey(key)} updated`, detail: String(value || "Blank") }];
@@ -1125,10 +1209,13 @@ export default function App() {
   }
 
   function generateWeeklyReport() {
-    const weeklyRows = tracker.filter((item) => isThisWeek(item.submissionDate) && !isClosedStatus(item.status));
+    const weeklyRows = tracker.filter((item) => isThisWeek(item.submissionDate));
+    const activeRows = weeklyRows.filter((item) => !isClosedStatus(item.status) && !item.archived);
+    const hiredRows = weeklyRows.filter((item) => item.status === "Hired" || item.status === "Placed");
+    const archivedRows = weeklyRows.filter((item) => item.archived || item.status === "Archived" || item.status === "Rejected");
 
     const facilityGroups = {};
-    weeklyRows.forEach((item) => {
+    activeRows.forEach((item) => {
       const facility = item.site || item.formSnapshot?.siteName || "Unknown Facility";
       if (!facilityGroups[facility]) facilityGroups[facility] = [];
       facilityGroups[facility].push(item);
@@ -1152,12 +1239,17 @@ export default function App() {
       ].join(NL);
     });
 
+    const hiredSection = [
+      "Hired This Week",
+      ...(hiredRows.length ? hiredRows.map((item) => `${item.candidate || "Unnamed Candidate"} | ${item.reqNumber || item.formSnapshot?.reqNumber || "N/A"} | ${item.position || "N/A"} | ${item.site || "N/A"} | ${displayDate(item.submissionDate)}`) : ["- None"]),
+    ];
+
     const statusCounts = {};
     const reqCounts = {};
     const facilityCounts = {};
 
     weeklyRows.forEach((item) => {
-      const status = item.status || "Unknown";
+      const status = item.status === "Placed" ? "Hired" : (item.status || "Unknown");
       const req = item.reqNumber || item.formSnapshot?.reqNumber || "No Req";
       const position = item.position || item.formSnapshot?.position || "No Position";
       const facility = item.site || item.formSnapshot?.siteName || "Unknown Facility";
@@ -1172,7 +1264,7 @@ export default function App() {
       "Facility Breakdown",
       ...Object.entries(facilityCounts)
         .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-        .map(([facility, count]) => `- ${facility}: ${count} active candidate${count === 1 ? "" : "s"}`),
+        .map(([facility, count]) => `- ${facility}: ${count} candidate${count === 1 ? "" : "s"}`),
     ];
 
     const statusSection = [
@@ -1189,11 +1281,22 @@ export default function App() {
         .map(([req, count]) => `- ${req}: ${count}`),
     ];
 
+    const archivedSection = [
+      "Closed / Archived This Week",
+      `- Hired: ${hiredRows.length}`,
+      `- Archived / Rejected: ${archivedRows.length}`,
+    ];
+
     const finalReport = [
       "Weekly Active Candidate Report",
       `Generated: ${displayDate(todayIso())}`,
       "",
+      "Active Candidates by Facility",
       reportSections.length ? reportSections.join(`${NL}${NL}`) : "No active candidates submitted this week.",
+      "",
+      ...hiredSection,
+      "",
+      ...archivedSection,
       "",
       ...facilitySection,
       "",
@@ -1219,6 +1322,7 @@ export default function App() {
     ["tracker", "Tracker"],
     ["review", "Review Details"],
     ["actions", "Action Center"],
+    ["ats", "ATS Cleanup"],
     ["metrics", "Metrics"],
     ["settings", "Settings"],
   ];
@@ -1327,13 +1431,13 @@ export default function App() {
         ) : null}
 
         {activePage === "tracker" ? (
-          <Card title="Submission Tracker Control Tower" subtitle="Status, owner, next action, aging, risk, and quick actions stay in one clean table." action={<Button subtle onClick={exportTrackerCsv} disabled={!filteredTracker.length}>Export CSV</Button>}>
+          <Card title="Submission Tracker Control Tower" subtitle="Status, owner, next action, aging, risk, and quick actions stay in one clean table." action={<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button subtle onClick={exportTrackerCsv} disabled={!filteredTracker.length}>Export CSV</Button><Button subtle onClick={downloadSelectedSubmittals} disabled={!selectedTrackerIds.length}>Download Selected ATS Packet</Button><Button danger onClick={bulkArchiveSelected} disabled={!selectedTrackerIds.length}>Archive Selected</Button>{selectedTrackerIds.length ? <Button subtle onClick={clearTrackerSelection}>Clear Selection</Button> : null}</div>}>
             <div style={{ display: "grid", gap: 12, gridTemplateColumns: isNarrow ? "1fr" : "1fr 220px 260px", marginBottom: 14 }}>
               <TextInput value={trackerSearch} onChange={(event) => setTrackerSearch(event.target.value)} placeholder="Search candidate, req, source, position, site, status, action..." />
               <SelectInput value={trackerStatusFilter} onChange={(event) => setTrackerStatusFilter(event.target.value)} options={["Active", "All", ...STATUS_OPTIONS]} />
               <SelectInput value={trackerReqFilter} onChange={(event) => setTrackerReqFilter(event.target.value)} options={[{ value: "All", label: "All Requisitions" }, ...activeRequisitions.map((req) => ({ value: req.id, label: `${req.reqNumber || "No Req"} | ${req.positionTitle || "No Position"}` }))]} />
             </div>
-            {!filteredTracker.length ? <EmptyState>No submissions yet. Generate one from the Submission page.</EmptyState> : <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 10px", minWidth: 980 }}><thead><tr>{["Candidate", "Role / Site", "Status", "Owner", "Next Action", "Aging", "Risk", "Actions"].map((head) => <th key={head} style={{ textAlign: "left", color: THEME.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, padding: "0 10px" }}>{head}</th>)}</tr></thead><tbody>{filteredTracker.map((item) => <tr key={item.id} style={{ background: "#ffffff", boxShadow: "0 6px 18px rgba(16,24,40,0.04)" }}><td style={{ padding: 10, borderTopLeftRadius: 8, borderBottomLeftRadius: 8 }}><strong>{item.candidate}</strong><div style={{ marginTop: 4, color: THEME.muted }}>{item.candidateEmail || "No email"}</div></td><td style={{ padding: 10 }}><strong>{item.position}</strong><div style={{ marginTop: 4, color: THEME.muted }}>{item.site}</div></td><td style={{ padding: 10 }}><SelectInput value={item.status} onChange={(event) => updateTracker(item.id, "status", event.target.value)} options={STATUS_OPTIONS} /></td><td style={{ padding: 10 }}><SelectInput value={item.owner} onChange={(event) => updateTracker(item.id, "owner", event.target.value)} options={OWNER_OPTIONS} /></td><td style={{ padding: 10 }}><SelectInput value={item.nextAction} onChange={(event) => updateTracker(item.id, "nextAction", event.target.value)} options={NEXT_ACTION_OPTIONS} /></td><td style={{ padding: 10 }}>{daysBetween(item.submissionDate)} days</td><td style={{ padding: 10 }}><Badge tone={riskFor(item)}>{riskFor(item)}</Badge></td><td style={{ padding: 10, borderTopRightRadius: 8, borderBottomRightRadius: 8 }}><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}><Button subtle onClick={() => handleTrackerAction(item, "details")}>Details</Button><Button subtle onClick={() => handleTrackerAction(item, "copyAts")}>ATS</Button><Button subtle onClick={() => handleTrackerAction(item, "openCandidate")} disabled={!item.candidateEmail}>Candidate</Button><Button subtle onClick={() => handleTrackerAction(item, "openManager")}>Manager</Button><Button danger onClick={() => handleTrackerAction(item, "archive")}>Archive</Button></div></td></tr>)}</tbody></table></div>}
+            {!filteredTracker.length ? <EmptyState>No submissions yet. Generate one from the Submission page.</EmptyState> : <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 10px", minWidth: 980 }}><thead><tr>{["Select", "Candidate", "Role / Site", "Status", "Owner", "Next Action", "Aging", "Risk", "Actions"].map((head) => <th key={head} style={{ textAlign: "left", color: THEME.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, padding: "0 10px" }}>{head}</th>)}</tr></thead><tbody>{filteredTracker.map((item) => <tr key={item.id} style={{ background: "#ffffff", boxShadow: "0 6px 18px rgba(16,24,40,0.04)" }}><td style={{ padding: 10, borderTopLeftRadius: 8, borderBottomLeftRadius: 8 }}><input type="checkbox" checked={selectedTrackerIds.includes(item.id)} onChange={() => toggleTrackerSelection(item.id)} /></td><td style={{ padding: 10 }}><strong>{item.candidate}</strong><div style={{ marginTop: 4, color: THEME.muted }}>{item.candidateEmail || "No email"}</div></td><td style={{ padding: 10 }}><strong>{item.position}</strong><div style={{ marginTop: 4, color: THEME.muted }}>{item.site}</div></td><td style={{ padding: 10 }}><SelectInput value={item.status} onChange={(event) => updateTracker(item.id, "status", event.target.value)} options={STATUS_OPTIONS} /></td><td style={{ padding: 10 }}><SelectInput value={item.owner} onChange={(event) => updateTracker(item.id, "owner", event.target.value)} options={OWNER_OPTIONS} /></td><td style={{ padding: 10 }}><SelectInput value={item.nextAction} onChange={(event) => updateTracker(item.id, "nextAction", event.target.value)} options={NEXT_ACTION_OPTIONS} /></td><td style={{ padding: 10 }}>{daysBetween(item.submissionDate)} days</td><td style={{ padding: 10 }}><Badge tone={riskFor(item)}>{riskFor(item)}</Badge></td><td style={{ padding: 10, borderTopRightRadius: 8, borderBottomRightRadius: 8 }}><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}><Button subtle onClick={() => handleTrackerAction(item, "details")}>Details</Button><Button subtle onClick={() => handleTrackerAction(item, "copyAts")}>ATS</Button><Button subtle onClick={() => handleTrackerAction(item, "openCandidate")} disabled={!item.candidateEmail}>Candidate</Button><Button subtle onClick={() => handleTrackerAction(item, "openManager")}>Manager</Button><Button danger onClick={() => handleTrackerAction(item, "archive")}>Archive</Button></div></td></tr>)}</tbody></table></div>}
           </Card>
         ) : null}
 
@@ -1412,6 +1516,17 @@ export default function App() {
           </div>
         ) : null}
 
+        {activePage === "ats" ? (
+          <div style={{ display: "grid", gap: 18 }}>
+            <Card title="ATS Cleanup Center" subtitle="Weekly catch-up list for ATS updates, status cleanup, follow-ups, and submittal documentation." action={<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button subtle onClick={exportAtsCleanupCsv}>Download ATS Cleanup CSV</Button><Button subtle onClick={downloadSelectedSubmittals} disabled={!selectedTrackerIds.length}>Download Selected ATS Packet</Button></div>}>
+              {!atsCleanupRows().length ? <EmptyState>No ATS cleanup items for this week.</EmptyState> : <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 10px", minWidth: 980 }}><thead><tr>{["Candidate", "Req #", "Position", "Facility", "Status", "Next Action", "Submitted", "Aging", "Last Touch", "History"].map((head) => <th key={head} style={{ textAlign: "left", color: THEME.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, padding: "0 10px" }}>{head}</th>)}</tr></thead><tbody>{atsCleanupRows().map((item) => <tr key={`${item.candidate}-${item.reqNumber}-${item.submitted}`} style={{ background: "#ffffff", boxShadow: "0 6px 18px rgba(16,24,40,0.04)" }}><td style={{ padding: 10, borderTopLeftRadius: 8, borderBottomLeftRadius: 8 }}><strong>{item.candidate}</strong></td><td style={{ padding: 10 }}>{item.reqNumber || "N/A"}</td><td style={{ padding: 10 }}>{item.position}</td><td style={{ padding: 10 }}>{item.facility}</td><td style={{ padding: 10 }}><Badge>{item.status}</Badge></td><td style={{ padding: 10 }}>{item.nextAction}</td><td style={{ padding: 10 }}>{displayDate(item.submitted)}</td><td style={{ padding: 10 }}>{item.agingDays} days</td><td style={{ padding: 10 }}>{item.lastTouch ? new Date(item.lastTouch).toLocaleString() : "N/A"}</td><td style={{ padding: 10, borderTopRightRadius: 8, borderBottomRightRadius: 8 }}>{item.historyCount}</td></tr>)}</tbody></table></div>}
+            </Card>
+            <Card title="What this page is for" compact>
+              <p style={{ margin: 0, color: THEME.muted, lineHeight: 1.7 }}>Use this page when you get busy and need a clean weekly ATS catch-up list. It shows candidate statuses, next actions, submitted dates, aging, last activity timestamps, and how many generated emails or ATS updates are attached to each candidate.</p>
+            </Card>
+          </div>
+        ) : null}
+
         {activePage === "metrics" ? (
           <div style={{ display: "grid", gap: 18 }}>
             <Card title="Metrics + Reporting" subtitle="MVP weekly report with leadership-friendly counts and risk visibility." action={<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button subtle onClick={exportHistoryCsv} disabled={!history.length}>Export History CSV</Button><Button primary onClick={generateWeeklyReport}>Generate Weekly Report</Button></div>}>
@@ -1419,7 +1534,7 @@ export default function App() {
                 <MiniStat label="Submitted" value={metrics.total} />
                 <MiniStat label="Awaiting" value={metrics.awaiting} tone="Medium" />
                 <MiniStat label="Interview" value={metrics.interview} tone={metrics.interview ? "Interview" : "Low"} />
-                <MiniStat label="Placed" value={metrics.placed} tone="Low" />
+                <MiniStat label="Hired" value={metrics.placed} tone="Low" />
                 <MiniStat label="Rejected" value={metrics.rejected} tone={metrics.rejected ? "High" : "Low"} />
                 <MiniStat label="High Risk" value={metrics.highRisk} tone={metrics.highRisk ? "High" : "Low"} />
               </div>
@@ -1480,7 +1595,7 @@ function SettingsPanel({ activeSettingsTab, settings, setSettings, updateSetting
   }
 
   function addRequisition() {
-    setSettings((prev) => ({ ...prev, requisitions: [...(prev.requisitions || []), { id: makeId("req"), reqNumber: "", positionTitle: "", siteName: "", employmentType: "FT", shiftPreference: "", fte: "", status: "Active", notes: "" }] }));
+    setSettings((prev) => ({ ...prev, requisitions: [...(prev.requisitions || []), { id: makeId("req"), reqNumber: "", positionTitle: "", siteName: "", employmentType: "FT", shiftPreference: "", fte: "", status: "Active", requiredInfo: "", credentialRequirements: "", payNotes: "", notes: "" }] }));
   }
 
   function addRole() {
@@ -1519,6 +1634,24 @@ function SettingsPanel({ activeSettingsTab, settings, setSettings, updateSetting
     if (rows.length) setSettings((prev) => ({ ...prev, sites: [...prev.sites, ...rows] }));
   }
 
+  function importRequisitionsCsv(text) {
+    const rows = parseCsv(text).map((row) => ({
+      id: makeId("req"),
+      reqNumber: row.reqNumber || row["Req Number"] || row.requisition || row.Requisition || "",
+      positionTitle: row.positionTitle || row.position || row["Position Title"] || row.Position || "",
+      siteName: row.siteName || row.site || row.facility || row["Site Name"] || row.Facility || "",
+      employmentType: row.employmentType || row["Employment Type"] || "FT",
+      shiftPreference: row.shiftPreference || row.shift || row.Shift || "",
+      fte: row.fte || row.FTE || "",
+      status: row.status || row.Status || "Active",
+      requiredInfo: row.requiredInfo || row.requirements || row.Requirements || "",
+      credentialRequirements: row.credentialRequirements || row.credentials || row.Credentials || "",
+      payNotes: row.payNotes || row.pay || row.Pay || "",
+      notes: row.notes || row.Notes || "",
+    })).filter((row) => row.reqNumber || row.positionTitle || row.siteName);
+    if (rows.length) setSettings((prev) => ({ ...prev, requisitions: [...(prev.requisitions || []), ...rows] }));
+  }
+
   function importRolesCsv(text) {
     const rows = parseCsv(text).map((row) => ({ id: makeId("role"), positionTitle: row.positionTitle || row["Position Title"] || "", roleCategory: row.roleCategory || row["Role Category"] || "Other", requiresLicense: String(row.requiresLicense || "").toLowerCase() === "true", requiresCpr: String(row.requiresCpr || "").toLowerCase() === "true", requiresFte: String(row.requiresFte ?? "true").toLowerCase() !== "false", requiresShift: String(row.requiresShift ?? "true").toLowerCase() !== "false", requiresWorkExpectations: String(row.requiresWorkExpectations ?? "true").toLowerCase() !== "false", status: row.status || "Active" })).filter((row) => row.positionTitle);
     if (rows.length) setSettings((prev) => ({ ...prev, roles: [...prev.roles, ...rows] }));
@@ -1539,7 +1672,97 @@ function SettingsPanel({ activeSettingsTab, settings, setSettings, updateSetting
 
   if (activeSettingsTab === "requisitions") {
     const statusOptions = settings.options.requisitionStatusOptions || REQUISITION_STATUS_OPTIONS;
-    return <div style={{ display: "grid", gap: 16 }}><Card title="Requisition Status Options"><TagListEditor label="Req Statuses" values={statusOptions} onChange={(value) => updateSettings(["options", "requisitionStatusOptions"], value)} /></Card><Card title="Requisitions" subtitle="Only Active requisitions appear in Candidate Intake. Recruiters can still manually type a req number when needed." action={<Button primary onClick={addRequisition}>Add Requisition</Button>}><div style={{ display: "grid", gap: 14 }}>{(settings.requisitions || []).map((req) => <div key={req.id} style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 14, background: "#ffffff" }}><div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 12, alignItems: "center" }}><strong>Requisition Record</strong><Button danger onClick={() => removeRecord("requisitions", req.id)}>Delete</Button></div><div style={fieldGrid}><Field label="Req Number"><TextInput value={req.reqNumber} onChange={(event) => updateArrayRecord("requisitions", req.id, "reqNumber", event.target.value)} /></Field><Field label="Position"><SelectInput value={req.positionTitle} onChange={(event) => updateArrayRecord("requisitions", req.id, "positionTitle", event.target.value)} options={activeRoles.map((role) => role.positionTitle).filter(Boolean)} /></Field><Field label="Site / Facility"><SelectInput value={req.siteName} onChange={(event) => updateArrayRecord("requisitions", req.id, "siteName", event.target.value)} options={activeSites.map((site) => site.siteName).filter(Boolean)} /></Field><Field label="Employment Type"><SelectInput value={req.employmentType} onChange={(event) => updateArrayRecord("requisitions", req.id, "employmentType", event.target.value)} options={settings.options.employmentTypes} /></Field><Field label="Shift"><SelectInput value={req.shiftPreference} onChange={(event) => updateArrayRecord("requisitions", req.id, "shiftPreference", event.target.value)} options={settings.options.shiftOptions} /></Field><Field label="FTE"><SelectInput value={req.fte} onChange={(event) => updateArrayRecord("requisitions", req.id, "fte", event.target.value)} options={FTE_OPTIONS} /></Field><Field label="Status"><SelectInput value={req.status} onChange={(event) => updateArrayRecord("requisitions", req.id, "status", event.target.value)} options={statusOptions} /></Field><div style={{ gridColumn: "1 / -1" }}><Field label="Notes"><TextArea value={req.notes} onChange={(event) => updateArrayRecord("requisitions", req.id, "notes", event.target.value)} minHeight={70} /></Field></div></div></div>)}</div></Card></div>;
+
+    return (
+      <div style={{ display: "grid", gap: 16 }}>
+        <Card title="Requisition Status Options">
+          <TagListEditor
+            label="Req Statuses"
+            values={statusOptions}
+            onChange={(value) => updateSettings(["options", "requisitionStatusOptions"], value)}
+          />
+        </Card>
+
+        <Card
+          title="Requisitions"
+          subtitle="Only Active requisitions appear in Candidate Intake. Recruiters can still manually type a req number when needed."
+          action={
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <FileButton accept=".csv,text/csv" onText={importRequisitionsCsv}>Import Requisitions CSV</FileButton>
+              <Button primary onClick={addRequisition}>Add Requisition</Button>
+            </div>
+          }
+        >
+          <div style={{ display: "grid", gap: 14 }}>
+            {(settings.requisitions || []).map((req) => (
+              <div
+                key={req.id}
+                style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 14, background: "#ffffff" }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 12, alignItems: "center" }}>
+                  <strong>Requisition Record</strong>
+                  <Button danger onClick={() => removeRecord("requisitions", req.id)}>Delete</Button>
+                </div>
+
+                <div style={fieldGrid}>
+                  <Field label="Req Number">
+                    <TextInput value={req.reqNumber} onChange={(event) => updateArrayRecord("requisitions", req.id, "reqNumber", event.target.value)} />
+                  </Field>
+
+                  <Field label="Position">
+                    <SelectInput value={req.positionTitle} onChange={(event) => updateArrayRecord("requisitions", req.id, "positionTitle", event.target.value)} options={activeRoles.map((role) => role.positionTitle).filter(Boolean)} />
+                  </Field>
+
+                  <Field label="Site / Facility">
+                    <SelectInput value={req.siteName} onChange={(event) => updateArrayRecord("requisitions", req.id, "siteName", event.target.value)} options={activeSites.map((site) => site.siteName).filter(Boolean)} />
+                  </Field>
+
+                  <Field label="Employment Type">
+                    <SelectInput value={req.employmentType} onChange={(event) => updateArrayRecord("requisitions", req.id, "employmentType", event.target.value)} options={settings.options.employmentTypes} />
+                  </Field>
+
+                  <Field label="Shift">
+                    <SelectInput value={req.shiftPreference} onChange={(event) => updateArrayRecord("requisitions", req.id, "shiftPreference", event.target.value)} options={settings.options.shiftOptions} />
+                  </Field>
+
+                  <Field label="FTE">
+                    <SelectInput value={req.fte} onChange={(event) => updateArrayRecord("requisitions", req.id, "fte", event.target.value)} options={FTE_OPTIONS} />
+                  </Field>
+
+                  <Field label="Status">
+                    <SelectInput value={req.status} onChange={(event) => updateArrayRecord("requisitions", req.id, "status", event.target.value)} options={statusOptions} />
+                  </Field>
+
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <Field label="Required Info">
+                      <TextArea value={req.requiredInfo} onChange={(event) => updateArrayRecord("requisitions", req.id, "requiredInfo", event.target.value)} minHeight={70} />
+                    </Field>
+                  </div>
+
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <Field label="Credential Requirements">
+                      <TextArea value={req.credentialRequirements} onChange={(event) => updateArrayRecord("requisitions", req.id, "credentialRequirements", event.target.value)} minHeight={70} />
+                    </Field>
+                  </div>
+
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <Field label="Pay Notes">
+                      <TextArea value={req.payNotes} onChange={(event) => updateArrayRecord("requisitions", req.id, "payNotes", event.target.value)} minHeight={70} />
+                    </Field>
+                  </div>
+
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <Field label="Notes">
+                      <TextArea value={req.notes} onChange={(event) => updateArrayRecord("requisitions", req.id, "notes", event.target.value)} minHeight={70} />
+                    </Field>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+    );
   }
 
   if (activeSettingsTab === "roles") {
