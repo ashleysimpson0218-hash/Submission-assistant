@@ -2,6 +2,8 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
 import MaintenancePage, { isMaintenanceModeEnabled } from './MaintenancePage';
+import { ConfigurationErrorPage, TestModeFrame } from './RuntimeGate';
+import { readRuntimeConfig } from './runtimeConfig';
 import reportWebVitals from './reportWebVitals';
 
 class WelcomeFlowErrorBoundary extends React.Component {
@@ -41,6 +43,7 @@ class WelcomeFlowErrorBoundary extends React.Component {
 }
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
+const runtimeConfig = readRuntimeConfig();
 
 if (isMaintenanceModeEnabled()) {
   root.render(
@@ -48,13 +51,22 @@ if (isMaintenanceModeEnabled()) {
       <MaintenancePage />
     </React.StrictMode>
   );
+} else if (!runtimeConfig.ok) {
+  root.render(
+    <React.StrictMode>
+      <ConfigurationErrorPage message={runtimeConfig.error} />
+    </React.StrictMode>
+  );
 } else {
   import('./App').then(({ default: App }) => {
+    const application = (
+      <WelcomeFlowErrorBoundary>
+        <App />
+      </WelcomeFlowErrorBoundary>
+    );
     root.render(
       <React.StrictMode>
-        <WelcomeFlowErrorBoundary>
-          <App />
-        </WelcomeFlowErrorBoundary>
+        {runtimeConfig.isTest ? <TestModeFrame>{application}</TestModeFrame> : application}
       </React.StrictMode>
     );
   }).catch((error) => {

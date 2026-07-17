@@ -20,6 +20,8 @@ import {
   communicationReadinessIssuesToCsv,
   filterCommunicationReadinessReport,
 } from "./communicationReadiness";
+import { isFeatureFlagEnabled } from "./featureFlags";
+import { readRuntimeConfig } from "./runtimeConfig";
 
 const NL = String.fromCharCode(10);
 
@@ -36,9 +38,8 @@ const HOT_LEAD_WORKING_REQ_KEY = "welcomeflow-hot-lead-working-req-v1";
 const REPORT_HISTORY_KEY = "welcomeflow-report-history-v1";
 const CLOUD_WORKSPACE_ID = "default";
 const CLOUD_TABLE = "welcomeflow_workspace_state";
-const SUPABASE_URL = process.env.REACT_APP_SUPABASE_URL || "https://qfpgednixvveelgwfylv.supabase.co";
-const SUPABASE_ANON_KEY = process.env.REACT_APP_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFmcGdlZG5peHZ2ZWVsZ3dmeWx2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5OTEwMTIsImV4cCI6MjA5MzU2NzAxMn0._0wIvtDehVmSKB0EreTEsVtoY8FZHmevOsmpHxs3Sew";
-const supabase = SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+const runtimeConfig = readRuntimeConfig();
+const supabase = runtimeConfig.ok ? createClient(runtimeConfig.supabaseUrl, runtimeConfig.supabaseAnonKey) : null;
 
 const BRAND = {
   appName: "WelcomeFlow",
@@ -1306,10 +1307,6 @@ function templateConditionalBlocks(record = {}) {
     ...DEFAULT_TEMPLATE_CONDITIONAL_BLOCKS,
     ...(record.conditionalBlocks || {}),
   };
-}
-
-function isFeatureFlagEnabled(key = "", settings = {}) {
-  return Boolean(settings.featureFlags?.[key] ?? settings.flags?.[key] ?? false);
 }
 
 function tokenMap(form = {}, settings = {}, extra = {}) {
@@ -14264,6 +14261,7 @@ function rowifyCandidate(item = {}) {
                   {nav.map(([key, label, icon]) => <option key={key} value={key}>{icon} {label}</option>)}
                 </select>
               ) : null}
+              {runtimeConfig.isTest ? <span aria-label="Test mode indicator" style={{ display: "inline-flex", alignItems: "center", minHeight: 40, border: "1px solid #d97706", borderRadius: 6, padding: "0 10px", background: "#fef3c7", color: "#92400e", fontSize: 11, fontWeight: 950 }}>TEST</span> : null}
               <select value={themeMode} onChange={(event) => setThemeMode(event.target.value)} style={controlStyle}>
                 <option value="light">Light Mode</option>
                 <option value="dark">Dark Mode</option>
@@ -19791,7 +19789,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
   const [rateDrawerStep, setRateDrawerStep] = useState(1);
   const [rateConfigOpen, setRateConfigOpen] = useState(false);
   const [rateImportSuggestion, setRateImportSuggestion] = useState(null);
-  const communicationReadinessAuditEnabled = isFeatureFlagEnabled("communicationReadinessAudit");
+  const communicationReadinessAuditEnabled = isFeatureFlagEnabled(settings, "communicationReadinessAudit");
   const [readinessFilter, setReadinessFilter] = useState("All");
   const [readinessSearch, setReadinessSearch] = useState("");
   const [readinessIncludeArchived, setReadinessIncludeArchived] = useState(false);
