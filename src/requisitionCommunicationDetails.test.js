@@ -5,8 +5,11 @@ import {
   communicationDetailChanges,
   communicationDetailsFromRequisition,
   communicationSummary,
+  duplicateRequisitionDraft,
   normalizeBenefitsEligible,
   normalizeWeeklyHours,
+  requisitionDraftChanges,
+  updateExistingRequisition,
   updateExistingRequisitionCommunicationDetails,
 } from "./requisitionCommunicationDetails";
 
@@ -136,5 +139,62 @@ describe("requisition Communication Details", () => {
     { environment: "test", projectRef: "another-project" },
   ])("rejects environment=$environment project=$projectRef", ({ environment, projectRef }) => {
     expect(assertTestRuntime({ environment, projectRef }).ok).toBe(false);
+  });
+
+  test.each([
+    ["benefitsEligible", true],
+    ["notes", "TEST ONLY mixed save"],
+    ["status", "Paused"],
+    ["numberOfOpenings", "2"],
+  ])("a single $field change saves through the unified updater", (field, value) => {
+    const result = updateExistingRequisition([baseReq], "req-1", { ...baseReq, [field]: value }, [field]);
+    expect(result.requisition[field]).toBe(value);
+    expect(result.requisition.id).toBe("req-1");
+    expect(result.requisitions).toHaveLength(1);
+  });
+
+  test("communication and normal fields save together", () => {
+    const draft = { ...baseReq, benefitsEligible: false, notes: "TEST ONLY verified", weeklyHours: "36", priorityLevel: "High" };
+    const result = updateExistingRequisition([baseReq], "req-1", draft, ["benefitsEligible", "notes", "weeklyHours", "priorityLevel"]);
+    expect(result.requisition).toMatchObject({ benefitsEligible: false, notes: "TEST ONLY verified", weeklyHours: 36, priorityLevel: "High" });
+  });
+
+  test("Review Changes includes normal and communication fields", () => {
+    const draft = { ...baseReq, benefitsEligible: true, weeklyHours: 36, notes: "Updated", status: "Paused" };
+    expect(requisitionDraftChanges(baseReq, draft, ["benefitsEligible", "weeklyHours", "notes", "status"]).map(({ field }) => field)).toEqual(["benefitsEligible", "weeklyHours", "notes", "status"]);
+  });
+
+  test("normal-only save works with no Communication Details change", () => {
+    const result = updateExistingRequisition([baseReq], "req-1", { ...baseReq, notes: "Normal-only update" }, ["notes"]);
+    expect(result.requisition.notes).toBe("Normal-only update");
+    expect(result.changes).toHaveLength(1);
+  });
+
+  test("unrelated, nested, screening, and unknown properties survive a unified save", () => {
+    const result = updateExistingRequisition([baseReq], "req-1", { ...baseReq, priorityLevel: "High" }, ["priorityLevel"]);
+    expect(result.requisition.screeningQuestions).toEqual(baseReq.screeningQuestions);
+    expect(result.requisition.custom).toEqual(baseReq.custom);
+    expect(result.requisition.rateInformation).toEqual(baseReq.rateInformation);
+    expect(result.requisition.reqNumber).toBe(baseReq.reqNumber);
+    expect(result.requisition.uniqueIdNumber).toBe(baseReq.uniqueIdNumber);
+  });
+
+  test("only the selected requisition is updated and no candidate/output side effect occurs", () => {
+    const other = { ...baseReq, id: "req-2", reqNumber: "REQ-200" };
+    const workspace = { requisitions: [baseReq, other], candidates: [], tracker: [{ id: "candidate-1", status: "Screening" }], outputs: [] };
+    const result = updateExistingRequisition(workspace.requisitions, "req-1", { ...baseReq, notes: "Updated" }, ["notes"]);
+    expect(result.requisitions).toHaveLength(2);
+    expect(result.requisitions[1]).toEqual(other);
+    expect(workspace.candidates).toEqual([]);
+    expect(workspace.tracker[0].status).toBe("Screening");
+    expect(workspace.outputs).toEqual([]);
+  });
+
+  test("Duplicate creates a new draft without overwriting the source requisition", () => {
+    const source = { ...baseReq };
+    const duplicate = duplicateRequisitionDraft(source, { id: "req-copy", openDate: "2026-07-17" });
+    expect(source).toEqual(baseReq);
+    expect(duplicate).toMatchObject({ id: "req-copy", reqNumber: "", uniqueIdNumber: "", status: "Active", openDate: "2026-07-17" });
+    expect(duplicate.custom).toEqual(baseReq.custom);
   });
 });

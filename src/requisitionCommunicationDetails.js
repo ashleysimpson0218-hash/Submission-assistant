@@ -22,6 +22,22 @@ export const COMMUNICATION_DETAIL_LABELS = {
   contractDuration: "Contract Duration",
 };
 
+export const REQUISITION_FIELD_LABELS = {
+  reqNumber: "Req Number",
+  uniqueIdNumber: "Unique ID",
+  siteName: "Facility",
+  positionTitle: "Position Title",
+  internalJobLink: "Internal Job Link",
+  externalJobLink: "External Job Link",
+  numberOfOpenings: "Number of Openings",
+  priorityLevel: "Priority",
+  targetStartDate: "Target Start Date",
+  status: "Status",
+  notes: "Notes",
+  screeningQuestions: "Screening Questions",
+  ...COMMUNICATION_DETAIL_LABELS,
+};
+
 export function assertTestRuntime(runtime = {}) {
   const environment = String(runtime.environment || "").trim().toLowerCase();
   const projectRef = String(runtime.projectRef || "").trim().toLowerCase();
@@ -62,6 +78,28 @@ export function communicationDetailsFromRequisition(req = {}) {
 
 function comparable(value) {
   return value === undefined || value === "" ? null : value;
+}
+
+function normalizedDraftValue(field, value) {
+  if (field === "benefitsEligible") return normalizeBenefitsEligible(value);
+  if (field === "weeklyHours") return normalizeWeeklyHours(value);
+  if (field === "contractDuration") return normalizeOptionalText(value);
+  return value;
+}
+
+function valuesEqual(left, right) {
+  if ((left && typeof left === "object") || (right && typeof right === "object")) return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+  return comparable(left) === comparable(right);
+}
+
+export function requisitionDraftChanges(original = {}, draft = {}, changedFields = []) {
+  return Array.from(new Set(changedFields)).flatMap((field) => {
+    if (field === "id" || field === "audit" || field === "createdAt" || field === "updatedAt") return [];
+    const previousValue = original[field];
+    const newValue = normalizedDraftValue(field, draft[field]);
+    if (valuesEqual(previousValue, newValue)) return [];
+    return [{ field, label: REQUISITION_FIELD_LABELS[field] || field.replace(/([a-z])([A-Z])/g, "$1 $2"), previousValue, newValue }];
+  });
 }
 
 export function communicationDetailChanges(original = {}, draft = {}) {
@@ -125,4 +163,47 @@ export function updateExistingRequisitionCommunicationDetails(requisitions = [],
   const next = requisitions.slice();
   next[index] = updated;
   return { requisitions: next, requisition: updated, changes, auditEntry };
+}
+
+export function updateExistingRequisition(requisitions = [], selectedId, draft = {}, changedFields = [], { now = () => new Date().toISOString() } = {}) {
+  const matches = requisitions.map((req, index) => ({ req, index })).filter(({ req }) => req?.id === selectedId);
+  if (!selectedId || matches.length !== 1) throw new Error(SAFE_REQUISITION_ERROR);
+  const { req: original, index } = matches[0];
+  const changes = requisitionDraftChanges(original, draft, changedFields);
+  if (!changes.length) return { requisitions, requisition: original, changes: [], auditEntry: null };
+  const timestamp = now();
+  const patch = Object.fromEntries(changes.map(({ field, newValue }) => [field, newValue]));
+  const auditEntry = {
+    id: `req-update-${timestamp}`,
+    timestamp,
+    label: "Requisition updated",
+    source: changes.some(({ field }) => COMMUNICATION_DETAIL_FIELDS.includes(field)) ? "Communication Details" : "Requisition Editor",
+    environment: "test",
+    requisitionId: original.id,
+    reqNumber: original.reqNumber || "",
+    uniqueIdNumber: original.uniqueIdNumber || "",
+    facility: original.siteName || "",
+    changedFields: changes.map(({ field }) => field),
+    previousValues: Object.fromEntries(changes.map(({ field, previousValue }) => [field, previousValue])),
+    newValues: Object.fromEntries(changes.map(({ field, newValue }) => [field, newValue])),
+  };
+  const updated = { ...original, ...patch, id: original.id, updatedAt: timestamp, audit: [...(Array.isArray(original.audit) ? original.audit : []), auditEntry] };
+  const next = requisitions.slice();
+  next[index] = updated;
+  return { requisitions: next, requisition: updated, changes, auditEntry };
+}
+
+export function duplicateRequisitionDraft(source = {}, { id, openDate } = {}) {
+  const sourceLabel = source.reqNumber || source.positionTitle || "current requisition";
+  return {
+    ...source,
+    id,
+    reqNumber: "",
+    uniqueIdNumber: "",
+    status: "Active",
+    openDate,
+    createdAt: "",
+    updatedAt: "",
+    notes: `${source.notes || ""}${source.notes ? "\n" : ""}Duplicated from ${sourceLabel}. Add the new req number before saving.`,
+  };
 }

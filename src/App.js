@@ -25,10 +25,11 @@ import { readRuntimeConfig } from "./runtimeConfig";
 import {
   SAFE_REQUISITION_ERROR,
   assertTestRuntime,
-  communicationDetailChanges,
   communicationSummary,
   displayCommunicationValue,
-  updateExistingRequisitionCommunicationDetails,
+  duplicateRequisitionDraft,
+  requisitionDraftChanges,
+  updateExistingRequisition,
 } from "./requisitionCommunicationDetails";
 
 const NL = String.fromCharCode(10);
@@ -19786,6 +19787,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
   const [draftReq, setDraftReq] = useState(null);
   const [communicationReview, setCommunicationReview] = useState(null);
   const [communicationSaveError, setCommunicationSaveError] = useState("");
+  const [requisitionDirtyFields, setRequisitionDirtyFields] = useState([]);
   const [facilityDrawerOpen, setFacilityDrawerOpen] = useState(false);
   const [facilityDrawerMode, setFacilityDrawerMode] = useState("add");
   const [draftSite, setDraftSite] = useState(null);
@@ -20241,11 +20243,23 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
     setDrawerMode(mode);
     setCommunicationReview(null);
     setCommunicationSaveError("");
+    setRequisitionDirtyFields([]);
     setDrawerOpen(true);
+  }
+
+  function duplicateDraftReqFromDrawer() {
+    if (!draftReq) return;
+    setDraftReq(emptyReq(duplicateRequisitionDraft(draftReq, { id: makeId("req"), openDate: todayIso() })));
+    setDrawerMode("add");
+    setRequisitionDirtyFields([]);
+    setCommunicationReview(null);
+    setDrawerOpen(true);
+    window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "Duplicate loaded into the requisition drawer. Add the new req number, then save." }));
   }
 
   function updateDraftReq(key, value) {
     setDraftReq((prev) => ({ ...(prev || emptyReq()), [key]: value }));
+    setRequisitionDirtyFields((prev) => Array.from(new Set([...prev, key])));
     setCommunicationReview(null);
     setCommunicationSaveError("");
   }
@@ -20263,18 +20277,26 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
       return;
     }
     setCommunicationSaveError("");
-    setCommunicationReview(communicationDetailChanges(existing, draftReq));
+    setCommunicationReview(requisitionDraftChanges(existing, draftReq, requisitionDirtyFields));
   }
 
-  function saveCommunicationChanges() {
+  function saveCommunicationChanges(addAnother = false) {
     if (!draftReq || drawerMode !== "edit") return;
     if (!testRuntime.ok) {
       setCommunicationSaveError(testRuntime.error || "Test environment safety check failed.");
       return;
     }
     try {
-      const result = updateExistingRequisitionCommunicationDetails(safeObjectRecords(settings.requisitions), draftReq.id, draftReq);
+      const result = updateExistingRequisition(safeObjectRecords(settings.requisitions), draftReq.id, draftReq, requisitionDirtyFields);
       setSettings((prev) => ({ ...prev, requisitions: result.requisitions }));
+      if (addAnother) {
+        setDraftReq(emptyReq({ siteName: result.requisition.siteName }));
+        setDrawerMode("add");
+        setCommunicationReview(null);
+        setCommunicationSaveError("");
+        setRequisitionDirtyFields([]);
+        return;
+      }
     } catch (error) {
       setCommunicationSaveError(error?.message || SAFE_REQUISITION_ERROR);
       return;
@@ -20284,6 +20306,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
     setDraftReq(null);
     setCommunicationReview(null);
     setCommunicationSaveError("");
+    setRequisitionDirtyFields([]);
   }
 
 
@@ -21365,9 +21388,11 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
               ) : null}
               <Field label="Notes"><TextArea value={draftReq.notes} onChange={(event) => updateDraftReq("notes", event.target.value)} minHeight={90} /></Field>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                <Button subtle onClick={() => { setDrawerOpen(false); setCommunicationReview(null); setCommunicationSaveError(""); }}>Cancel</Button>
-                {drawerMode === "edit" ? <Button subtle onClick={reviewCommunicationChanges}>Review Changes</Button> : <Button subtle onClick={() => saveDraftReq(true)}>Save + Add Another</Button>}
-                {drawerMode === "edit" ? <Button primary disabled={!communicationReview?.length} onClick={saveCommunicationChanges}>Save Changes</Button> : <Button primary onClick={() => saveDraftReq(false)}>Save Requisition</Button>}
+                {drawerMode === "edit" ? <Button subtle onClick={duplicateDraftReqFromDrawer}>Duplicate</Button> : null}
+                <Button subtle onClick={() => { setDrawerOpen(false); setCommunicationReview(null); setCommunicationSaveError(""); setRequisitionDirtyFields([]); }}>Cancel</Button>
+                {drawerMode === "edit" ? <Button subtle onClick={reviewCommunicationChanges}>Review Changes</Button> : null}
+                {drawerMode === "edit" ? <Button subtle disabled={!communicationReview?.length} onClick={() => saveCommunicationChanges(true)}>Save + Add Another</Button> : <Button subtle onClick={() => saveDraftReq(true)}>Save + Add Another</Button>}
+                {drawerMode === "edit" ? <Button primary disabled={!communicationReview?.length} onClick={() => saveCommunicationChanges(false)}>Save Requisition</Button> : <Button primary onClick={() => saveDraftReq(false)}>Save Requisition</Button>}
               </div>
             </div>
           </div>
