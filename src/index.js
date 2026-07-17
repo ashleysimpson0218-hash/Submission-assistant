@@ -1,7 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
-import App from './App';
+import MaintenancePage, { isMaintenanceModeEnabled } from './MaintenancePage';
 import reportWebVitals from './reportWebVitals';
 
 class WelcomeFlowErrorBoundary extends React.Component {
@@ -41,13 +41,30 @@ class WelcomeFlowErrorBoundary extends React.Component {
 }
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(
-  <React.StrictMode>
-    <WelcomeFlowErrorBoundary>
-      <App />
-    </WelcomeFlowErrorBoundary>
-  </React.StrictMode>
-);
+
+if (isMaintenanceModeEnabled()) {
+  root.render(
+    <React.StrictMode>
+      <MaintenancePage />
+    </React.StrictMode>
+  );
+} else {
+  import('./App').then(({ default: App }) => {
+    root.render(
+      <React.StrictMode>
+        <WelcomeFlowErrorBoundary>
+          <App />
+        </WelcomeFlowErrorBoundary>
+      </React.StrictMode>
+    );
+  }).catch((error) => {
+    root.render(
+      <WelcomeFlowErrorBoundary>
+        <div>{String(error?.message || error)}</div>
+      </WelcomeFlowErrorBoundary>
+    );
+  });
+}
 
 // If you want to start measuring performance in your app, pass a function
 // to log results (for example: reportWebVitals(console.log))

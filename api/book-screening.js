@@ -1,5 +1,3 @@
-const { createClient } = require("@supabase/supabase-js");
-
 const CLOUD_WORKSPACE_ID = "default";
 const CLOUD_TABLE = "welcomeflow_workspace_state";
 
@@ -41,6 +39,7 @@ function publicLead(lead = {}, data = {}) {
 }
 
 function supabaseClient() {
+  const { createClient } = require("@supabase/supabase-js");
   const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) return null;
@@ -65,6 +64,11 @@ async function saveWorkspace(client, data) {
 }
 
 module.exports = async function handler(req, res) {
+  if (process.env.WELCOMEFLOW_MAINTENANCE_MODE === "true") {
+    json(res, 503, { error: "WelcomeFlow is temporarily unavailable." });
+    return;
+  }
+
   const client = supabaseClient();
   if (!client) {
     json(res, 500, { error: "Cloud booking is not configured." });

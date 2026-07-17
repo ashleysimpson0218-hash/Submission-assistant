@@ -16,6 +16,11 @@ function cleanText(value, limit = 500) {
 }
 
 module.exports = async function handler(req, res) {
+  if (process.env.WELCOMEFLOW_MAINTENANCE_MODE === "true") {
+    json(res, 503, { error: "WelcomeFlow is temporarily unavailable." });
+    return;
+  }
+
   if (req.method === "OPTIONS") {
     res.statusCode = 204;
     res.end();

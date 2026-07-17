@@ -1,3 +1,10 @@
+if (process.env.WELCOMEFLOW_MAINTENANCE_MODE === "true") {
+  module.exports = async function maintenanceHandler(req, res) {
+    res.statusCode = 503;
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({ error: "WelcomeFlow is temporarily unavailable." }));
+  };
+} else {
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
 if (typeof global.DOMMatrix === "undefined") {
   global.DOMMatrix = class DOMMatrix {
@@ -466,5 +473,6 @@ module.exports = async function handler(req, res) {
     return json(res, 500, { ok: false, error: error.message || "Resume parser failed", provider: process.env.RESUME_PARSER_PROVIDER || "adapter" });
   }
 };
+}
 
 
