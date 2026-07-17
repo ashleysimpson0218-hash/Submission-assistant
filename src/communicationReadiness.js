@@ -127,6 +127,7 @@ function sourceIssue({
   source,
 }) {
   return {
+    requisitionId: req?.id || "",
     facility: facility || req?.siteName || "No facility",
     reqNumber: req?.reqNumber || "",
     uniqueId: req?.uniqueIdNumber || "",

@@ -22,6 +22,14 @@ import {
 } from "./communicationReadiness";
 import { isFeatureFlagEnabled } from "./featureFlags";
 import { readRuntimeConfig } from "./runtimeConfig";
+import {
+  SAFE_REQUISITION_ERROR,
+  assertTestRuntime,
+  communicationDetailChanges,
+  communicationSummary,
+  displayCommunicationValue,
+  updateExistingRequisitionCommunicationDetails,
+} from "./requisitionCommunicationDetails";
 
 const NL = String.fromCharCode(10);
 
@@ -39,7 +47,9 @@ const REPORT_HISTORY_KEY = "welcomeflow-report-history-v1";
 const CLOUD_WORKSPACE_ID = "default";
 const CLOUD_TABLE = "welcomeflow_workspace_state";
 const runtimeConfig = readRuntimeConfig();
-const supabase = runtimeConfig.ok ? createClient(runtimeConfig.supabaseUrl, runtimeConfig.supabaseAnonKey) : null;
+const testRuntime = assertTestRuntime(runtimeConfig);
+if (runtimeConfig.ok) console.info("WelcomeFlow runtime", { environment: runtimeConfig.environment, projectRef: runtimeConfig.projectRef });
+const supabase = runtimeConfig.ok && testRuntime.ok ? createClient(runtimeConfig.supabaseUrl, runtimeConfig.supabaseAnonKey) : null;
 
 const BRAND = {
   appName: "WelcomeFlow",
@@ -19774,6 +19784,8 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerMode, setDrawerMode] = useState("add");
   const [draftReq, setDraftReq] = useState(null);
+  const [communicationReview, setCommunicationReview] = useState(null);
+  const [communicationSaveError, setCommunicationSaveError] = useState("");
   const [facilityDrawerOpen, setFacilityDrawerOpen] = useState(false);
   const [facilityDrawerMode, setFacilityDrawerMode] = useState("add");
   const [draftSite, setDraftSite] = useState(null);
@@ -19814,6 +19826,24 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
     if (!communicationReadinessReport) return null;
     return filterCommunicationReadinessReport(communicationReadinessReport, { filter: readinessFilter, search: readinessSearch });
   }, [communicationReadinessReport, readinessFilter, readinessSearch]);
+
+  function openReadinessIssue(issue) {
+    if (issue.updateLocation === "Existing requisition") {
+      const matches = allReqs.filter((req) => req.id === issue.requisitionId);
+      if (matches.length !== 1) {
+        window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: SAFE_REQUISITION_ERROR }));
+        return;
+      }
+      openReqDrawer(matches[0], "edit");
+      return;
+    }
+    if (/facility contacts/i.test(issue.updateLocation || "") || /facility contact/i.test(issue.source || "")) {
+      const matches = allSites.filter((site) => String(site.siteName || "").trim().toLowerCase() === String(issue.facility || "").trim().toLowerCase());
+      if (matches.length === 1) openFacilityDrawer(matches[0], "edit");
+      return;
+    }
+    if (issue.source === "Position" || issue.updateLocation === "Position Requirements") setActiveTab("requirements");
+  }
 
   const filteredSites = useMemo(() => {
     const query = facilitySearch.trim().toLowerCase();
@@ -20209,30 +20239,51 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
   function openReqDrawer(seed = {}, mode = "add") {
     setDraftReq(mode === "edit" ? { ...emptyReq(), ...seed } : emptyReq(seed));
     setDrawerMode(mode);
+    setCommunicationReview(null);
+    setCommunicationSaveError("");
     setDrawerOpen(true);
-  }
-
-  function duplicateDraftReqFromDrawer() {
-    if (!draftReq) return;
-    const sourceLabel = draftReq.reqNumber || draftReq.positionTitle || "current requisition";
-    setDraftReq(emptyReq({
-      ...draftReq,
-      id: makeId("req"),
-      reqNumber: "",
-      uniqueIdNumber: "",
-      status: "Active",
-      openDate: todayIso(),
-      createdAt: "",
-      updatedAt: "",
-      notes: `${draftReq.notes || ""}${draftReq.notes ? "\n" : ""}Duplicated from ${sourceLabel}. Add the new req number before saving.`,
-    }));
-    setDrawerMode("add");
-    setDrawerOpen(true);
-    window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "Duplicate loaded into the requisition drawer. Add the new req number, then save." }));
   }
 
   function updateDraftReq(key, value) {
     setDraftReq((prev) => ({ ...(prev || emptyReq()), [key]: value }));
+    setCommunicationReview(null);
+    setCommunicationSaveError("");
+  }
+
+  function selectedExistingRequisition() {
+    const matches = safeObjectRecords(settings.requisitions).filter((req) => req.id === draftReq?.id);
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  function reviewCommunicationChanges() {
+    const existing = selectedExistingRequisition();
+    if (!existing) {
+      setCommunicationSaveError(SAFE_REQUISITION_ERROR);
+      setCommunicationReview(null);
+      return;
+    }
+    setCommunicationSaveError("");
+    setCommunicationReview(communicationDetailChanges(existing, draftReq));
+  }
+
+  function saveCommunicationChanges() {
+    if (!draftReq || drawerMode !== "edit") return;
+    if (!testRuntime.ok) {
+      setCommunicationSaveError(testRuntime.error || "Test environment safety check failed.");
+      return;
+    }
+    try {
+      const result = updateExistingRequisitionCommunicationDetails(safeObjectRecords(settings.requisitions), draftReq.id, draftReq);
+      setSettings((prev) => ({ ...prev, requisitions: result.requisitions }));
+    } catch (error) {
+      setCommunicationSaveError(error?.message || SAFE_REQUISITION_ERROR);
+      return;
+    }
+    window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "Communication Details saved to the selected test requisition." }));
+    setDrawerOpen(false);
+    setDraftReq(null);
+    setCommunicationReview(null);
+    setCommunicationSaveError("");
   }
 
 
@@ -20982,6 +21033,9 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
                         <span><strong style={{ color: THEME.text }}>Source:</strong> {issue.source}</span>
                         <span><strong style={{ color: THEME.text }}>Update:</strong> {issue.updateLocation}</span>
                       </div>
+                      {issue.updateLocation === "Existing requisition" ? <div style={{ marginTop: 9 }}><Button subtle onClick={() => openReadinessIssue(issue)}>Fix Requisition</Button></div> : null}
+                      {/facility contacts/i.test(issue.updateLocation || "") || /facility contact/i.test(issue.source || "") ? <div style={{ marginTop: 9 }}><Button subtle onClick={() => openReadinessIssue(issue)}>Fix Facility Contact</Button></div> : null}
+                      {issue.source === "Position" || issue.updateLocation === "Position Requirements" ? <div style={{ marginTop: 9 }}><Button subtle onClick={() => openReadinessIssue(issue)}>Review Position Setup</Button></div> : null}
                     </div>
                   ))}
                 </div>
@@ -21273,21 +21327,47 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
                 <Field label="Unique ID"><TextInput value={draftReq.uniqueIdNumber} onChange={(event) => updateDraftReq("uniqueIdNumber", event.target.value)} /></Field>
               <Field label="Internal Job Link"><TextInput value={draftReq.internalJobLink || ""} onChange={(event) => updateDraftReq("internalJobLink", event.target.value)} placeholder="Internal posting URL" /></Field>
               <Field label="External Job Link"><TextInput value={draftReq.externalJobLink || ""} onChange={(event) => updateDraftReq("externalJobLink", event.target.value)} placeholder="External posting URL" /></Field>
-                <Field label="Employment Type"><SelectInput value={draftReq.employmentType} onChange={(event) => updateDraftReq("employmentType", event.target.value)} options={["Full-time", "Part-time", "PRN", "Contract", "Temporary", "Seasonal"]} /></Field>
-                <Field label="Shift"><SelectInput value={draftReq.shiftPreference} onChange={(event) => updateDraftReq("shiftPreference", event.target.value)} options={settings.options?.shiftOptions || ["Day", "Night", "Evening", "As needed"]} /></Field>
-                <Field label="Hours Per Week"><TextInput value={draftReq.hoursPerWeek} onChange={(event) => updateDraftReq("hoursPerWeek", event.target.value)} /></Field>
-                <Field label="FTE"><SelectInput value={draftReq.fte} onChange={(event) => updateDraftReq("fte", event.target.value)} options={FTE_OPTIONS} /></Field>
+                {drawerMode !== "edit" ? <Field label="Employment Type"><SelectInput value={draftReq.employmentType} onChange={(event) => updateDraftReq("employmentType", event.target.value)} options={["Full-time", "Part-time", "PRN", "Contract", "Temporary", "Seasonal"]} /></Field> : null}
+                {drawerMode !== "edit" ? <Field label="Shift"><SelectInput value={draftReq.shiftPreference} onChange={(event) => updateDraftReq("shiftPreference", event.target.value)} options={settings.options?.shiftOptions || ["Day", "Night", "Evening", "As needed"]} /></Field> : null}
+                {drawerMode !== "edit" ? <Field label="Hours Per Week"><TextInput value={draftReq.hoursPerWeek} onChange={(event) => updateDraftReq("hoursPerWeek", event.target.value)} /></Field> : null}
+                {drawerMode !== "edit" ? <Field label="FTE"><SelectInput value={draftReq.fte} onChange={(event) => updateDraftReq("fte", event.target.value)} options={FTE_OPTIONS} /></Field> : null}
                 <Field label="Number of Openings"><TextInput type="number" value={draftReq.numberOfOpenings} onChange={(event) => updateDraftReq("numberOfOpenings", event.target.value)} /></Field>
                 <Field label="Priority Level"><SelectInput value={draftReq.priorityLevel} onChange={(event) => updateDraftReq("priorityLevel", event.target.value)} options={["Routine", "High", "Critical"]} /></Field>
                 <Field label="Target Start Date"><TextInput type="date" value={draftReq.targetStartDate} onChange={(event) => updateDraftReq("targetStartDate", event.target.value)} /></Field>
                 <Field label="Status"><SelectInput value={draftReq.status} onChange={(event) => updateDraftReq("status", event.target.value)} options={settings.options?.requisitionStatusOptions || ["Active", "Filled", "Paused", "Closed", "Archived"]} /></Field>
               </div>
+              {drawerMode === "edit" ? (
+                <div data-testid="communication-details" style={{ border: `1px solid ${THEME.primary2}`, borderRadius: 8, padding: 12, background: THEME.lightPurple, display: "grid", gap: 10 }}>
+                  <div>
+                    <strong style={{ fontSize: 16 }}>Communication Details</strong>
+                    <div style={{ color: THEME.muted, fontSize: 12, marginTop: 3 }}>Review changes before saving. Only this existing requisition will be updated.</div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: width < 720 ? "1fr" : "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+                    <Field label="Employment Type"><SelectInput value={draftReq.employmentType || ""} onChange={(event) => updateDraftReq("employmentType", event.target.value)} options={["Full-time", "Part-time", "PRN", "Contract"]} /></Field>
+                    <Field label="Benefits Eligible"><SelectInput value={draftReq.benefitsEligible === true ? "Yes" : draftReq.benefitsEligible === false ? "No" : "Unknown"} onChange={(event) => updateDraftReq("benefitsEligible", event.target.value === "Yes" ? true : event.target.value === "No" ? false : null)} options={["Unknown", "Yes", "No"]} /></Field>
+                    <Field label="FTE"><SelectInput value={draftReq.fte || ""} onChange={(event) => updateDraftReq("fte", event.target.value)} options={FTE_OPTIONS} /></Field>
+                    <Field label="Weekly Hours"><TextInput type="number" value={draftReq.weeklyHours ?? ""} onChange={(event) => updateDraftReq("weeklyHours", event.target.value)} placeholder="Example: 36" /></Field>
+                    <Field label="Shift"><SelectInput value={draftReq.shiftPreference || ""} onChange={(event) => updateDraftReq("shiftPreference", event.target.value)} options={settings.options?.shiftOptions || ["Day", "Night", "Evening", "As needed"]} /></Field>
+                    <Field label="Schedule"><TextInput value={draftReq.workSchedule || ""} onChange={(event) => updateDraftReq("workSchedule", event.target.value)} placeholder="As Needed, Variable, Rotating, or schedule details" /></Field>
+                    {String(draftReq.employmentType || "").toLowerCase() === "contract" ? <Field label="Contract Duration"><TextInput value={draftReq.contractDuration || ""} onChange={(event) => updateDraftReq("contractDuration", event.target.value)} placeholder="Example: 13 Weeks" /></Field> : null}
+                  </div>
+                  <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 7, padding: 10, background: THEME.panel }}>
+                    <strong>Communication Summary</strong>
+                    <div style={{ marginTop: 4 }}>{communicationSummary(draftReq)}</div>
+                    <div style={{ color: THEME.muted, fontSize: 11, marginTop: 4 }}>Preview only. No email, text, or ATS output is generated.</div>
+                  </div>
+                  {communicationReview ? <div style={{ border: `1px solid ${THEME.border}`, borderRadius: 7, padding: 10, background: THEME.panel, display: "grid", gap: 7 }}>
+                    <strong>Review Changes</strong>
+                    {communicationReview.length ? communicationReview.map((change) => <div key={change.field} style={{ display: "grid", gridTemplateColumns: "minmax(130px, 1fr) 1fr auto 1fr", gap: 8, alignItems: "center" }}><strong>{change.label}</strong><span>{displayCommunicationValue(change.field, change.previousValue)}</span><span>→</span><span>{displayCommunicationValue(change.field, change.newValue)}</span></div>) : <span>No Communication Details have changed.</span>}
+                  </div> : null}
+                  {communicationSaveError ? <div role="alert" style={{ color: THEME.red, fontWeight: 800 }}>{communicationSaveError}</div> : null}
+                </div>
+              ) : null}
               <Field label="Notes"><TextArea value={draftReq.notes} onChange={(event) => updateDraftReq("notes", event.target.value)} minHeight={90} /></Field>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                {drawerMode === "edit" ? <Button subtle onClick={duplicateDraftReqFromDrawer}>Duplicate</Button> : null}
-                <Button subtle onClick={() => setDrawerOpen(false)}>Cancel</Button>
-                <Button subtle onClick={() => saveDraftReq(true)}>Save + Add Another</Button>
-                <Button primary onClick={() => saveDraftReq(false)}>Save Requisition</Button>
+                <Button subtle onClick={() => { setDrawerOpen(false); setCommunicationReview(null); setCommunicationSaveError(""); }}>Cancel</Button>
+                {drawerMode === "edit" ? <Button subtle onClick={reviewCommunicationChanges}>Review Changes</Button> : <Button subtle onClick={() => saveDraftReq(true)}>Save + Add Another</Button>}
+                {drawerMode === "edit" ? <Button primary disabled={!communicationReview?.length} onClick={saveCommunicationChanges}>Save Changes</Button> : <Button primary onClick={() => saveDraftReq(false)}>Save Requisition</Button>}
               </div>
             </div>
           </div>
