@@ -23,6 +23,13 @@ import {
 import { isFeatureFlagEnabled } from "./featureFlags";
 import { readRuntimeConfig } from "./runtimeConfig";
 import { buildCommunicationPreview } from "./communicationGeneration";
+import {
+  REVIEW_ACKNOWLEDGMENT,
+  STALE_REVIEW_MESSAGE,
+  TEST_ACTION_ACKNOWLEDGMENT,
+  applyCandidateReadyConfirmation,
+  validateCandidateReadyEligibility,
+} from "./candidateReadyConfirmation";
 import CommunicationTemplateDraftsPanel from "./CommunicationTemplateDraftsPanel";
 import { applyDefaultRootPreservingDraftVariants } from "./communicationTemplateDrafts";
 import { releaseConditionLabel } from "./communicationTemplateActivation";
@@ -5727,7 +5734,8 @@ function RecruiterApp() {
   const [candidateManagementTab, setCandidateManagementTab] = useState("connect");
   const [candidateManagementSearch, setCandidateManagementSearch] = useState("");
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
-  const communicationPreviewFlowEnabled = testRuntime.ok && isFeatureFlagEnabled(settings, "communicationPreviewFlow");
+  const reviewedCandidateReadyConfirmationEnabled = testRuntime.ok && isFeatureFlagEnabled(settings, "reviewedCandidateReadyConfirmation");
+  const communicationPreviewFlowEnabled = testRuntime.ok && (isFeatureFlagEnabled(settings, "communicationPreviewFlow") || reviewedCandidateReadyConfirmationEnabled);
   const [ignoredDuplicateUniqueIds, setIgnoredDuplicateUniqueIds] = useState(() => loadStoredValue("welcomeflow-ignored-duplicate-unique-ids", []));
   const [form, setForm] = useState(DEFAULT_FORM);
   const [submissionDate, setSubmissionDate] = useState(todayIso());
@@ -5739,6 +5747,9 @@ function RecruiterApp() {
   const [communicationPreview, setCommunicationPreview] = useState(null);
   const [communicationPreviewOpen, setCommunicationPreviewOpen] = useState(false);
   const [communicationPreviewOutOfDate, setCommunicationPreviewOutOfDate] = useState(false);
+  const [candidateReadyConfirmationProcessing, setCandidateReadyConfirmationProcessing] = useState(false);
+  const [candidateReadyConfirmationResult, setCandidateReadyConfirmationResult] = useState(null);
+  const [savedSubmissionPackage, setSavedSubmissionPackage] = useState(null);
   const [activeIntakeStep, setActiveIntakeStep] = useState("setup");
   const [intakeHandoffOpen, setIntakeHandoffOpen] = useState(false);
   const [completedIntakeSteps, setCompletedIntakeSteps] = useState([]);
@@ -9807,16 +9818,19 @@ function RecruiterApp() {
     };
   }
 
-  function communicationPreviewInput() {
+  function communicationPreviewInput(settingsSource = settings) {
     const internalEligibilityApproved = ["Eligible", "Approved"].includes(String(form.hrEligibilityStatus || "").trim());
     const rehireEligibility = String(form.rehireEligibility || "").trim();
     const rehireEligibilityConfirmed = /eligible for rehire|bypassed by recruiter/i.test(rehireEligibility) && !/^not eligible/i.test(rehireEligibility);
-    const selectedTextTemplateId = settings.general?.candidateSubmissionTextTemplateId || settings.options?.candidateSubmissionTextTemplateId || "";
+    const selectedTextTemplateId = settingsSource.general?.candidateSubmissionTextTemplateId || settingsSource.options?.candidateSubmissionTextTemplateId || "";
+    const sourceRequisitions = safeObjectRecords(settingsSource.requisitions).filter((req) => isLiveRequisition(req) && req.reqNumber);
+    const sourceFacilities = safeObjectRecords(settingsSource.sites).filter((site) => site.status === "Active");
+    const sourceRole = safeObjectRecords(settingsSource.roles).find((role) => role.status === "Active" && role.positionTitle === form.position) || {};
     return {
       runtime: { environment: runtimeConfig.environment, projectRef: runtimeConfig.projectRef },
       requisitionId: form.selectedRequisitionId || "",
-      requisitions: activeRequisitions,
-      facilities: activeSites,
+      requisitions: sourceRequisitions,
+      facilities: sourceFacilities,
       intake: {
         candidateType: form.candidateType,
         candidateTypeConfirmed: form.candidateTypeConfirmed === true,
@@ -9848,10 +9862,10 @@ function RecruiterApp() {
         rehireEligibility,
         rehireEligibilityConfirmed,
       },
-      positionRequirements: selectedRole || {},
-      settings,
+      positionRequirements: sourceRole,
+      settings: settingsSource,
       selectedTextTemplateId,
-      textRequired: settings.general?.candidateSubmissionTextRequired === true,
+      textRequired: settingsSource.general?.candidateSubmissionTextRequired === true,
     };
   }
 
@@ -9882,6 +9896,80 @@ function RecruiterApp() {
     } catch (error) {
       console.error("WelcomeFlow communication preview refresh failed", error);
       setCopyNotice(`Submission preview could not refresh: ${error?.message || "unknown resolver issue"}`);
+    }
+  }
+
+  async function confirmReviewedCandidateReady(acknowledgments) {
+    if (!reviewedCandidateReadyConfirmationEnabled || candidateReadyConfirmationProcessing) return;
+    setCandidateReadyConfirmationProcessing(true);
+    setCloudStatus("Confirming reviewed package in WelcomeFlow Test...");
+    try {
+      const currentPreview = createCurrentCommunicationPreview();
+      const initialEligibility = validateCandidateReadyEligibility({
+        runtime: { environment: runtimeConfig.environment, projectRef: runtimeConfig.projectRef },
+        reviewedPreview: communicationPreview,
+        freshPreview: currentPreview,
+        outOfDate: communicationPreviewOutOfDate,
+        acknowledgments,
+      });
+      if (!initialEligibility.ok) {
+        if (initialEligibility.errors.includes(STALE_REVIEW_MESSAGE)) setCommunicationPreviewOutOfDate(true);
+        setCopyNotice(initialEligibility.errors[0]);
+        return;
+      }
+
+      const cloud = await loadCloudWorkspaceState();
+      if (!cloud.data) throw new Error(cloud.error || "The WelcomeFlow Test workspace could not be loaded.");
+      const latestSettings = normalizeSettings(mergeDefaults(DEFAULT_SETTINGS, cloud.data.settings || {}));
+      const latestPreview = buildCommunicationPreview(communicationPreviewInput(latestSettings));
+      const confirmation = applyCandidateReadyConfirmation({
+        records: Array.isArray(cloud.data.tracker) ? cloud.data.tracker : [],
+        history: Array.isArray(cloud.data.history) ? cloud.data.history : [],
+        reviewedPreview: communicationPreview,
+        freshPreview: latestPreview,
+        runtime: { environment: runtimeConfig.environment, projectRef: runtimeConfig.projectRef },
+        acknowledgments,
+        outOfDate: communicationPreviewOutOfDate,
+        identity: {
+          trackerId: form.candidateTrackerId || form.trackerId || "",
+          intakeId: activeIntakeDraftId || form.intakeId || "",
+          email: form.emailAddress,
+          phone: form.phoneNumber,
+          requisitionId: form.selectedRequisitionId,
+        },
+        intakeForm: { ...form, candidateTalkingPoints, completedIntakeSteps },
+      });
+      if (!confirmation.ok) {
+        if (confirmation.errors?.includes(STALE_REVIEW_MESSAGE)) setCommunicationPreviewOutOfDate(true);
+        setCopyNotice(confirmation.error || "Candidate Ready confirmation was blocked.");
+        return;
+      }
+
+      if (!confirmation.idempotent) {
+        const nextWorkspace = {
+          ...cloud.data,
+          settings: latestSettings,
+          tracker: confirmation.records,
+          history: confirmation.history,
+          savedAt: new Date().toISOString(),
+        };
+        const saved = await saveCloudWorkspaceState(nextWorkspace);
+        if (saved.error) throw new Error(saved.error);
+      }
+      setSettings(latestSettings);
+      setTracker(migrateTrackerRecords(confirmation.records, latestSettings));
+      setHistory(confirmation.history);
+      setSelectedId(confirmation.candidate.id);
+      setCommunicationPreviewOpen(false);
+      setCandidateReadyConfirmationResult(confirmation.candidate);
+      setCloudStatus(confirmation.idempotent ? "Reviewed package already confirmed" : "Saved to WelcomeFlow Test");
+      setCopyNotice(confirmation.idempotent ? "This exact reviewed package was already confirmed. No duplicate record or history was created." : "Candidate Ready for Facility Submission. The reviewed package has been saved. No communication has been sent.");
+    } catch (error) {
+      console.error("WelcomeFlow reviewed Candidate Ready confirmation failed", error);
+      setCloudStatus("Candidate Ready confirmation blocked");
+      setCopyNotice(`Candidate Ready confirmation was blocked: ${error?.message || "unknown error"}`);
+    } finally {
+      setCandidateReadyConfirmationProcessing(false);
     }
   }
 
@@ -16482,6 +16570,7 @@ function rowifyCandidate(item = {}) {
                       <span>{"\uD83D\uDCCB"} Candidate Profile</span>
                     </div>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {selectedSubmission.reviewedSubmissionPackage ? <Button subtle onClick={() => setSavedSubmissionPackage(selectedSubmission.reviewedSubmissionPackage)}>View Saved Package</Button> : null}
                       {nextCandidateProfile ? <Button subtle onClick={openNextCandidateProfile}>Next Candidate</Button> : null}
                     </div>
                   </div>
@@ -18884,7 +18973,9 @@ function rowifyCandidate(item = {}) {
           </Card>
         ) : null}
 
-        {communicationPreviewFlowEnabled && communicationPreviewOpen && communicationPreview ? <CommunicationPreviewModal preview={communicationPreview} outOfDate={communicationPreviewOutOfDate} onClose={() => setCommunicationPreviewOpen(false)} onRefresh={refreshCommunicationPreview} /> : null}
+        {communicationPreviewFlowEnabled && communicationPreviewOpen && communicationPreview ? <CommunicationPreviewModal preview={communicationPreview} outOfDate={communicationPreviewOutOfDate} onClose={() => setCommunicationPreviewOpen(false)} onRefresh={refreshCommunicationPreview} confirmationEnabled={reviewedCandidateReadyConfirmationEnabled} confirmationProcessing={candidateReadyConfirmationProcessing} onConfirm={confirmReviewedCandidateReady} /> : null}
+        {candidateReadyConfirmationResult ? <CandidateReadyConfirmationResult record={candidateReadyConfirmationResult} onViewPackage={() => setSavedSubmissionPackage(candidateReadyConfirmationResult.reviewedSubmissionPackage)} onOpenCandidate={() => { setSelectedId(candidateReadyConfirmationResult.id); setCandidateReadyConfirmationResult(null); setTrackerPanelOpen(false); setActivePage("candidates"); }} onReturnWorkspace={() => { setCandidateReadyConfirmationResult(null); setActivePage("home"); }} /> : null}
+        {savedSubmissionPackage ? <SavedSubmissionPackageModal packageData={savedSubmissionPackage} onClose={() => setSavedSubmissionPackage(null)} /> : null}
         {copyNotice ? <div style={{ position: "fixed", right: 18, bottom: 18, zIndex: 20, background: THEME.primary, color: "#ffffff", borderRadius: 6, padding: "11px 14px", fontWeight: 800, boxShadow: "0 12px 30px rgba(16,24,40,0.22)" }}>{copyNotice}</div> : null}
         <footer style={{ marginTop: 24, textAlign: "center", color: THEME.muted, fontSize: 13 }}>(c) Central 54 Holdings LLC</footer>
         </main>
@@ -18912,7 +19003,13 @@ function CommunicationPreviewDocument({ title, templateKey, variantKey = "", sub
   );
 }
 
-export function CommunicationPreviewModal({ preview, outOfDate = false, onClose, onRefresh }) {
+export function CommunicationPreviewModal({ preview, outOfDate = false, onClose, onRefresh, confirmationEnabled = false, confirmationProcessing = false, onConfirm }) {
+  const [reviewAcknowledged, setReviewAcknowledged] = useState(false);
+  const [testActionAcknowledged, setTestActionAcknowledged] = useState(false);
+  useEffect(() => {
+    setReviewAcknowledged(false);
+    setTestActionAcknowledged(false);
+  }, [preview.snapshotHash, outOfDate]);
   const requisition = preview.snapshot?.requisition || {};
   const intake = preview.snapshot?.intake || {};
   const facility = preview.snapshot?.facility || {};
@@ -18949,7 +19046,7 @@ export function CommunicationPreviewModal({ preview, outOfDate = false, onClose,
           </section>
 
           {outOfDate ? <section style={{ border: `1px solid ${THEME.amber}`, borderRadius: 8, padding: 12, background: THEME.amberBg }}><strong style={{ color: THEME.amber }}>Out of Date</strong><div style={{ color: THEME.text, fontSize: 12, marginTop: 6 }}>Relevant intake, requisition, facility, recipient, or template information changed. Refresh Preview to review a current immutable snapshot.</div></section> : null}
-          {blockers.length ? <section style={{ border: `1px solid ${THEME.red}`, borderRadius: 8, padding: 12, background: THEME.redBg }}><strong style={{ color: THEME.red }}>Action Required</strong><div style={{ display: "grid", gap: 7, marginTop: 8 }}>{blockers.map((item, index) => <div key={`${item.code}-${item.field}-${index}`} style={{ color: THEME.text, fontSize: 12 }}><strong>{item.code}</strong> — {item.message}</div>)}</div></section> : <section style={{ border: `1px solid ${THEME.green}`, borderRadius: 8, padding: 12, background: THEME.greenBg }}><strong style={{ color: THEME.green }}>Templates Approved in Test</strong><div style={{ color: THEME.text, fontSize: 12, marginTop: 6 }}><strong>Preview Complete</strong><br />The communication package is ready for review. Final Candidate Ready confirmation is not enabled in this phase.</div></section>}
+          {blockers.length ? <section style={{ border: `1px solid ${THEME.red}`, borderRadius: 8, padding: 12, background: THEME.redBg }}><strong style={{ color: THEME.red }}>Action Required</strong><div style={{ display: "grid", gap: 7, marginTop: 8 }}>{blockers.map((item, index) => <div key={`${item.code}-${item.field}-${index}`} style={{ color: THEME.text, fontSize: 12 }}><strong>{item.code}</strong> — {item.message}</div>)}</div></section> : <section style={{ border: `1px solid ${THEME.green}`, borderRadius: 8, padding: 12, background: THEME.greenBg }}><strong style={{ color: THEME.green }}>Templates Approved in Test</strong><div style={{ color: THEME.text, fontSize: 12, marginTop: 6 }}><strong>Preview Complete</strong><br />{confirmationEnabled ? "The communication package is ready for final reviewed confirmation in WelcomeFlow Test. No communication will be sent or copied." : "The communication package is ready for review. Final Candidate Ready confirmation is not enabled in this phase."}</div></section>}
           {warnings.length ? <section style={{ border: `1px solid ${THEME.amber}`, borderRadius: 8, padding: 12, background: THEME.amberBg }}><strong style={{ color: THEME.amber }}>Warnings</strong><div style={{ display: "grid", gap: 7, marginTop: 8 }}>{warnings.map((item, index) => <div key={`${item.code}-${index}`} style={{ color: THEME.text, fontSize: 12 }}>{item.message}</div>)}</div></section> : null}
 
           {(preview.unresolvedTokens?.length || preview.restrictedTokens?.length) ? <section style={{ border: `1px solid ${THEME.red}`, borderRadius: 8, padding: 12, background: THEME.redBg, display: "grid", gap: 7 }}><strong style={{ color: THEME.red }}>Template tokens requiring correction</strong>{preview.unresolvedTokens?.length ? <div style={{ fontSize: 12 }}><strong>Unresolved:</strong> {preview.unresolvedTokens.join(", ")}</div> : null}{preview.restrictedTokens?.length ? <div style={{ fontSize: 12 }}><strong>Restricted in ATS:</strong> {preview.restrictedTokens.join(", ")}</div> : null}</section> : null}
@@ -18958,6 +19055,12 @@ export function CommunicationPreviewModal({ preview, outOfDate = false, onClose,
           <CommunicationPreviewDocument title="Candidate Confirmation Email" templateKey={rendered.candidateEmail?.templateKey} variantKey={rendered.candidateEmail?.variantKey} subject={rendered.candidateEmail?.subject} body={rendered.candidateEmail?.body} to={candidateRecipients.to} releaseCondition={rendered.candidateEmail?.releaseCondition} />
           {rendered.candidateText ? <CommunicationPreviewDocument title="Candidate Follow-Up Text" templateKey={rendered.candidateText.templateKey} variantKey={rendered.candidateText.variantKey} body={rendered.candidateText.body} releaseCondition={rendered.candidateText.releaseCondition} /> : <section style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 12, background: THEME.panelAlt, color: THEME.muted, fontSize: 12 }}><strong style={{ color: THEME.text }}>Candidate Follow-Up Text</strong><div style={{ marginTop: 4 }}>No explicitly selected submission text template. No text will be generated or sent.</div></section>}
           <CommunicationPreviewDocument title="ATS Submission Update" templateKey={rendered.atsUpdate?.templateKey} variantKey={rendered.atsUpdate?.variantKey} subject={rendered.atsUpdate?.subject} body={rendered.atsUpdate?.body} releaseCondition={rendered.atsUpdate?.releaseCondition} />
+          {confirmationEnabled && preview.canConfirm && !outOfDate ? <section aria-label="Candidate Ready confirmation acknowledgments" style={{ border: `1px solid ${THEME.primary2}`, borderRadius: 8, padding: 14, background: THEME.blueBg, display: "grid", gap: 11 }}>
+            <strong style={{ color: THEME.text }}>Final WelcomeFlow Test Confirmation</strong>
+            <label style={{ display: "flex", gap: 9, alignItems: "flex-start", color: THEME.text, fontSize: 12, lineHeight: 1.5, cursor: "pointer" }}><input type="checkbox" checked={reviewAcknowledged} onChange={(event) => setReviewAcknowledged(event.target.checked)} />{REVIEW_ACKNOWLEDGMENT}</label>
+            <label style={{ display: "flex", gap: 9, alignItems: "flex-start", color: THEME.text, fontSize: 12, lineHeight: 1.5, cursor: "pointer" }}><input type="checkbox" checked={testActionAcknowledged} onChange={(event) => setTestActionAcknowledged(event.target.checked)} />{TEST_ACTION_ACKNOWLEDGMENT}</label>
+            <div style={{ color: THEME.muted, fontSize: 11 }}>The exact reviewed snapshot, recipients, rendered content, template versions, and release conditions will be rechecked before the candidate record changes.</div>
+          </section> : null}
         </div>
 
         <footer style={{ position: "sticky", bottom: 0, zIndex: 2, borderTop: `1px solid ${THEME.borderSoft}`, background: THEME.panel, padding: 14, display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -18965,8 +19068,51 @@ export function CommunicationPreviewModal({ preview, outOfDate = false, onClose,
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Button subtle onClick={onClose}>Return to Intake</Button>
             <Button subtle onClick={onRefresh}>Refresh Preview</Button>
+            {confirmationEnabled && preview.canConfirm && !outOfDate ? <Button primary disabled={!reviewAcknowledged || !testActionAcknowledged || confirmationProcessing} onClick={() => onConfirm?.({ reviewed: reviewAcknowledged, testAction: testActionAcknowledged })}>{confirmationProcessing ? "Confirming in WelcomeFlow Test..." : "Confirm Candidate Ready"}</Button> : null}
           </div>
         </footer>
+      </div>
+    </div>
+  );
+}
+
+function CandidateReadyConfirmationResult({ record, onViewPackage, onOpenCandidate, onReturnWorkspace }) {
+  const packageData = record.reviewedSubmissionPackage || {};
+  const states = packageData.actionStates || {};
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Candidate Ready confirmation result" style={{ position: "fixed", inset: 0, zIndex: 130, background: "rgba(16, 10, 43, 0.58)", display: "grid", placeItems: "center", padding: 16 }}>
+      <div style={{ width: "min(760px, 100%)", maxHeight: "92vh", overflow: "auto", background: THEME.panel, border: `1px solid ${THEME.green}`, borderRadius: 10, boxShadow: "0 28px 80px rgba(16,10,43,0.34)", padding: 18, display: "grid", gap: 14 }}>
+        <div><div style={{ color: THEME.green, fontSize: 11, fontWeight: 950, textTransform: "uppercase" }}>WelcomeFlow Test</div><h2 style={{ margin: "4px 0 6px", color: THEME.text }}>Candidate Ready for Facility Submission</h2><div style={{ color: THEME.muted }}>The reviewed package has been saved. No communication has been sent.</div></div>
+        <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
+          {[["Candidate", record.candidate], ["Position", record.position], ["Facility", record.site], ["Req Number", record.reqNumber], ["Snapshot Hash", packageData.snapshotHash], ["Next Action", record.nextAction]].map(([label, value]) => <ProfileSummaryBlock key={label} title={label}>{value || "Not provided"}</ProfileSummaryBlock>)}
+        </section>
+        <section style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 12, background: THEME.panelAlt, display: "grid", gap: 6, fontSize: 12, color: THEME.text }}>
+          <strong>Communication action states</strong>
+          <div>Facility Submission: <strong>{states.facilitySubmission}</strong></div>
+          <div>Candidate Confirmation: <strong>{states.candidateConfirmation}</strong></div>
+          <div>Candidate Text: <strong>{states.candidateFollowUpText}</strong></div>
+          <div>ATS Update: <strong>{states.atsSubmissionUpdate}</strong></div>
+        </section>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}><Button subtle onClick={onReturnWorkspace}>Return to Workspace</Button><Button subtle onClick={onOpenCandidate}>Open Candidate Profile</Button><Button primary onClick={onViewPackage}>View Saved Package</Button></div>
+      </div>
+    </div>
+  );
+}
+
+function SavedSubmissionPackageModal({ packageData, onClose }) {
+  const rendered = packageData.rendered || {};
+  const recipients = packageData.recipients || {};
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Saved reviewed submission package" onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 140, background: "rgba(16, 10, 43, 0.62)", display: "grid", placeItems: "center", padding: 16 }}>
+      <div onClick={(event) => event.stopPropagation()} style={{ width: "min(1120px, 100%)", maxHeight: "94vh", overflow: "auto", background: THEME.panel, border: `1px solid ${THEME.border}`, borderRadius: 10, boxShadow: "0 28px 80px rgba(16,10,43,0.34)" }}>
+        <header style={{ position: "sticky", top: 0, zIndex: 2, padding: 16, background: THEME.panel, borderBottom: `1px solid ${THEME.borderSoft}`, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}><div><div style={{ color: THEME.primary2, fontSize: 11, fontWeight: 950, textTransform: "uppercase" }}>Immutable reviewed package</div><h2 style={{ margin: "4px 0", color: THEME.text }}>Saved Submission Package</h2><div style={{ color: THEME.muted, fontSize: 12 }}>This saved package reflects the information reviewed at confirmation.</div></div><Button subtle onClick={onClose}>Close</Button></header>
+        <div style={{ padding: 16, display: "grid", gap: 14 }}>
+          <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>{[["Snapshot Hash", packageData.snapshotHash], ["Confirmed At", packageData.confirmedAt], ["Confirmed By", packageData.confirmedBy], ["Environment", packageData.environment], ["Project Ref", packageData.projectRef]].map(([label, value]) => <ProfileSummaryBlock key={label} title={label}>{value || "Not provided"}</ProfileSummaryBlock>)}</section>
+          <CommunicationPreviewDocument title="Facility Submission Email" templateKey={rendered.facilityEmail?.templateKey} variantKey={rendered.facilityEmail?.variantKey} subject={rendered.facilityEmail?.subject} body={rendered.facilityEmail?.body} to={recipients.facility?.to || []} cc={recipients.facility?.cc || []} releaseCondition={rendered.facilityEmail?.releaseCondition} />
+          <CommunicationPreviewDocument title="Candidate Confirmation Email" templateKey={rendered.candidateEmail?.templateKey} variantKey={rendered.candidateEmail?.variantKey} subject={rendered.candidateEmail?.subject} body={rendered.candidateEmail?.body} to={recipients.candidate?.to || []} releaseCondition={rendered.candidateEmail?.releaseCondition} />
+          {rendered.candidateText ? <CommunicationPreviewDocument title="Candidate Follow-Up Text" templateKey={rendered.candidateText.templateKey} variantKey={rendered.candidateText.variantKey} body={rendered.candidateText.body} releaseCondition={rendered.candidateText.releaseCondition} /> : null}
+          <CommunicationPreviewDocument title="ATS Submission Update" templateKey={rendered.atsUpdate?.templateKey} variantKey={rendered.atsUpdate?.variantKey} subject={rendered.atsUpdate?.subject} body={rendered.atsUpdate?.body} releaseCondition={rendered.atsUpdate?.releaseCondition} />
+        </div>
       </div>
     </div>
   );

@@ -107,15 +107,18 @@ describe("side-effect-free submission package preview", () => {
     storageSpy.mockRestore();
   });
 
-  test("App integration has no Preview confirmation callback or output-generation bridge", () => {
+  test("Phase 2D confirmation callback is flag-gated and never bridges to output generation or communication actions", () => {
     const source = fs.readFileSync(path.join(__dirname, "App.js"), "utf8");
     const modalStart = source.indexOf("export function CommunicationPreviewModal");
     const modalEnd = source.indexOf("function AgingFollowUpReview", modalStart);
     const modalSource = source.slice(modalStart, modalEnd);
-    const modalInvocation = source.match(/<CommunicationPreviewModal[^>]+\/>/)?.[0] || "";
+    const modalInvocationStart = source.indexOf("<CommunicationPreviewModal");
+    const modalInvocation = source.slice(modalInvocationStart, source.indexOf("/> : null", modalInvocationStart) + 2);
 
-    expect(modalSource).not.toMatch(/onConfirm|generateOutput|buildOutput|mailto|clipboard|setSettings|supabase/i);
-    expect(modalInvocation).not.toMatch(/onConfirm|generateOutput|buildOutput/);
+    expect(modalSource).not.toMatch(/generateOutput|buildOutput|mailto|clipboard|setSettings|supabase/i);
+    expect(modalSource).toMatch(/confirmationEnabled && preview\.canConfirm && !outOfDate/);
+    expect(modalInvocation).toMatch(/confirmationEnabled=\{reviewedCandidateReadyConfirmationEnabled\}/);
+    expect(modalInvocation).not.toMatch(/generateOutput|buildOutput/);
     expect(source).not.toMatch(/confirmCommunicationPreview|generatedOutputFromPreview/);
     expect(source).toMatch(/communicationPreviewFlowEnabled \? <Button primary onClick=\{openCommunicationPreview\}/);
     expect(source).toMatch(/: <Button primary onClick=\{generateOutput\}/);
@@ -124,7 +127,8 @@ describe("side-effect-free submission package preview", () => {
   test("changing candidate type clears explicit confirmation only in the flagged test flow", () => {
     const source = fs.readFileSync(path.join(__dirname, "App.js"), "utf8");
     expect(source).toMatch(/if \(communicationPreviewFlowEnabled\) \{\s*next\.candidateTypeConfirmed = false/);
-    expect(source).toMatch(/testRuntime\.ok && isFeatureFlagEnabled\(settings, "communicationPreviewFlow"\)/);
+    expect(source).toMatch(/testRuntime\.ok && isFeatureFlagEnabled\(settings, "reviewedCandidateReadyConfirmation"\)/);
+    expect(source).toMatch(/isFeatureFlagEnabled\(settings, "communicationPreviewFlow"\) \|\| reviewedCandidateReadyConfirmationEnabled/);
     expect(source).toMatch(/candidateTypeConfirmed: form\.candidateTypeConfirmed === true/);
   });
 });
