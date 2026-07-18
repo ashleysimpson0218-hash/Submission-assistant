@@ -218,7 +218,7 @@ export default function CommunicationTemplateDraftsPanel({ settings = {}, setSet
         <button type="button" style={buttonStyle} onClick={refreshDraft}>Refresh Draft</button>
         <button type="button" style={buttonStyle} onClick={() => setReviewSave(true)}>Save Draft</button>
         <button type="button" style={buttonStyle} onClick={() => save("Needs Review")}>Mark Needs Review</button>
-        {saved && ["Draft", "Needs Review"].includes(saved.status) ? <button type="button" style={{ ...buttonStyle, background: "#166534", color: "#fff" }} onClick={() => setReviewActivation(true)}>Approve &amp; Activate in Test</button> : null}
+        {saved && ["Draft", "Needs Review"].includes(saved.status) ? <button type="button" style={{ ...buttonStyle, background: "#166534", color: "#fff" }} onClick={() => setReviewActivation(true)}>Review Test Activation</button> : null}
         {saved?.status === "Active" ? <button type="button" style={{ ...buttonStyle, borderColor: "#b91c1c", color: "#b91c1c" }} onClick={deactivate}>Deactivate Test Variant</button> : null}
       </div>
       {reviewSave ? <div aria-label="Exact draft save review" style={{ border: "2px solid #2563eb", borderRadius: 8, padding: 12, background: "#eff6ff" }}><b>Exact draft record to be added or changed</b><pre style={{ whiteSpace: "pre-wrap", maxHeight: 280, overflow: "auto", fontSize: 11 }}>{JSON.stringify({ ...draft, status: "Draft" }, null, 2)}</pre><div style={{ display: "flex", gap: 8 }}><button type="button" style={{ ...buttonStyle, background: "#1d4ed8", color: "#fff" }} onClick={() => save("Draft")}>Save Draft</button><button type="button" style={buttonStyle} onClick={() => setReviewSave(false)}>Cancel</button></div></div> : null}
