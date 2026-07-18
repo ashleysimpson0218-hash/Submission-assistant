@@ -22,6 +22,7 @@ import {
 } from "./communicationReadiness";
 import { isFeatureFlagEnabled } from "./featureFlags";
 import { readRuntimeConfig } from "./runtimeConfig";
+import { buildCommunicationPreview } from "./communicationGeneration";
 import {
   SAFE_REQUISITION_ERROR,
   assertTestRuntime,
@@ -927,6 +928,7 @@ const HOT_LEADS_TEMPLATE_COLUMNS = ["Candidate Name", "Phone", "Email", "Positio
 
 const DEFAULT_FORM = {
   candidateType: "External",
+  candidateTypeConfirmed: false,
   fullName: "",
   legalName: "",
   firstName: "",
@@ -5715,6 +5717,7 @@ function RecruiterApp() {
   const [candidateManagementTab, setCandidateManagementTab] = useState("connect");
   const [candidateManagementSearch, setCandidateManagementSearch] = useState("");
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const communicationPreviewFlowEnabled = testRuntime.ok && isFeatureFlagEnabled(settings, "communicationPreviewFlow");
   const [ignoredDuplicateUniqueIds, setIgnoredDuplicateUniqueIds] = useState(() => loadStoredValue("welcomeflow-ignored-duplicate-unique-ids", []));
   const [form, setForm] = useState(DEFAULT_FORM);
   const [submissionDate, setSubmissionDate] = useState(todayIso());
@@ -5723,6 +5726,9 @@ function RecruiterApp() {
   const [history, setHistory] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [output, setOutput] = useState(null);
+  const [communicationPreview, setCommunicationPreview] = useState(null);
+  const [communicationPreviewOpen, setCommunicationPreviewOpen] = useState(false);
+  const [communicationPreviewOutOfDate, setCommunicationPreviewOutOfDate] = useState(false);
   const [activeIntakeStep, setActiveIntakeStep] = useState("setup");
   const [intakeHandoffOpen, setIntakeHandoffOpen] = useState(false);
   const [completedIntakeSteps, setCompletedIntakeSteps] = useState([]);
@@ -9072,6 +9078,10 @@ function RecruiterApp() {
         sources.rehireEligibility = "Recruiter edit";
       }
       if (key === "candidateType") {
+        if (communicationPreviewFlowEnabled) {
+          next.candidateTypeConfirmed = false;
+          sources.candidateTypeConfirmed = "Recruiter edit";
+        }
         if (value === "Rehire") {
           next.previousEmployee = "Yes";
           next.rehireEligibility = prev.rehireEligibility === "Not needed" ? "Not verified" : prev.rehireEligibility;
@@ -9705,6 +9715,84 @@ function RecruiterApp() {
       atsLong: atsRendered.body || atsBlock(finalComp, true),
       atsFrom: atsRendered.from,
     };
+  }
+
+  function communicationPreviewInput() {
+    const internalEligibilityApproved = ["Eligible", "Approved"].includes(String(form.hrEligibilityStatus || "").trim());
+    const rehireEligibility = String(form.rehireEligibility || "").trim();
+    const rehireEligibilityConfirmed = /eligible for rehire|bypassed by recruiter/i.test(rehireEligibility) && !/^not eligible/i.test(rehireEligibility);
+    const selectedTextTemplateId = settings.general?.candidateSubmissionTextTemplateId || settings.options?.candidateSubmissionTextTemplateId || "";
+    return {
+      runtime: { environment: runtimeConfig.environment, projectRef: runtimeConfig.projectRef },
+      requisitionId: form.selectedRequisitionId || "",
+      requisitions: activeRequisitions,
+      facilities: activeSites,
+      intake: {
+        candidateType: form.candidateType,
+        candidateTypeConfirmed: form.candidateTypeConfirmed === true,
+        candidateName: form.fullName,
+        candidateEmail: form.emailAddress,
+        candidatePhone: form.phoneNumber,
+        candidateSource: form.candidateSource,
+        experience: form.experienceNotes || form.yearsExperience || "",
+        education: [form.educationLevel, form.fieldOfStudy, form.educationNotes].filter(Boolean),
+        credentials: [form.licenseType, form.licenseStatus, form.cprStatus, form.additionalLicenseInfo].filter(Boolean),
+        interviewAvailability: form.interviewAvailability,
+        finalCompensation: (form.estimatedCompensation || estimatedComp || form.compensationRequested || "").trim(),
+        recruiterNotes: form.candidateNotes,
+        intakeCompleted: intakeOutputBlockers.length === 0,
+        intakeCompletedAt: todayIso(),
+        submissionDate,
+        missingRequiredIntakeFields: intakeOutputBlockers,
+        employeeId: form.employeeId || "",
+        currentPosition: form.currentRole || form.currentPosition || "",
+        currentFacility: form.currentFacility || "",
+        currentManager: form.currentManager || "",
+        internalMoveType: form.transferMoveType || form.internalMoveType || "",
+        internalEligibilityStatus: internalEligibilityApproved ? form.hrEligibilityStatus : "",
+        currentManagerAware: form.currentManagerApprovalStatus === "Approved",
+        reasonForTransfer: form.reasonForTransfer || form.transferReason || "",
+        previousEmployee: form.previousEmployee,
+        previousFacility: form.previousFacility,
+        priorEmploymentDates: form.previousEmploymentDates,
+        rehireEligibility,
+        rehireEligibilityConfirmed,
+      },
+      positionRequirements: selectedRole || {},
+      settings,
+      selectedTextTemplateId,
+      textRequired: settings.general?.candidateSubmissionTextRequired === true,
+    };
+  }
+
+  function createCurrentCommunicationPreview() {
+    return buildCommunicationPreview(communicationPreviewInput());
+  }
+
+  function openCommunicationPreview() {
+    try {
+      const currentPreview = createCurrentCommunicationPreview();
+      const outOfDate = Boolean(communicationPreview && communicationPreview.snapshotHash !== currentPreview.snapshotHash);
+      if (!communicationPreview || !outOfDate) setCommunicationPreview(currentPreview);
+      setCommunicationPreviewOutOfDate(outOfDate);
+      setCommunicationPreviewOpen(true);
+      setCopyNotice(outOfDate ? "Submission preview is out of date. Refresh it before continuing review." : currentPreview.canConfirm ? "Submission preview complete. Nothing has been saved or submitted." : "Submission preview opened with blockers. Nothing has been saved or submitted.");
+    } catch (error) {
+      console.error("WelcomeFlow communication preview failed", error);
+      setCopyNotice(`Submission preview could not generate: ${error?.message || "unknown resolver issue"}`);
+    }
+  }
+
+  function refreshCommunicationPreview() {
+    try {
+      const refreshedPreview = createCurrentCommunicationPreview();
+      setCommunicationPreview(refreshedPreview);
+      setCommunicationPreviewOutOfDate(false);
+      setCopyNotice("Submission preview refreshed. Nothing has been saved or submitted.");
+    } catch (error) {
+      console.error("WelcomeFlow communication preview refresh failed", error);
+      setCopyNotice(`Submission preview could not refresh: ${error?.message || "unknown resolver issue"}`);
+    }
   }
 
   function generateOutput() {
@@ -13872,6 +13960,10 @@ function rowifyCandidate(item = {}) {
         candidateSource: card.source || prev.candidateSource,
         extractionFieldSources: sources,
       };
+      if (communicationPreviewFlowEnabled) {
+        next.candidateTypeConfirmed = false;
+        sources.candidateTypeConfirmed = "Recruiter edit";
+      }
       if (nextType === "Rehire") {
         next.previousEmployee = "Yes";
         next.rehireEligibility = prev.rehireEligibility && prev.rehireEligibility !== "Not needed" ? prev.rehireEligibility : "Not verified";
@@ -15192,6 +15284,10 @@ function rowifyCandidate(item = {}) {
                       );
                     })}
                   </div>
+                  {communicationPreviewFlowEnabled ? <label style={{ display: "flex", gap: 10, alignItems: "flex-start", border: `1px solid ${form.candidateTypeConfirmed ? THEME.green : THEME.amber}`, borderRadius: 8, padding: 12, background: form.candidateTypeConfirmed ? THEME.greenBg : THEME.amberBg, color: THEME.text, cursor: "pointer" }}>
+                    <input type="checkbox" checked={form.candidateTypeConfirmed === true} onChange={(event) => updateForm("candidateTypeConfirmed", event.target.checked)} style={{ marginTop: 2 }} />
+                    <span><strong>I confirm this candidate is {form.candidateType || "not classified"}.</strong><span style={{ display: "block", color: THEME.muted, fontSize: 12, marginTop: 3 }}>Candidate type must be explicitly verified before WelcomeFlow can build the submission preview.</span></span>
+                  </label> : null}
 
                   <section style={{ background: THEME.panel, border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, boxShadow: THEME.shadow, overflow: "hidden" }}>
                     <div style={{ padding: 16, borderBottom: `1px solid ${THEME.borderSoft}` }}>
@@ -15384,7 +15480,7 @@ function rowifyCandidate(item = {}) {
                     <Button subtle onClick={() => { if (window.confirm("Clear this intake form and start fresh? Unsaved information will be removed.")) { resetIntakeForNextCandidate({ keepOutput: false, handoffOpen: false }); setCopyNotice("Intake form cleared."); } }} style={{ minHeight: 30, padding: "6px 9px", textAlign: "center", fontSize: 12 }}>Clear Form</Button>
                     <Button subtle onClick={saveSnapshotAsLead} style={{ minHeight: 30, padding: "6px 9px", textAlign: "center", fontSize: 12 }}>Save as Lead<br /><span style={{ fontSize: 10, color: THEME.muted }}>Hot Leads</span></Button>
                     <Button subtle onClick={() => saveIntakeDraftAndReset("snapshot")} style={{ minHeight: 30, padding: "6px 9px", textAlign: "center", fontSize: 12 }}>Save Draft<br /><span style={{ fontSize: 10, color: THEME.muted }}>Continue later</span></Button>
-                    <Button primary onClick={generateOutput} style={{ minHeight: 30, padding: "6px 9px", alignSelf: "center", fontSize: 12 }}>Mark Candidate Ready<br /><span style={{ fontSize: 9.5, color: "rgba(255,255,255,0.78)" }}>Generate submittal</span></Button>
+                    {communicationPreviewFlowEnabled ? <Button primary onClick={openCommunicationPreview} style={{ minHeight: 30, padding: "6px 9px", alignSelf: "center", fontSize: 12 }}>Review Submission Preview<br /><span style={{ fontSize: 9.5, color: "rgba(255,255,255,0.78)" }}>Nothing is saved yet</span></Button> : <Button primary onClick={generateOutput} style={{ minHeight: 30, padding: "6px 9px", alignSelf: "center", fontSize: 12 }}>Mark Candidate Ready<br /><span style={{ fontSize: 9.5, color: "rgba(255,255,255,0.78)" }}>Generate submittal</span></Button>}
                   </div>
                 </div>
 
@@ -15555,6 +15651,7 @@ function rowifyCandidate(item = {}) {
                 <Field label="Candidate Type*"><SelectInput value={form.candidateType} onChange={(event) => updateForm("candidateType", event.target.value)} options={["External", "Internal", "Rehire"]} /></Field>
                 <Field label="Submission Date*"><TextInput type="date" value={submissionDate} onChange={(event) => setSubmissionDate(event.target.value)} /></Field>
               </div>
+              {communicationPreviewFlowEnabled ? <div style={{ marginTop: 8 }}><ToggleField label={`Candidate type confirmed: ${form.candidateType || "Not selected"}`} checked={form.candidateTypeConfirmed === true} onChange={(value) => updateForm("candidateTypeConfirmed", value)} /></div> : null}
               <div style={{ ...twoColumnGrid, marginTop: 8 }}>
                 <Field label="Active Requisition*"><RequisitionSearchInput value={form.selectedRequisitionId} requisitions={activeRequisitions} onSelect={applyRequisitionToForm} placeholder="Search by req number, facility, or position" /></Field>
                 <div style={{ display: "grid", gap: 8 }}>
@@ -15935,7 +16032,7 @@ function rowifyCandidate(item = {}) {
               <div style={{ display: "grid", gap: 10, placeItems: "center", textAlign: "center", marginTop: 18, border: `1px solid ${THEME.primary2}`, borderRadius: 6, padding: 16, background: THEME.blueBg }}>
                 <strong style={{ color: THEME.text }}>Generate Candidate Workflow</strong>
                 <div style={{ color: THEME.muted, fontSize: 12, maxWidth: 520 }}>This creates the tracker record, then opens the step-by-step output review page.</div>
-                <Button primary onClick={generateOutput} style={{ minWidth: isNarrow ? "100%" : 280 }}>Generate Candidate Workflow</Button>
+                {communicationPreviewFlowEnabled ? <Button primary onClick={openCommunicationPreview} style={{ minWidth: isNarrow ? "100%" : 280 }}>Review Submission Preview</Button> : <Button primary onClick={generateOutput} style={{ minWidth: isNarrow ? "100%" : 280 }}>Generate Candidate Workflow</Button>}
               </div>
               </IntakeStepShell>
               </div>
@@ -18697,11 +18794,89 @@ function rowifyCandidate(item = {}) {
           </Card>
         ) : null}
 
+        {communicationPreviewFlowEnabled && communicationPreviewOpen && communicationPreview ? <CommunicationPreviewModal preview={communicationPreview} outOfDate={communicationPreviewOutOfDate} onClose={() => setCommunicationPreviewOpen(false)} onRefresh={refreshCommunicationPreview} /> : null}
         {copyNotice ? <div style={{ position: "fixed", right: 18, bottom: 18, zIndex: 20, background: THEME.primary, color: "#ffffff", borderRadius: 6, padding: "11px 14px", fontWeight: 800, boxShadow: "0 12px 30px rgba(16,24,40,0.22)" }}>{copyNotice}</div> : null}
         <footer style={{ marginTop: 24, textAlign: "center", color: THEME.muted, fontSize: 13 }}>(c) Central 54 Holdings LLC</footer>
         </main>
       </div>
       )}
+    </div>
+  );
+}
+
+function CommunicationPreviewDocument({ title, templateKey, variantKey = "", subject = "", body = "", to = [], cc = [] }) {
+  return (
+    <section style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, background: THEME.panel, overflow: "hidden" }}>
+      <div style={{ padding: 12, background: THEME.panelAlt, borderBottom: `1px solid ${THEME.borderSoft}`, display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <strong style={{ color: THEME.text }}>{title}</strong>
+        <span style={{ color: THEME.muted, fontSize: 11 }}>{templateKey || "No template"}{variantKey ? ` | ${variantKey}` : ""}</span>
+      </div>
+      <div style={{ padding: 12, display: "grid", gap: 9 }}>
+        {to.length ? <div style={{ fontSize: 12 }}><strong>To:</strong> <span style={{ color: THEME.muted }}>{to.join("; ")}</span></div> : null}
+        {cc.length ? <div style={{ fontSize: 12 }}><strong>CC:</strong> <span style={{ color: THEME.muted }}>{cc.join("; ")}</span></div> : null}
+        {subject ? <div style={{ fontSize: 12 }}><strong>Subject:</strong> <span style={{ color: THEME.muted }}>{subject}</span></div> : null}
+        <pre style={{ margin: 0, whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "Inter, Arial, sans-serif", fontSize: 12.5, lineHeight: 1.6, color: THEME.text, background: THEME.panelAlt, border: `1px solid ${THEME.borderSoft}`, borderRadius: 6, padding: 12 }}>{body || "No output generated for this communication."}</pre>
+      </div>
+    </section>
+  );
+}
+
+export function CommunicationPreviewModal({ preview, outOfDate = false, onClose, onRefresh }) {
+  const requisition = preview.snapshot?.requisition || {};
+  const intake = preview.snapshot?.intake || {};
+  const facility = preview.snapshot?.facility || {};
+  const blockers = preview.blockers || [];
+  const warnings = preview.warnings || [];
+  const rendered = preview.rendered || {};
+  const facilityRecipients = preview.recipients?.facility || { to: [], cc: [] };
+  const candidateRecipients = preview.recipients?.candidate || { to: [] };
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Submission preview" onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 120, background: "rgba(16, 10, 43, 0.58)", display: "grid", placeItems: "center", padding: 16 }}>
+      <div onClick={(event) => event.stopPropagation()} style={{ width: "min(1180px, 100%)", maxHeight: "94vh", overflow: "auto", background: THEME.panel, border: `1px solid ${THEME.border}`, borderRadius: 10, boxShadow: "0 28px 80px rgba(16,10,43,0.34)" }}>
+        <header style={{ position: "sticky", top: 0, zIndex: 2, padding: 16, background: THEME.panel, borderBottom: `1px solid ${THEME.borderSoft}`, display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <div style={{ color: THEME.primary2, fontSize: 11, fontWeight: 950, textTransform: "uppercase", letterSpacing: 0.6 }}>Side-effect-free review gate</div>
+            <h2 style={{ margin: "4px 0 5px", color: THEME.text }}>Preview Submission — Nothing Saved Yet</h2>
+            <div style={{ color: THEME.muted, fontSize: 12, lineHeight: 1.5 }}>This is the exact resolved output. No candidate, tracker, status, history, email, text, or ATS record has been created.</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <Badge tone={outOfDate || !preview.canConfirm ? "High" : "Low"}>{outOfDate ? "Out of Date" : preview.canConfirm ? "Preview Complete" : "Action Required"}</Badge>
+            <Button subtle onClick={onClose}>Close Preview</Button>
+          </div>
+        </header>
+
+        <div style={{ padding: 16, display: "grid", gap: 14 }}>
+          <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
+            {[
+              ["Candidate", intake.candidateName || "Not provided"],
+              ["Candidate Type", intake.candidateType || "Not confirmed"],
+              ["Position", requisition.position || "Not resolved"],
+              ["Facility", facility.facilityName || requisition.facility || "Not resolved"],
+              ["Req Number", requisition.reqNumber || "Not provided"],
+              ["Snapshot Hash", preview.snapshotHash || "Unavailable"],
+            ].map(([label, value]) => <div key={label} style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panelAlt }}><div style={{ color: THEME.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>{label}</div><div style={{ color: THEME.text, fontWeight: 850, fontSize: 12, marginTop: 3, overflowWrap: "anywhere" }}>{value}</div></div>)}
+          </section>
+
+          {outOfDate ? <section style={{ border: `1px solid ${THEME.amber}`, borderRadius: 8, padding: 12, background: THEME.amberBg }}><strong style={{ color: THEME.amber }}>Out of Date</strong><div style={{ color: THEME.text, fontSize: 12, marginTop: 6 }}>Relevant intake, requisition, facility, recipient, or template information changed. Refresh Preview to review a current immutable snapshot.</div></section> : null}
+          {blockers.length ? <section style={{ border: `1px solid ${THEME.red}`, borderRadius: 8, padding: 12, background: THEME.redBg }}><strong style={{ color: THEME.red }}>Action Required</strong><div style={{ display: "grid", gap: 7, marginTop: 8 }}>{blockers.map((item, index) => <div key={`${item.code}-${item.field}-${index}`} style={{ color: THEME.text, fontSize: 12 }}><strong>{item.code}</strong> — {item.message}</div>)}</div></section> : <section style={{ border: `1px solid ${THEME.green}`, borderRadius: 8, padding: 12, background: THEME.greenBg }}><strong style={{ color: THEME.green }}>Preview Complete</strong><div style={{ color: THEME.text, fontSize: 12, marginTop: 6 }}>The communication package is ready for review. Final candidate-ready confirmation will be enabled after the templates and confirmation workflow are approved.</div></section>}
+          {warnings.length ? <section style={{ border: `1px solid ${THEME.amber}`, borderRadius: 8, padding: 12, background: THEME.amberBg }}><strong style={{ color: THEME.amber }}>Warnings</strong><div style={{ display: "grid", gap: 7, marginTop: 8 }}>{warnings.map((item, index) => <div key={`${item.code}-${index}`} style={{ color: THEME.text, fontSize: 12 }}>{item.message}</div>)}</div></section> : null}
+
+          {(preview.unresolvedTokens?.length || preview.restrictedTokens?.length) ? <section style={{ border: `1px solid ${THEME.red}`, borderRadius: 8, padding: 12, background: THEME.redBg, display: "grid", gap: 7 }}><strong style={{ color: THEME.red }}>Template tokens requiring correction</strong>{preview.unresolvedTokens?.length ? <div style={{ fontSize: 12 }}><strong>Unresolved:</strong> {preview.unresolvedTokens.join(", ")}</div> : null}{preview.restrictedTokens?.length ? <div style={{ fontSize: 12 }}><strong>Restricted in ATS:</strong> {preview.restrictedTokens.join(", ")}</div> : null}</section> : null}
+
+          <CommunicationPreviewDocument title="Facility Submission Email" templateKey={rendered.facilityEmail?.templateKey} variantKey={rendered.facilityEmail?.variantKey} subject={rendered.facilityEmail?.subject} body={rendered.facilityEmail?.body} to={facilityRecipients.to} cc={facilityRecipients.cc} />
+          <CommunicationPreviewDocument title="Candidate Confirmation Email" templateKey={rendered.candidateEmail?.templateKey} variantKey={rendered.candidateEmail?.variantKey} subject={rendered.candidateEmail?.subject} body={rendered.candidateEmail?.body} to={candidateRecipients.to} />
+          {rendered.candidateText ? <CommunicationPreviewDocument title="Candidate Follow-Up Text" templateKey={rendered.candidateText.templateKey} body={rendered.candidateText.body} /> : <section style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 12, background: THEME.panelAlt, color: THEME.muted, fontSize: 12 }}><strong style={{ color: THEME.text }}>Candidate Follow-Up Text</strong><div style={{ marginTop: 4 }}>No explicitly selected submission text template. No text will be generated or sent.</div></section>}
+          <CommunicationPreviewDocument title="ATS Submission Update" templateKey={rendered.atsUpdate?.templateKey} variantKey={rendered.atsUpdate?.variantKey} subject={rendered.atsUpdate?.subject} body={rendered.atsUpdate?.body} />
+        </div>
+
+        <footer style={{ position: "sticky", bottom: 0, zIndex: 2, borderTop: `1px solid ${THEME.borderSoft}`, background: THEME.panel, padding: 14, display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ color: THEME.muted, fontSize: 12 }}>Review snapshot <strong style={{ color: THEME.text }}>{preview.snapshotHash || "unavailable"}</strong>. Any relevant input change requires Refresh Preview.</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Button subtle onClick={onClose}>Return to Intake</Button>
+            <Button subtle onClick={onRefresh}>Refresh Preview</Button>
+          </div>
+        </footer>
+      </div>
     </div>
   );
 }
