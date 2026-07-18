@@ -131,4 +131,10 @@ describe("side-effect-free submission package preview", () => {
     expect(source).toMatch(/isFeatureFlagEnabled\(settings, "communicationPreviewFlow"\) \|\| reviewedCandidateReadyConfirmationEnabled/);
     expect(source).toMatch(/candidateTypeConfirmed: form\.candidateTypeConfirmed === true/);
   });
+
+  test("reviewed Candidate Ready records remain pre-submission during legacy tracker migration", () => {
+    const source = fs.readFileSync(path.join(__dirname, "App.js"), "utf8");
+    expect(source).toMatch(/submissionDate: item\.reviewedSubmissionPackage \? \(item\.submissionDate \|\| ""\)/);
+    expect(source).toMatch(/item\.reviewedSubmissionPackage && Array\.isArray\(item\.audit\) \? item\.audit/);
+  });
 });

@@ -1946,7 +1946,7 @@ function migrateTrackerRecords(records, settings) {
       candidateSource: item.candidateSource || snapshot.candidateSource || "",
       requisitionId: item.requisitionId || snapshot.selectedRequisitionId || "",
       managerEmail: managerEmailFor(settings, item),
-      submissionDate: item.submissionDate || todayIso(),
+      submissionDate: item.reviewedSubmissionPackage ? (item.submissionDate || "") : (item.submissionDate || todayIso()),
       status: item.status || "Submitted",
       owner: item.owner || "Recruiter",
       nextAction: item.nextAction || (isClosedStatus(item.status) ? "No action needed" : "Awaiting manager review"),
@@ -1960,7 +1960,7 @@ function migrateTrackerRecords(records, settings) {
       archiveReason: item.archiveReason || "",
       futureReviewStatus: item.futureReviewStatus || "",
       archiveNotes: item.archiveNotes || "",
-      audit: item.audit?.length ? item.audit : [{ id: makeId("audit"), timestamp: new Date().toISOString(), label: "Record migrated", detail: `${candidate} | ${position}` }],
+      audit: item.reviewedSubmissionPackage && Array.isArray(item.audit) ? item.audit : item.audit?.length ? item.audit : [{ id: makeId("audit"), timestamp: new Date().toISOString(), label: "Record migrated", detail: `${candidate} | ${position}` }],
     };
   });
 }
