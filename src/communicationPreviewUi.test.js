@@ -42,7 +42,7 @@ describe("side-effect-free submission package preview", () => {
     expect(screen.getByText("Warnings")).toBeInTheDocument();
     expect(screen.getByText("Text is configured as optional.")).toBeInTheDocument();
     expect(screen.getAllByText("Preview Complete").length).toBeGreaterThan(0);
-    expect(screen.getByText(/Final candidate-ready confirmation will be enabled after the templates/i)).toBeInTheDocument();
+    expect(screen.getByText(/Final Candidate Ready confirmation is not enabled in this phase/i)).toBeInTheDocument();
   });
 
   test("shows blockers separately and preserves unsupported and restricted tokens", () => {

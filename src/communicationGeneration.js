@@ -486,20 +486,22 @@ export function resolveCandidateTypeTemplate(rootTemplate = {}, candidateType = 
   if (candidateType === "External") {
     const variant = variants.External;
     if (variant && statusIsActive(variant)) return { template: mergeTemplate(rootTemplate, variant), variantKey: "External", active: rootActive, blockers: rootActive ? [] : [blocker("ROOT_TEMPLATE_INACTIVE", "The root facility submission template is not Active.", "template", "hiringManager")] };
-    return { template: clone(rootTemplate), variantKey: "root", active: rootActive, blockers: rootActive ? [] : [blocker("FACILITY_TEMPLATE_INACTIVE", "The facility submission template is not Active.", "template", "hiringManager")] };
+    if (!Object.keys(variants).length) return { template: clone(rootTemplate), variantKey: "root", active: rootActive, blockers: rootActive ? [] : [blocker("FACILITY_TEMPLATE_INACTIVE", "The facility submission template is not Active.", "template", "hiringManager")] };
+    return { template: clone(rootTemplate), variantKey: "root-comparison", active: false, blockers: [blocker("EXTERNAL_VARIANT_NOT_APPROVED", "The External facility submission variant is not approved and Active.", "template", "hiringManager.draftVariants.External")] };
   }
   if (candidateType === "Rehire") {
     const variant = variants.Rehire;
-    const approvedBlocks = variant && statusIsActive(variant) ? variant.conditionalBlocks : rootTemplate.conditionalBlocks;
+    const legacyRootOnly = !Object.keys(variants).length;
+    const approvedBlocks = variant && statusIsActive(variant) ? variant.conditionalBlocks : legacyRootOnly ? rootTemplate.conditionalBlocks : {};
     const approvedSection = clean(approvedBlocks?.rehireSection);
     const template = variant && statusIsActive(variant) ? mergeTemplate(rootTemplate, { conditionalBlocks: variant.conditionalBlocks }) : clone(rootTemplate);
     return {
       template,
-      variantKey: variant && statusIsActive(variant) ? "Rehire" : "root+rehire",
+      variantKey: variant && statusIsActive(variant) ? "Rehire" : legacyRootOnly ? "root+rehire" : "root-comparison",
       active: rootActive && Boolean(approvedSection),
       blockers: [
         ...(rootActive ? [] : [blocker("FACILITY_TEMPLATE_INACTIVE", "The facility submission template is not Active.", "template", "hiringManager")]),
-        ...(approvedSection ? [] : [blocker("REHIRE_SECTION_NOT_APPROVED", "An approved Rehire conditional section is required.", "template", "conditionalBlocks.rehireSection")]),
+        ...(approvedSection ? [] : [blocker("REHIRE_SECTION_NOT_APPROVED", "An Active Rehire conditional section is required.", "template", "conditionalBlocks.rehireSection")]),
       ],
     };
   }
@@ -514,11 +516,17 @@ function applyConditionalBlocks(record = {}, tokens = {}) {
   return next;
 }
 
-function resolveRequiredTemplate(settings = {}, key = "") {
-  const record = settings.templates?.[key];
-  if (!record || typeof record !== "object") return { record: {}, blockers: [blocker("TEMPLATE_MISSING", `Required template ${key} is missing.`, "template", key)] };
-  if (!statusIsActive(record, { root: true })) return { record: clone(record), blockers: [blocker("TEMPLATE_INACTIVE", `Required template ${key} is not Active.`, "template", key)] };
-  return { record: clone(record), blockers: [] };
+function resolveActiveVariant(settings = {}, key = "", variantKey = "") {
+  const root = settings.templates?.[key] || {};
+  const variant = root.draftVariants?.[variantKey];
+  if (!Object.keys(root.draftVariants || {}).length) {
+    if (!statusIsActive(root, { root: true })) return { record: clone(root), variantKey: "root", blockers: [blocker("TEMPLATE_INACTIVE", `Required template ${key} is not Active.`, "template", key)] };
+    return { record: clone(root), variantKey: "root", blockers: [] };
+  }
+  if (!variant || !statusIsActive(variant)) {
+    return { record: {}, variantKey, blockers: [blocker("ACTIVE_VARIANT_MISSING", `The ${variantKey} ${key} variant is not Active in WelcomeFlow Test.`, "template", `${key}.draftVariants.${variantKey}`)] };
+  }
+  return { record: mergeTemplate(root, variant), variantKey, blockers: [] };
 }
 
 export function validateCommunicationPreview(preview = {}) {
@@ -569,9 +577,9 @@ export function buildCommunicationPreview({
   const tokens = buildCommunicationTokenMap(snapshot);
   const rendered = {
     facilityEmail: { templateKey: "hiringManager", variantKey: "none", subject: "", body: "" },
-    candidateEmail: { templateKey: "candidateConfirmation", variantKey: "root", subject: "", body: "" },
+    candidateEmail: { templateKey: "candidateConfirmation", variantKey: "none", subject: "", body: "", releaseCondition: "facilitySubmissionSent" },
     candidateText: null,
-    atsUpdate: { templateKey: "atsUpdate", variantKey: "root", subject: "", body: "" },
+    atsUpdate: { templateKey: "atsUpdate", variantKey: "none", subject: "", body: "", releaseCondition: "facilitySubmissionSent" },
   };
   const unresolvedTokens = [];
   const restrictedTokens = [];
@@ -580,6 +588,7 @@ export function buildCommunicationPreview({
   const facilityTemplate = resolveCandidateTypeTemplate(rootFacility, candidateType);
   blockers.push(...facilityTemplate.blockers);
   rendered.facilityEmail.variantKey = facilityTemplate.variantKey;
+  rendered.facilityEmail.releaseCondition = facilityTemplate.template?.releaseCondition || "candidateReadyConfirmed";
   if (facilityTemplate.template && typeof facilityTemplate.template === "object") {
     const result = renderCommunicationTemplate(facilityTemplate.template, applyConditionalBlocks(facilityTemplate.template, tokens));
     rendered.facilityEmail.subject = result.subject;
@@ -588,19 +597,25 @@ export function buildCommunicationPreview({
   }
 
   REQUIRED_TEMPLATE_KEYS.filter(([, key]) => key !== "hiringManager").forEach(([outputKey, key]) => {
-    const resolution = resolveRequiredTemplate(settings, key);
+    const variantKey = key === "candidateConfirmation" ? candidateType : "Standard";
+    const resolution = resolveActiveVariant(settings, key, variantKey);
     blockers.push(...resolution.blockers);
     const result = renderCommunicationTemplate(resolution.record, applyConditionalBlocks(resolution.record, tokens), {
       restrictedTokens: key === "atsUpdate" ? ATS_RESTRICTED_TOKENS : [],
     });
+    rendered[outputKey].variantKey = resolution.variantKey;
+    rendered[outputKey].releaseCondition = resolution.record.releaseCondition || "facilitySubmissionSent";
     rendered[outputKey].subject = result.subject;
     rendered[outputKey].body = result.body;
     unresolvedTokens.push(...result.unresolvedTokens);
     restrictedTokens.push(...result.restrictedTokens);
   });
 
+  const textMappingId = settings.communicationTemplateDrafts?.submissionTextTemplateByCandidateType?.[candidateType];
+  const candidateTypeText = settings.communicationTemplateDrafts?.textTemplates?.[candidateType];
   const textTemplates = Array.isArray(settings.textTemplates) ? settings.textTemplates : [];
-  const selectedText = selectedTextTemplateId ? textTemplates.find((item) => clean(item?.id) === clean(selectedTextTemplateId)) : null;
+  const selectedRootText = selectedTextTemplateId ? textTemplates.find((item) => clean(item?.id) === clean(selectedTextTemplateId)) : null;
+  const selectedText = textMappingId && candidateTypeText?.id === textMappingId ? candidateTypeText : selectedRootText;
   if (!selectedText) {
     const message = "No explicit candidate submission text template is configured.";
     if (textRequired) blockers.push(blocker("TEXT_TEMPLATE_REQUIRED", message, "template", "selectedTextTemplateId"));
@@ -609,7 +624,7 @@ export function buildCommunicationPreview({
     blockers.push(blocker("TEXT_TEMPLATE_INACTIVE", "The selected text template is not Active.", "template", "selectedTextTemplateId"));
   } else {
     const textResult = renderCommunicationTemplate(selectedText, tokens);
-    rendered.candidateText = { templateKey: selectedText.id, body: textResult.body };
+    rendered.candidateText = { templateKey: selectedText.id, variantKey: candidateType, body: textResult.body, releaseCondition: selectedText.releaseCondition || "facilitySubmissionSent" };
     unresolvedTokens.push(...textResult.unresolvedTokens);
   }
 

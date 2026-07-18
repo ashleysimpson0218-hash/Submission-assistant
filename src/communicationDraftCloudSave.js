@@ -1,5 +1,6 @@
 import { assertTestRuntime } from "./requisitionCommunicationDetails";
 import { saveCommunicationDraftSafely } from "./communicationTemplateDrafts";
+import { activateCommunicationVariant, deactivateCommunicationVariant } from "./communicationTemplateActivation";
 
 export const CLOUD_DRAFT_CONFLICT_ERROR = "The workspace changed while this draft was saving. Refresh and try again.";
 
@@ -51,6 +52,38 @@ export async function saveCommunicationDraftToCloud({ client, table, workspaceId
     if (attempt === 1) return { ok: false, error: CLOUD_DRAFT_CONFLICT_ERROR };
   }
   return { ok: false, error: CLOUD_DRAFT_CONFLICT_ERROR };
+}
+
+async function saveCommunicationStatusToCloud({ client, table, workspaceId, runtime, baseline, selection, confirmations, normalizeSettings, now = () => new Date().toISOString(), mode = "activate" } = {}) {
+  const guard = assertTestRuntime(runtime);
+  if (!guard.ok) return { ok: false, error: guard.error };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const latest = await loadLatestDraftSettings({ client, table, workspaceId, runtime, normalizeSettings });
+    if (!latest.ok) return latest;
+    const timestamp = now();
+    const result = mode === "deactivate"
+      ? deactivateCommunicationVariant({ latestSettings: latest.settings, baseline, selection, runtime, now: timestamp })
+      : activateCommunicationVariant({ latestSettings: latest.settings, baseline, selection, confirmations, runtime, now: timestamp });
+    if (!result.ok) return result;
+    const payload = { ...latest.workspace, settings: result.settings, savedAt: timestamp };
+    const { data, error } = await client.from(table)
+      .update({ data: payload, updated_at: timestamp })
+      .eq("workspace_id", workspaceId)
+      .eq("updated_at", latest.updatedAt)
+      .select("updated_at")
+      .maybeSingle();
+    if (!error && data?.updated_at) return { ...result, updatedAt: data.updated_at };
+    if (attempt === 1) return { ok: false, error: CLOUD_DRAFT_CONFLICT_ERROR };
+  }
+  return { ok: false, error: CLOUD_DRAFT_CONFLICT_ERROR };
+}
+
+export function activateCommunicationVariantToCloud(options = {}) {
+  return saveCommunicationStatusToCloud({ ...options, mode: "activate" });
+}
+
+export function deactivateCommunicationVariantToCloud(options = {}) {
+  return saveCommunicationStatusToCloud({ ...options, mode: "deactivate" });
 }
 
 export async function saveWorkspacePreservingCommunicationDraftsToCloud({ client, table, workspaceId, runtime, workspaceState, normalizeSettings = (value) => value, now = () => new Date().toISOString() } = {}) {

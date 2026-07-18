@@ -117,9 +117,9 @@ const CONFIRMATION_NEXT_STEPS = {
 };
 
 const CONFIRMATION_OPENING = {
-  External: "Thank you for taking the time to speak with me. Your profile has been prepared for submission",
-  Internal: "Your information has been prepared for internal consideration",
-  Rehire: "Your information has been prepared for rehire consideration",
+  External: "Thank you for taking the time to speak with me. Your profile has been submitted",
+  Internal: "Your information has been submitted for internal consideration",
+  Rehire: "Your information has been submitted for rehire consideration",
 };
 
 const CONFIRMATION_CLOSING = {
@@ -156,13 +156,13 @@ export const DRAFT_TEMPLATE_SPECS = Object.freeze({
   "candidate:External": { templateKey: "candidateConfirmation", communicationType: "Candidate Confirmation", candidateType: "External", subject: "Submission Confirmation: {position} | {facility}", body: confirmationBody("External"), conditionalBlocks: {} },
   "candidate:Internal": { templateKey: "candidateConfirmation", communicationType: "Candidate Confirmation", candidateType: "Internal", subject: "Internal Submission Review: {position} | {facility}", body: confirmationBody("Internal"), conditionalBlocks: {} },
   "candidate:Rehire": { templateKey: "candidateConfirmation", communicationType: "Candidate Confirmation", candidateType: "Rehire", subject: "Rehire Consideration Review: {position} | {facility}", body: confirmationBody("Rehire"), conditionalBlocks: {} },
-  "ats:Standard": { templateKey: "atsUpdate", communicationType: "ATS Submission Update", candidateType: "Standard", subject: "Submission Prepared: {candidate_name} | {position} | {facility}", body: "Candidate: {candidate_name}\nCandidate Type: {candidate_type}\nPosition: {position}\nFacility: {facility}\nReq Number: {req_number}\nUnique ID: {unique_id_number}\nEmployment Details: {employment_details}\nExperience: {experience}\nCredentials: {credentials}\nExpected / Final Rate: {final_compensation}\nInterview Availability: {interview_availability}\n\nStatus: Submission package prepared for recruiter review.", conditionalBlocks: {} },
+  "ats:Standard": { templateKey: "atsUpdate", communicationType: "ATS Submission Update", candidateType: "Standard", subject: "Submission Prepared: {candidate_name} | {position} | {facility}", body: "Candidate: {candidate_name}\nCandidate Type: {candidate_type}\nPosition: {position}\nFacility: {facility}\nReq Number: {req_number}\nUnique ID: {unique_id_number}\nEmployment Details: {employment_details}\nExperience: {experience}\nCredentials: {credentials}\nExpected / Final Rate: {final_compensation}\nInterview Availability: {interview_availability}\n\nStatus: Candidate submitted to facility for review.", conditionalBlocks: {} },
 });
 
 export const DRAFT_TEXT_SPECS = Object.freeze({
-  External: { id: "submission-text-draft-external", candidateType: "External", body: "Hi {candidate_first_name}, your submission package for the {position} opportunity with {facility} has been prepared for review. I will share next steps as they become available. – {recruiter_name}" },
-  Internal: { id: "submission-text-draft-internal", candidateType: "Internal", body: "Hi {candidate_first_name}, your internal submission package for the {position} opportunity with {facility} has been prepared for review. I will share next steps once facility and eligibility review is complete. – {recruiter_name}" },
-  Rehire: { id: "submission-text-draft-rehire", candidateType: "Rehire", body: "Hi {candidate_first_name}, your rehire consideration package for the {position} opportunity with {facility} has been prepared for review. I will share next steps after eligibility and facility review. – {recruiter_name}" },
+  External: { id: "submission-text-draft-external", candidateType: "External", body: "Hi {candidate_first_name}, your profile has been submitted for the {position} opportunity with {facility}. Please monitor your phone, voicemail, email, and spam folder for possible outreach. I will share updates as they become available. – {recruiter_name}" },
+  Internal: { id: "submission-text-draft-internal", candidateType: "Internal", body: "Hi {candidate_first_name}, your internal submission for the {position} opportunity with {facility} has been sent for review. I will share next steps after facility and eligibility review. – {recruiter_name}" },
+  Rehire: { id: "submission-text-draft-rehire", candidateType: "Rehire", body: "Hi {candidate_first_name}, your information has been submitted for rehire consideration for the {position} opportunity with {facility}. I will share next steps after eligibility and facility review. – {recruiter_name}" },
 });
 
 function clone(value) {

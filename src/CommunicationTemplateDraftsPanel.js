@@ -12,6 +12,14 @@ import {
   templateCoverageWarnings,
   validateDraftTemplate,
 } from "./communicationTemplateDrafts";
+import {
+  activateCommunicationVariant,
+  createActivationBaseline,
+  deactivateCommunicationVariant,
+  finalizeApprovedCommunication,
+  releaseConditionFor,
+  releaseConditionLabel,
+} from "./communicationTemplateActivation";
 
 const OPTIONS = [
   ["facility:External", "External Facility Submission"],
@@ -50,13 +58,15 @@ function rootRecord(settings, selected) {
   return root;
 }
 
-export default function CommunicationTemplateDraftsPanel({ settings = {}, setSettings = () => {}, runtime = {}, onSaveDraft = null, onRefreshDraft = null }) {
+export default function CommunicationTemplateDraftsPanel({ settings = {}, setSettings = () => {}, runtime = {}, onSaveDraft = null, onRefreshDraft = null, onActivateVariant = null, onDeactivateVariant = null }) {
   const [selected, setSelected] = useState("facility:External");
   const [draft, setDraft] = useState(() => initialDraft(settings, "facility:External"));
   const [result, setResult] = useState(null);
   const [notice, setNotice] = useState("");
   const [compare, setCompare] = useState("");
   const [reviewSave, setReviewSave] = useState(false);
+  const [reviewActivation, setReviewActivation] = useState(false);
+  const [activationChecks, setActivationChecks] = useState({ reviewed: false, testOnly: false });
   const [baseline, setBaseline] = useState(() => createDraftEditBaseline(settings, { kind: "facility", templateKey: "hiringManager", candidateType: "External" }));
   const coverage = useMemo(() => draftCoverage(settings), [settings]);
   const warnings = useMemo(() => templateCoverageWarnings(settings), [settings]);
@@ -75,6 +85,8 @@ export default function CommunicationTemplateDraftsPanel({ settings = {}, setSet
     setNotice(message);
     setCompare("");
     setReviewSave(false);
+    setReviewActivation(false);
+    setActivationChecks({ reviewed: false, testOnly: false });
   }
 
   useEffect(() => {
@@ -122,14 +134,50 @@ export default function CommunicationTemplateDraftsPanel({ settings = {}, setSet
     await save("Draft", { ...selectedVersion, status: "Draft" });
   }
 
+  function activationSelection() {
+    return { kind, templateKey, candidateType };
+  }
+
+  async function activate() {
+    if (!guard.ok) { setNotice(guard.error); return; }
+    const selection = activationSelection();
+    const activationBaseline = createActivationBaseline(settings, selection);
+    const activationResult = onActivateVariant
+      ? await onActivateVariant({ baseline: activationBaseline, selection, confirmations: activationChecks })
+      : activateCommunicationVariant({ latestSettings: settings, baseline: activationBaseline, selection, confirmations: activationChecks, runtime });
+    if (!activationResult?.ok) { setNotice(activationResult?.error || "Activation was blocked."); return; }
+    if (!onActivateVariant) setSettings(activationResult.settings);
+    setDraft(activationResult.record);
+    setBaseline(createDraftEditBaseline(activationResult.settings, selection));
+    setReviewActivation(false);
+    setActivationChecks({ reviewed: false, testOnly: false });
+    setNotice(`${candidateType} ${title} activated in WelcomeFlow Test. No communication was sent or opened.`);
+  }
+
+  async function deactivate() {
+    if (!guard.ok) { setNotice(guard.error); return; }
+    const selection = activationSelection();
+    const deactivationBaseline = createActivationBaseline(settings, selection);
+    const deactivationResult = onDeactivateVariant
+      ? await onDeactivateVariant({ baseline: deactivationBaseline, selection })
+      : deactivateCommunicationVariant({ latestSettings: settings, baseline: deactivationBaseline, selection, runtime });
+    if (!deactivationResult?.ok) { setNotice(deactivationResult?.error || "Deactivation was blocked."); return; }
+    if (!onDeactivateVariant) setSettings(deactivationResult.settings);
+    setDraft(deactivationResult.record);
+    setBaseline(createDraftEditBaseline(deactivationResult.settings, selection));
+    setNotice(`${candidateType} ${title} is now Inactive in WelcomeFlow Test.`);
+  }
+
   const unsupported = result?.unsupportedTokens || [];
   const previous = saved?.history?.[saved.history.length - 1];
   const title = OPTIONS.find(([key]) => key === selected)?.[1] || selected;
+  const activationDraft = finalizeApprovedCommunication(saved || draft, { kind, templateKey, candidateType });
+  const releaseCondition = releaseConditionFor({ kind, templateKey });
 
   return <section aria-label="Candidate-Type Communication Drafts" style={{ display: "grid", gap: 14 }}>
     <div>
       <div style={{ fontSize: 19, fontWeight: 950, color: "#0f172a" }}>Candidate-Type Communication Drafts</div>
-      <div style={{ color: "#64748b", fontSize: 13 }}>Draft and validate synthetic communication language. Drafts are never active and cannot send, copy, or mark a candidate ready.</div>
+      <div style={{ color: "#64748b", fontSize: 13 }}>Review, validate, and activate approved communication variants in WelcomeFlow Test. Activation never sends, copies, opens, or marks a candidate ready.</div>
       <div style={{ marginTop: 8, color: guard.ok ? "#166534" : "#b91c1c", fontSize: 12, fontWeight: 900 }}>
         Environment: {guard.environment || "missing"} · Project: {guard.projectRef || "missing"} · {guard.ok ? "WelcomeFlow Test verified" : guard.error}
       </div>
@@ -155,6 +203,7 @@ export default function CommunicationTemplateDraftsPanel({ settings = {}, setSet
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 9, fontSize: 12 }}>
         <div><b>Version</b><br />{draft.version || 1}</div><div><b>Base template hash</b><br />{draft.baseHash || "Assigned on first save"}</div><div><b>Created at</b><br />{draft.createdAt || "Not saved"}</div><div><b>Updated at</b><br />{draft.updatedAt || "Not saved"}</div>
       </div>
+      <div style={{ border: "1px solid #bfdbfe", borderRadius: 8, background: "#eff6ff", padding: 10, fontSize: 12 }}><b>Release condition</b><br />{releaseConditionLabel(releaseCondition)} <span style={{ color: "#64748b" }}>({releaseCondition})</span></div>
       {kind !== "text" && candidateType !== "Rehire" ? <label style={labelStyle}>Subject<input aria-label="Draft subject" value={draft.subject || ""} onChange={(event) => setDraft({ ...draft, subject: event.target.value })} style={inputStyle} /></label> : null}
       {candidateType === "Rehire" && kind === "facility" ? <label style={labelStyle}>Rehire conditional section<textarea aria-label="Conditional blocks" value={draft.conditionalBlocks?.rehireSection || ""} onChange={(event) => setDraft({ ...draft, conditionalBlocks: { ...(draft.conditionalBlocks || {}), rehireSection: event.target.value } })} rows="7" style={inputStyle} /></label> : <label style={labelStyle}>Body<textarea aria-label="Draft body" value={draft.body || ""} onChange={(event) => setDraft({ ...draft, body: event.target.value })} rows="16" style={inputStyle} /></label>}
       <div style={{ fontSize: 12 }}><b>Conditional blocks:</b> {Object.keys(draft.conditionalBlocks || {}).join(", ") || "None"}</div>
@@ -169,8 +218,17 @@ export default function CommunicationTemplateDraftsPanel({ settings = {}, setSet
         <button type="button" style={buttonStyle} onClick={refreshDraft}>Refresh Draft</button>
         <button type="button" style={buttonStyle} onClick={() => setReviewSave(true)}>Save Draft</button>
         <button type="button" style={buttonStyle} onClick={() => save("Needs Review")}>Mark Needs Review</button>
+        {saved && ["Draft", "Needs Review"].includes(saved.status) ? <button type="button" style={{ ...buttonStyle, background: "#166534", color: "#fff" }} onClick={() => setReviewActivation(true)}>Approve &amp; Activate in Test</button> : null}
+        {saved?.status === "Active" ? <button type="button" style={{ ...buttonStyle, borderColor: "#b91c1c", color: "#b91c1c" }} onClick={deactivate}>Deactivate Test Variant</button> : null}
       </div>
       {reviewSave ? <div aria-label="Exact draft save review" style={{ border: "2px solid #2563eb", borderRadius: 8, padding: 12, background: "#eff6ff" }}><b>Exact draft record to be added or changed</b><pre style={{ whiteSpace: "pre-wrap", maxHeight: 280, overflow: "auto", fontSize: 11 }}>{JSON.stringify({ ...draft, status: "Draft" }, null, 2)}</pre><div style={{ display: "flex", gap: 8 }}><button type="button" style={{ ...buttonStyle, background: "#1d4ed8", color: "#fff" }} onClick={() => save("Draft")}>Save Draft</button><button type="button" style={buttonStyle} onClick={() => setReviewSave(false)}>Cancel</button></div></div> : null}
+      {reviewActivation ? <div aria-label="Test activation review" style={{ border: "2px solid #166534", borderRadius: 8, padding: 12, background: "#f0fdf4", display: "grid", gap: 10 }}>
+        <div><b>Activation review — WelcomeFlow Test only</b><div style={{ fontSize: 12, color: "#475569" }}>Review this one exact record. No communication or Candidate Ready action will run.</div></div>
+        <pre style={{ whiteSpace: "pre-wrap", maxHeight: 300, overflow: "auto", fontSize: 11 }}>{JSON.stringify({ ...activationDraft, releaseCondition, status: "Active", approvedBy: "Test Owner Approval", environment: "test", projectRef: guard.projectRef }, null, 2)}</pre>
+        <label style={{ fontSize: 12, fontWeight: 800 }}><input type="checkbox" checked={activationChecks.reviewed} onChange={(event) => setActivationChecks({ ...activationChecks, reviewed: event.target.checked })} /> I reviewed the subject, body, tokens, candidate type, and release condition for this test communication.</label>
+        <label style={{ fontSize: 12, fontWeight: 800 }}><input type="checkbox" checked={activationChecks.testOnly} onChange={(event) => setActivationChecks({ ...activationChecks, testOnly: event.target.checked })} /> I understand this activation applies only to WelcomeFlow Test.</label>
+        <div style={{ display: "flex", gap: 8 }}><button type="button" disabled={!activationChecks.reviewed || !activationChecks.testOnly} style={{ ...buttonStyle, background: "#166534", color: "#fff", opacity: activationChecks.reviewed && activationChecks.testOnly ? 1 : 0.55 }} onClick={activate}>Approve &amp; Activate in Test</button><button type="button" style={buttonStyle} onClick={() => setReviewActivation(false)}>Cancel</button></div>
+      </div> : null}
       {notice ? <div role="status" style={{ color: notice.includes("saved") || notice.includes("restored") ? "#166534" : "#b91c1c", fontSize: 12, fontWeight: 800 }}>{notice}</div> : null}
       {compare ? <pre aria-label="Template comparison" style={{ whiteSpace: "pre-wrap", maxHeight: 320, overflow: "auto", background: "#f8fafc", padding: 10, fontSize: 11 }}>{compare}</pre> : null}
       {result ? <div aria-label="Draft Preview" style={{ border: `2px solid ${result.valid ? "#16a34a" : "#dc2626"}`, borderRadius: 9, padding: 12 }}><div style={{ fontWeight: 950 }}>{result.label}</div><div style={{ color: result.valid ? "#166534" : "#b91c1c", fontWeight: 800 }}>{result.valid ? "Validation passed. The draft remains non-operational." : "Blocked"}</div>{result.blockers.map((item) => <div key={item} style={{ color: "#b91c1c", fontSize: 12 }}>• {item}</div>)}<div style={{ marginTop: 10, fontSize: 12 }}><b>Subject</b><pre style={{ whiteSpace: "pre-wrap" }}>{result.rendered.subject}</pre><b>Body</b><pre style={{ whiteSpace: "pre-wrap" }}>{result.rendered.body}</pre></div></div> : null}

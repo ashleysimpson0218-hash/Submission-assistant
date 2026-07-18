@@ -25,7 +25,8 @@ import { readRuntimeConfig } from "./runtimeConfig";
 import { buildCommunicationPreview } from "./communicationGeneration";
 import CommunicationTemplateDraftsPanel from "./CommunicationTemplateDraftsPanel";
 import { applyDefaultRootPreservingDraftVariants } from "./communicationTemplateDrafts";
-import { loadLatestDraftSettings, saveCommunicationDraftToCloud, saveWorkspacePreservingCommunicationDraftsToCloud } from "./communicationDraftCloudSave";
+import { releaseConditionLabel } from "./communicationTemplateActivation";
+import { activateCommunicationVariantToCloud, deactivateCommunicationVariantToCloud, loadLatestDraftSettings, saveCommunicationDraftToCloud, saveWorkspacePreservingCommunicationDraftsToCloud } from "./communicationDraftCloudSave";
 import {
   SAFE_REQUISITION_ERROR,
   assertTestRuntime,
@@ -6023,6 +6024,44 @@ function RecruiterApp() {
       normalizeSettings: normalizeCloudDraftSettings,
     });
     if (result.ok) setSettings(result.settings);
+    draftCloudSaveTimerRef.current = window.setTimeout(() => { draftCloudSavePauseRef.current = false; }, 1500);
+    return result;
+  }, [normalizeCloudDraftSettings]);
+
+  const activateCommunicationTemplate = useCallback(async ({ baseline, selection, confirmations }) => {
+    draftCloudSavePauseRef.current = true;
+    window.clearTimeout(draftCloudSaveTimerRef.current);
+    setCloudStatus("Activating protected test variant...");
+    const result = await activateCommunicationVariantToCloud({
+      client: supabase,
+      table: CLOUD_TABLE,
+      workspaceId: CLOUD_WORKSPACE_ID,
+      runtime: { environment: runtimeConfig.environment, projectRef: runtimeConfig.projectRef },
+      baseline,
+      selection,
+      confirmations,
+      normalizeSettings: normalizeCloudDraftSettings,
+    });
+    if (result.ok) { setSettings(result.settings); setCloudStatus("Test variant activated"); }
+    else setCloudStatus("Test activation blocked");
+    draftCloudSaveTimerRef.current = window.setTimeout(() => { draftCloudSavePauseRef.current = false; }, 1500);
+    return result;
+  }, [normalizeCloudDraftSettings]);
+
+  const deactivateCommunicationTemplate = useCallback(async ({ baseline, selection }) => {
+    draftCloudSavePauseRef.current = true;
+    window.clearTimeout(draftCloudSaveTimerRef.current);
+    const result = await deactivateCommunicationVariantToCloud({
+      client: supabase,
+      table: CLOUD_TABLE,
+      workspaceId: CLOUD_WORKSPACE_ID,
+      runtime: { environment: runtimeConfig.environment, projectRef: runtimeConfig.projectRef },
+      baseline,
+      selection,
+      normalizeSettings: normalizeCloudDraftSettings,
+    });
+    if (result.ok) { setSettings(result.settings); setCloudStatus("Test variant deactivated"); }
+    else setCloudStatus("Test deactivation blocked");
     draftCloudSaveTimerRef.current = window.setTimeout(() => { draftCloudSavePauseRef.current = false; }, 1500);
     return result;
   }, [normalizeCloudDraftSettings]);
@@ -18414,7 +18453,7 @@ function rowifyCandidate(item = {}) {
                 ))}
               </div>
             </Card>
-            <SettingsPanel activeSettingsTab={activeSettingsTab} setActiveSettingsTab={setActiveSettingsTab} settings={settings} setSettings={setSettings} updateSettings={updateSettings} activeRoles={activeRoles} activeSites={activeSites} tracker={tracker} setActivePage={setActivePage} setSelectedId={setSelectedId} setActiveProfileTab={setActiveProfileTab} openMailto={openMailto} exportFullBackup={exportFullBackup} importFullBackup={importFullBackup} exportFullDataWorkbook={exportFullDataWorkbook} onRequisitionReferenceChange={syncRequisitionReferences} runtime={{ environment: runtimeConfig.environment, projectRef: runtimeConfig.projectRef }} onSaveCommunicationDraft={saveCommunicationDraft} onRefreshCommunicationDraft={refreshCommunicationDraft} />
+            <SettingsPanel activeSettingsTab={activeSettingsTab} setActiveSettingsTab={setActiveSettingsTab} settings={settings} setSettings={setSettings} updateSettings={updateSettings} activeRoles={activeRoles} activeSites={activeSites} tracker={tracker} setActivePage={setActivePage} setSelectedId={setSelectedId} setActiveProfileTab={setActiveProfileTab} openMailto={openMailto} exportFullBackup={exportFullBackup} importFullBackup={importFullBackup} exportFullDataWorkbook={exportFullDataWorkbook} onRequisitionReferenceChange={syncRequisitionReferences} runtime={{ environment: runtimeConfig.environment, projectRef: runtimeConfig.projectRef }} onSaveCommunicationDraft={saveCommunicationDraft} onRefreshCommunicationDraft={refreshCommunicationDraft} onActivateCommunicationVariant={activateCommunicationTemplate} onDeactivateCommunicationVariant={deactivateCommunicationTemplate} />
           </div>
         ) : null}
 
@@ -18855,7 +18894,7 @@ function rowifyCandidate(item = {}) {
   );
 }
 
-function CommunicationPreviewDocument({ title, templateKey, variantKey = "", subject = "", body = "", to = [], cc = [] }) {
+function CommunicationPreviewDocument({ title, templateKey, variantKey = "", subject = "", body = "", to = [], cc = [], releaseCondition = "" }) {
   return (
     <section style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, background: THEME.panel, overflow: "hidden" }}>
       <div style={{ padding: 12, background: THEME.panelAlt, borderBottom: `1px solid ${THEME.borderSoft}`, display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
@@ -18863,6 +18902,7 @@ function CommunicationPreviewDocument({ title, templateKey, variantKey = "", sub
         <span style={{ color: THEME.muted, fontSize: 11 }}>{templateKey || "No template"}{variantKey ? ` | ${variantKey}` : ""}</span>
       </div>
       <div style={{ padding: 12, display: "grid", gap: 9 }}>
+        {releaseCondition ? <div style={{ fontSize: 12, color: THEME.primary2 }}><strong>Release condition:</strong> {releaseConditionLabel(releaseCondition)}</div> : null}
         {to.length ? <div style={{ fontSize: 12 }}><strong>To:</strong> <span style={{ color: THEME.muted }}>{to.join("; ")}</span></div> : null}
         {cc.length ? <div style={{ fontSize: 12 }}><strong>CC:</strong> <span style={{ color: THEME.muted }}>{cc.join("; ")}</span></div> : null}
         {subject ? <div style={{ fontSize: 12 }}><strong>Subject:</strong> <span style={{ color: THEME.muted }}>{subject}</span></div> : null}
@@ -18909,15 +18949,15 @@ export function CommunicationPreviewModal({ preview, outOfDate = false, onClose,
           </section>
 
           {outOfDate ? <section style={{ border: `1px solid ${THEME.amber}`, borderRadius: 8, padding: 12, background: THEME.amberBg }}><strong style={{ color: THEME.amber }}>Out of Date</strong><div style={{ color: THEME.text, fontSize: 12, marginTop: 6 }}>Relevant intake, requisition, facility, recipient, or template information changed. Refresh Preview to review a current immutable snapshot.</div></section> : null}
-          {blockers.length ? <section style={{ border: `1px solid ${THEME.red}`, borderRadius: 8, padding: 12, background: THEME.redBg }}><strong style={{ color: THEME.red }}>Action Required</strong><div style={{ display: "grid", gap: 7, marginTop: 8 }}>{blockers.map((item, index) => <div key={`${item.code}-${item.field}-${index}`} style={{ color: THEME.text, fontSize: 12 }}><strong>{item.code}</strong> — {item.message}</div>)}</div></section> : <section style={{ border: `1px solid ${THEME.green}`, borderRadius: 8, padding: 12, background: THEME.greenBg }}><strong style={{ color: THEME.green }}>Preview Complete</strong><div style={{ color: THEME.text, fontSize: 12, marginTop: 6 }}>The communication package is ready for review. Final candidate-ready confirmation will be enabled after the templates and confirmation workflow are approved.</div></section>}
+          {blockers.length ? <section style={{ border: `1px solid ${THEME.red}`, borderRadius: 8, padding: 12, background: THEME.redBg }}><strong style={{ color: THEME.red }}>Action Required</strong><div style={{ display: "grid", gap: 7, marginTop: 8 }}>{blockers.map((item, index) => <div key={`${item.code}-${item.field}-${index}`} style={{ color: THEME.text, fontSize: 12 }}><strong>{item.code}</strong> — {item.message}</div>)}</div></section> : <section style={{ border: `1px solid ${THEME.green}`, borderRadius: 8, padding: 12, background: THEME.greenBg }}><strong style={{ color: THEME.green }}>Templates Approved in Test</strong><div style={{ color: THEME.text, fontSize: 12, marginTop: 6 }}><strong>Preview Complete</strong><br />The communication package is ready for review. Final Candidate Ready confirmation is not enabled in this phase.</div></section>}
           {warnings.length ? <section style={{ border: `1px solid ${THEME.amber}`, borderRadius: 8, padding: 12, background: THEME.amberBg }}><strong style={{ color: THEME.amber }}>Warnings</strong><div style={{ display: "grid", gap: 7, marginTop: 8 }}>{warnings.map((item, index) => <div key={`${item.code}-${index}`} style={{ color: THEME.text, fontSize: 12 }}>{item.message}</div>)}</div></section> : null}
 
           {(preview.unresolvedTokens?.length || preview.restrictedTokens?.length) ? <section style={{ border: `1px solid ${THEME.red}`, borderRadius: 8, padding: 12, background: THEME.redBg, display: "grid", gap: 7 }}><strong style={{ color: THEME.red }}>Template tokens requiring correction</strong>{preview.unresolvedTokens?.length ? <div style={{ fontSize: 12 }}><strong>Unresolved:</strong> {preview.unresolvedTokens.join(", ")}</div> : null}{preview.restrictedTokens?.length ? <div style={{ fontSize: 12 }}><strong>Restricted in ATS:</strong> {preview.restrictedTokens.join(", ")}</div> : null}</section> : null}
 
-          <CommunicationPreviewDocument title="Facility Submission Email" templateKey={rendered.facilityEmail?.templateKey} variantKey={rendered.facilityEmail?.variantKey} subject={rendered.facilityEmail?.subject} body={rendered.facilityEmail?.body} to={facilityRecipients.to} cc={facilityRecipients.cc} />
-          <CommunicationPreviewDocument title="Candidate Confirmation Email" templateKey={rendered.candidateEmail?.templateKey} variantKey={rendered.candidateEmail?.variantKey} subject={rendered.candidateEmail?.subject} body={rendered.candidateEmail?.body} to={candidateRecipients.to} />
-          {rendered.candidateText ? <CommunicationPreviewDocument title="Candidate Follow-Up Text" templateKey={rendered.candidateText.templateKey} body={rendered.candidateText.body} /> : <section style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 12, background: THEME.panelAlt, color: THEME.muted, fontSize: 12 }}><strong style={{ color: THEME.text }}>Candidate Follow-Up Text</strong><div style={{ marginTop: 4 }}>No explicitly selected submission text template. No text will be generated or sent.</div></section>}
-          <CommunicationPreviewDocument title="ATS Submission Update" templateKey={rendered.atsUpdate?.templateKey} variantKey={rendered.atsUpdate?.variantKey} subject={rendered.atsUpdate?.subject} body={rendered.atsUpdate?.body} />
+          <CommunicationPreviewDocument title="Facility Submission Email" templateKey={rendered.facilityEmail?.templateKey} variantKey={rendered.facilityEmail?.variantKey} subject={rendered.facilityEmail?.subject} body={rendered.facilityEmail?.body} to={facilityRecipients.to} cc={facilityRecipients.cc} releaseCondition={rendered.facilityEmail?.releaseCondition} />
+          <CommunicationPreviewDocument title="Candidate Confirmation Email" templateKey={rendered.candidateEmail?.templateKey} variantKey={rendered.candidateEmail?.variantKey} subject={rendered.candidateEmail?.subject} body={rendered.candidateEmail?.body} to={candidateRecipients.to} releaseCondition={rendered.candidateEmail?.releaseCondition} />
+          {rendered.candidateText ? <CommunicationPreviewDocument title="Candidate Follow-Up Text" templateKey={rendered.candidateText.templateKey} variantKey={rendered.candidateText.variantKey} body={rendered.candidateText.body} releaseCondition={rendered.candidateText.releaseCondition} /> : <section style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 12, background: THEME.panelAlt, color: THEME.muted, fontSize: 12 }}><strong style={{ color: THEME.text }}>Candidate Follow-Up Text</strong><div style={{ marginTop: 4 }}>No explicitly selected submission text template. No text will be generated or sent.</div></section>}
+          <CommunicationPreviewDocument title="ATS Submission Update" templateKey={rendered.atsUpdate?.templateKey} variantKey={rendered.atsUpdate?.variantKey} subject={rendered.atsUpdate?.subject} body={rendered.atsUpdate?.body} releaseCondition={rendered.atsUpdate?.releaseCondition} />
         </div>
 
         <footer style={{ position: "sticky", bottom: 0, zIndex: 2, borderTop: `1px solid ${THEME.borderSoft}`, background: THEME.panel, padding: 14, display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -21628,7 +21668,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
   );
 }
 
-function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setSettings, updateSettings, activeRoles, activeSites, tracker = [], setActivePage = () => {}, setSelectedId = () => {}, setActiveProfileTab = () => {}, openMailto = () => {}, exportFullBackup, importFullBackup, exportFullDataWorkbook, onRequisitionReferenceChange = () => {}, runtime = {}, onSaveCommunicationDraft = null, onRefreshCommunicationDraft = null }) {
+function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setSettings, updateSettings, activeRoles, activeSites, tracker = [], setActivePage = () => {}, setSelectedId = () => {}, setActiveProfileTab = () => {}, openMailto = () => {}, exportFullBackup, importFullBackup, exportFullDataWorkbook, onRequisitionReferenceChange = () => {}, runtime = {}, onSaveCommunicationDraft = null, onRefreshCommunicationDraft = null, onActivateCommunicationVariant = null, onDeactivateCommunicationVariant = null }) {
   const width = useWindowWidth();
   const fieldGrid = { display: "grid", gap: 14, gridTemplateColumns: width < 900 ? "1fr" : "repeat(2, minmax(0, 1fr))" };
   const [glossarySearch, setGlossarySearch] = useState("");
@@ -23771,7 +23811,7 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
   };
 
   return <>
-    {assertTestRuntime(runtime).ok ? <Card title="Candidate-Type Communication Drafts" subtitle="Create, compare, validate, and preview non-operational candidate-type drafts in WelcomeFlow Test."><CommunicationTemplateDraftsPanel settings={settings} setSettings={setSettings} runtime={runtime} onSaveDraft={onSaveCommunicationDraft} onRefreshDraft={onRefreshCommunicationDraft} /></Card> : null}
+    {assertTestRuntime(runtime).ok ? <Card title="Candidate-Type Communication Drafts" subtitle="Review and activate validated candidate-type communications in WelcomeFlow Test without sending them."><CommunicationTemplateDraftsPanel settings={settings} setSettings={setSettings} runtime={runtime} onSaveDraft={onSaveCommunicationDraft} onRefreshDraft={onRefreshCommunicationDraft} onActivateVariant={onActivateCommunicationVariant} onDeactivateVariant={onDeactivateCommunicationVariant} /></Card> : null}
     <Card title="Email & Text Process Flows" subtitle="Build each workflow as queued emails/texts with editable recipients, subject lines, body copy, and next steps." action={<div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}><Button subtle onClick={() => setTemplateFlowHidden((value) => !value)}>{templateFlowHidden ? "Show" : "Hide"}</Button><Button primary onClick={() => window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "All template changes saved." }))}>Save All Templates</Button></div>}>
       <div style={{ display: "grid", gap: 12 }}>
         {setupGuideCard("templates")}
