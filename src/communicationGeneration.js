@@ -494,7 +494,14 @@ export function resolveCandidateTypeTemplate(rootTemplate = {}, candidateType = 
     const legacyRootOnly = !Object.keys(variants).length;
     const approvedBlocks = variant && statusIsActive(variant) ? variant.conditionalBlocks : legacyRootOnly ? rootTemplate.conditionalBlocks : {};
     const approvedSection = clean(approvedBlocks?.rehireSection);
-    const template = variant && statusIsActive(variant) ? mergeTemplate(rootTemplate, { conditionalBlocks: variant.conditionalBlocks }) : clone(rootTemplate);
+    const template = variant && statusIsActive(variant)
+      ? mergeTemplate(rootTemplate, {
+        conditionalBlocks: variant.conditionalBlocks,
+        body: clean(rootTemplate.body).includes("{rehire_section}")
+          ? rootTemplate.body
+          : `${clean(rootTemplate.body)}\n\nRehire Review:\n${approvedSection}`,
+      })
+      : clone(rootTemplate);
     return {
       template,
       variantKey: variant && statusIsActive(variant) ? "Rehire" : legacyRootOnly ? "root+rehire" : "root-comparison",

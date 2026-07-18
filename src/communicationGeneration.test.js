@@ -214,6 +214,23 @@ describe("side-effect-free communication preview resolver", () => {
     expect(result.snapshot.internalEmployee).toBeNull();
   });
 
+  test("an Active Rehire section is appended when the protected root has no insertion token", () => {
+    const settings = baseSettings();
+    settings.templates.hiringManager.body = "Candidate: {candidate_name}\n{employment_details}";
+    settings.templates.hiringManager.draftVariants = {
+      Rehire: { status: "Active", conditionalBlocks: { rehireSection: "Previous Employee: {previous_employee}\nPrevious Facility: {previous_facility}\nRehire Eligibility: {rehire_eligibility}" } },
+    };
+    const result = immutablePreview({
+      settings,
+      intake: baseIntake({ candidateType: "Rehire", previousEmployee: "Yes", previousFacility: "Prior Test Facility", priorEmploymentDates: "2020-2022", rehireEligibility: "Eligible", rehireEligibilityConfirmed: true }),
+    });
+    expect(result.canConfirm).toBe(true);
+    expect(result.rendered.facilityEmail.variantKey).toBe("Rehire");
+    expect(result.rendered.facilityEmail.body).toContain("Rehire Review:");
+    expect(result.rendered.facilityEmail.body).toContain("Previous Facility: Prior Test Facility");
+    expect(result.rendered.facilityEmail.body).toContain("Rehire Eligibility: Eligible");
+  });
+
   test("scenario 8: Rehire with missing eligibility is blocked", () => {
     const result = immutablePreview({ intake: baseIntake({ candidateType: "Rehire", previousFacility: "Prior Test Facility", rehireEligibility: "", rehireEligibilityConfirmed: false }) });
     expect(result.canConfirm).toBe(false);
