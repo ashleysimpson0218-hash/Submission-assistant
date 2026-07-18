@@ -51,8 +51,22 @@ const CANDIDATE_TYPES = Object.freeze({
 });
 
 const OPTIONAL_SECTION_TOKENS = new Set([
+  "experience",
   "credentials",
   "education",
+  "final_compensation",
+  "interview_availability",
+  "candidate_notes",
+  "current_position",
+  "current_facility",
+  "internal_move_type",
+  "internal_eligibility_status",
+  "current_manager_aware",
+  "reason_for_transfer",
+  "previous_employee",
+  "previous_facility",
+  "rehire_eligibility",
+  "prior_employment_dates",
   "rehire_section",
   "internal_employee_section",
   "contract_statement",
@@ -355,6 +369,8 @@ export function buildCommunicationTokenMap(snapshot = {}) {
   const intake = snapshot.intake || {};
   const facility = snapshot.facility || {};
   const benefits = normalizeBenefitsEligible(req.benefitsEligible);
+  const internal = snapshot.internalEmployee || null;
+  const rehire = snapshot.rehire || null;
   const primary = facility.primaryHiringManager || {};
   const contacts = [primary, facility.administrativeContact, ...(facility.additionalHiringManagers || [])].filter((item) => item?.name || item?.email);
   return {
@@ -392,6 +408,16 @@ export function buildCommunicationTokenMap(snapshot = {}) {
     facility_contacts: contacts.map((item) => [item.name, item.title, item.email, item.phone].filter(Boolean).join(" | ")).join("\n"),
     intake_completion_date: intake.intakeCompletedAt || "",
     submission_date: intake.submissionDate || "",
+    current_position: internal?.currentPosition || "",
+    current_facility: internal?.currentFacility || "",
+    internal_move_type: internal?.internalMoveType || "",
+    internal_eligibility_status: internal?.internalEligibilityStatus || "",
+    current_manager_aware: internal ? (internal.currentManagerAware === true ? "Yes" : internal.currentManagerAware === false ? "No" : "") : "",
+    reason_for_transfer: internal?.reasonForTransfer || "",
+    previous_employee: rehire ? (rehire.previousEmployee === true ? "Yes" : rehire.previousEmployee === false ? "No" : "") : "",
+    previous_facility: rehire?.previousFacility || "",
+    rehire_eligibility: rehire?.rehireEligibility || "",
+    prior_employment_dates: rehire?.priorEmploymentDates || "",
     rehire_section: rehireSection(snapshot),
     internal_employee_section: internalEmployeeSection(snapshot),
   };

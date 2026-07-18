@@ -23,6 +23,7 @@ import {
 import { isFeatureFlagEnabled } from "./featureFlags";
 import { readRuntimeConfig } from "./runtimeConfig";
 import { buildCommunicationPreview } from "./communicationGeneration";
+import CommunicationTemplateDraftsPanel from "./CommunicationTemplateDraftsPanel";
 import {
   SAFE_REQUISITION_ERROR,
   assertTestRuntime,
@@ -18363,7 +18364,7 @@ function rowifyCandidate(item = {}) {
                 ))}
               </div>
             </Card>
-            <SettingsPanel activeSettingsTab={activeSettingsTab} setActiveSettingsTab={setActiveSettingsTab} settings={settings} setSettings={setSettings} updateSettings={updateSettings} activeRoles={activeRoles} activeSites={activeSites} tracker={tracker} setActivePage={setActivePage} setSelectedId={setSelectedId} setActiveProfileTab={setActiveProfileTab} openMailto={openMailto} exportFullBackup={exportFullBackup} importFullBackup={importFullBackup} exportFullDataWorkbook={exportFullDataWorkbook} onRequisitionReferenceChange={syncRequisitionReferences} />
+            <SettingsPanel activeSettingsTab={activeSettingsTab} setActiveSettingsTab={setActiveSettingsTab} settings={settings} setSettings={setSettings} updateSettings={updateSettings} activeRoles={activeRoles} activeSites={activeSites} tracker={tracker} setActivePage={setActivePage} setSelectedId={setSelectedId} setActiveProfileTab={setActiveProfileTab} openMailto={openMailto} exportFullBackup={exportFullBackup} importFullBackup={importFullBackup} exportFullDataWorkbook={exportFullDataWorkbook} onRequisitionReferenceChange={syncRequisitionReferences} runtime={{ environment: runtimeConfig.environment, projectRef: runtimeConfig.projectRef }} />
           </div>
         ) : null}
 
@@ -21577,7 +21578,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
   );
 }
 
-function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setSettings, updateSettings, activeRoles, activeSites, tracker = [], setActivePage = () => {}, setSelectedId = () => {}, setActiveProfileTab = () => {}, openMailto = () => {}, exportFullBackup, importFullBackup, exportFullDataWorkbook, onRequisitionReferenceChange = () => {} }) {
+function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setSettings, updateSettings, activeRoles, activeSites, tracker = [], setActivePage = () => {}, setSelectedId = () => {}, setActiveProfileTab = () => {}, openMailto = () => {}, exportFullBackup, importFullBackup, exportFullDataWorkbook, onRequisitionReferenceChange = () => {}, runtime = {} }) {
   const width = useWindowWidth();
   const fieldGrid = { display: "grid", gap: 14, gridTemplateColumns: width < 900 ? "1fr" : "repeat(2, minmax(0, 1fr))" };
   const [glossarySearch, setGlossarySearch] = useState("");
@@ -23720,6 +23721,7 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
   };
 
   return <>
+    {assertTestRuntime(runtime).ok ? <Card title="Candidate-Type Communication Drafts" subtitle="Create, compare, validate, and preview non-operational candidate-type drafts in WelcomeFlow Test."><CommunicationTemplateDraftsPanel settings={settings} setSettings={setSettings} runtime={runtime} /></Card> : null}
     <Card title="Email & Text Process Flows" subtitle="Build each workflow as queued emails/texts with editable recipients, subject lines, body copy, and next steps." action={<div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}><Button subtle onClick={() => setTemplateFlowHidden((value) => !value)}>{templateFlowHidden ? "Show" : "Hide"}</Button><Button primary onClick={() => window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "All template changes saved." }))}>Save All Templates</Button></div>}>
       <div style={{ display: "grid", gap: 12 }}>
         {setupGuideCard("templates")}
