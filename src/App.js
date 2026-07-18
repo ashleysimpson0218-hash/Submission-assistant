@@ -6325,6 +6325,7 @@ function RecruiterApp() {
   useEffect(() => {
     if (!hasLoaded || draftCloudSavePauseRef.current) return undefined;
     const timeoutId = window.setTimeout(async () => {
+      if (draftCloudSavePauseRef.current) return;
       setCloudStatus("Saving to cloud...");
       const workspaceState = { ...buildWorkspaceState(settings, tracker, history, notesText, manualQueueItems, hotLeads, reportHistory, reportInclusions, currentIntakeDraftSnapshot(), intakeDrafts, hotLeadBulkDrafts), hotLeadWorkingReqId };
       const result = await saveCloudWorkspaceState(workspaceState);
@@ -23808,7 +23809,6 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
     {renderTemplateDrawer()}
   </>;
 }
-
 
 
 

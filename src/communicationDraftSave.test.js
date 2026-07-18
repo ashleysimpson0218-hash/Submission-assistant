@@ -221,4 +221,9 @@ describe("communication draft save hardening", () => {
     const source = ["communicationDraftCloudSave.js", "CommunicationTemplateDraftsPanel.js", "communicationTemplateDrafts.js"].map((file) => fs.readFileSync(path.join(__dirname, file), "utf8")).join("\n");
     expect(source).not.toMatch(/\/api\/|buildOutput|generateOutput|Mark Candidate Ready|mailto|navigator\.clipboard|send-email|book-screening|parse-resume/i);
   });
+
+  test("a previously scheduled workspace autosave rechecks the protected-save pause before writing", () => {
+    const source = fs.readFileSync(path.join(__dirname, "App.js"), "utf8");
+    expect(source).toMatch(/window\.setTimeout\(async \(\) => \{\s*if \(draftCloudSavePauseRef\.current\) return;\s*setCloudStatus\("Saving to cloud\.\.\."\)/);
+  });
 });
