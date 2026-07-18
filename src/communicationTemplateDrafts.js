@@ -185,6 +185,96 @@ function rootWithoutVariants(root = {}) {
   return rest;
 }
 
+export const DRAFT_SAVE_ERRORS = Object.freeze({
+  stale: "This draft changed after you opened it. Refresh before saving to avoid overwriting newer changes.",
+  root: "Root template changed unexpectedly. Draft save was cancelled.",
+  coverage: "Draft coverage changed unexpectedly. Refresh and try again.",
+});
+
+export function draftRootHashes(settings = {}) {
+  return {
+    hiringManager: stableDraftHash(rootWithoutVariants(settings.templates?.hiringManager || {})),
+    candidateConfirmation: stableDraftHash(rootWithoutVariants(settings.templates?.candidateConfirmation || {})),
+    atsUpdate: stableDraftHash(rootWithoutVariants(settings.templates?.atsUpdate || {})),
+    textTemplates: stableDraftHash(settings.textTemplates || []),
+  };
+}
+
+export function draftInventory(settings = {}) {
+  const inventory = {};
+  ["hiringManager", "candidateConfirmation", "atsUpdate"].forEach((templateKey) => {
+    Object.entries(settings.templates?.[templateKey]?.draftVariants || {}).forEach(([candidateType, record]) => {
+      inventory[`template:${templateKey}:${candidateType}`] = stableDraftHash(record);
+    });
+  });
+  Object.entries(settings.communicationTemplateDrafts?.textTemplates || {}).forEach(([candidateType, record]) => {
+    inventory[`text:${candidateType}`] = stableDraftHash(record);
+  });
+  return inventory;
+}
+
+export function draftRecordCount(settings = {}) {
+  return Object.keys(draftInventory(settings)).length;
+}
+
+function draftInventoryKey({ kind, templateKey, candidateType } = {}) {
+  return kind === "text" ? `text:${candidateType}` : `template:${templateKey}:${candidateType}`;
+}
+
+function selectedDraftRecord(settings = {}, { kind, templateKey, candidateType } = {}) {
+  if (kind === "text") return settings.communicationTemplateDrafts?.textTemplates?.[candidateType] || null;
+  return settings.templates?.[templateKey]?.draftVariants?.[candidateType] || null;
+}
+
+export function createDraftEditBaseline(settings = {}, selection = {}) {
+  const selected = selectedDraftRecord(settings, selection);
+  return {
+    selection: clone(selection),
+    rootHashes: draftRootHashes(settings),
+    selectedHash: selected ? stableDraftHash(selected) : "",
+    selectedExists: Boolean(selected),
+    draftCount: draftRecordCount(settings),
+  };
+}
+
+export function verifyDraftSaveIntegrity(beforeSettings = {}, afterSettings = {}, selection = {}) {
+  if (JSON.stringify(draftRootHashes(beforeSettings)) !== JSON.stringify(draftRootHashes(afterSettings))) {
+    return { ok: false, error: DRAFT_SAVE_ERRORS.root };
+  }
+  const before = draftInventory(beforeSettings);
+  const after = draftInventory(afterSettings);
+  const selectedKey = draftInventoryKey(selection);
+  const unrelatedChanged = Object.keys(before).some((key) => !after[key] || (key !== selectedKey && before[key] !== after[key]));
+  const beforeMappings = beforeSettings.communicationTemplateDrafts?.submissionTextTemplateByCandidateType || {};
+  const afterMappings = afterSettings.communicationTemplateDrafts?.submissionTextTemplateByCandidateType || {};
+  const unrelatedMappingChanged = Object.keys(beforeMappings).some((key) => {
+    const selectedMapping = selection.kind === "text" && key === selection.candidateType;
+    return !selectedMapping && beforeMappings[key] !== afterMappings[key];
+  });
+  if (Object.keys(after).length < Object.keys(before).length || unrelatedChanged || unrelatedMappingChanged) {
+    return { ok: false, error: DRAFT_SAVE_ERRORS.coverage };
+  }
+  return { ok: true };
+}
+
+export function saveCommunicationDraftSafely({ latestSettings = {}, baseline, kind, templateKey, candidateType, draft, status = "Draft", now = new Date().toISOString() } = {}) {
+  if (!baseline || JSON.stringify(baseline.rootHashes) !== JSON.stringify(draftRootHashes(latestSettings))) {
+    return { ok: false, error: DRAFT_SAVE_ERRORS.root };
+  }
+  const latestSelected = selectedDraftRecord(latestSettings, { kind, templateKey, candidateType });
+  const latestSelectedHash = latestSelected ? stableDraftHash(latestSelected) : "";
+  if (Boolean(latestSelected) !== Boolean(baseline.selectedExists) || latestSelectedHash !== baseline.selectedHash) {
+    return { ok: false, error: DRAFT_SAVE_ERRORS.stale };
+  }
+  const nextStatus = EDITABLE_DRAFT_STATUSES.includes(status) ? status : "Draft";
+  const result = kind === "text"
+    ? saveTextDraft(latestSettings, { candidateType, draft, status: nextStatus, now })
+    : saveDraftVariant(latestSettings, { templateKey, candidateType, draft, status: nextStatus, now });
+  const integrity = verifyDraftSaveIntegrity(latestSettings, result.settings, { kind, templateKey, candidateType });
+  if (!integrity.ok) return integrity;
+  return { ok: true, settings: result.settings, draft: result.draft, coverageBefore: draftRecordCount(latestSettings), coverageAfter: draftRecordCount(result.settings) };
+}
+
 function historyEntry(record = {}) {
   const { history, ...rest } = record;
   return clone(rest);

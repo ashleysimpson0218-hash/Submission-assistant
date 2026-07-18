@@ -5,11 +5,10 @@ import {
   DRAFT_TEMPLATE_SPECS,
   createInitialDraft,
   createInitialTextDraft,
+  createDraftEditBaseline,
   draftCoverage,
   draftVariantFor,
-  restoreDraftVersionAsNew,
-  saveDraftVariant,
-  saveTextDraft,
+  saveCommunicationDraftSafely,
   templateCoverageWarnings,
   validateDraftTemplate,
 } from "./communicationTemplateDrafts";
@@ -51,13 +50,14 @@ function rootRecord(settings, selected) {
   return root;
 }
 
-export default function CommunicationTemplateDraftsPanel({ settings = {}, setSettings = () => {}, runtime = {} }) {
+export default function CommunicationTemplateDraftsPanel({ settings = {}, setSettings = () => {}, runtime = {}, onSaveDraft = null, onRefreshDraft = null }) {
   const [selected, setSelected] = useState("facility:External");
   const [draft, setDraft] = useState(() => initialDraft(settings, "facility:External"));
   const [result, setResult] = useState(null);
   const [notice, setNotice] = useState("");
   const [compare, setCompare] = useState("");
   const [reviewSave, setReviewSave] = useState(false);
+  const [baseline, setBaseline] = useState(() => createDraftEditBaseline(settings, { kind: "facility", templateKey: "hiringManager", candidateType: "External" }));
   const coverage = useMemo(() => draftCoverage(settings), [settings]);
   const warnings = useMemo(() => templateCoverageWarnings(settings), [settings]);
   const [kind, candidateType] = selected.split(":");
@@ -66,13 +66,30 @@ export default function CommunicationTemplateDraftsPanel({ settings = {}, setSet
   const saved = storedDraft(settings, selected);
   const guard = assertTestRuntime(runtime);
 
-  useEffect(() => {
-    setDraft(initialDraft(settings, selected));
+  function refreshFrom(nextSettings = settings, message = "Draft refreshed from the latest Test settings.") {
+    const nextSpec = DRAFT_TEMPLATE_SPECS[selected];
+    const selection = { kind, templateKey: kind === "text" ? "candidateText" : nextSpec.templateKey, candidateType };
+    setDraft(initialDraft(nextSettings, selected));
+    setBaseline(createDraftEditBaseline(nextSettings, selection));
     setResult(null);
-    setNotice("");
+    setNotice(message);
     setCompare("");
     setReviewSave(false);
-  }, [selected, settings]);
+  }
+
+  useEffect(() => {
+    refreshFrom(settings, "");
+    // Selecting another draft intentionally starts a new edit baseline.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
+
+  async function refreshDraft() {
+    if (!guard.ok) { setNotice(guard.error); return; }
+    if (!onRefreshDraft) { refreshFrom(settings); return; }
+    const refreshed = await onRefreshDraft();
+    if (!refreshed?.ok) { setNotice(refreshed?.error || "WelcomeFlow could not refresh this draft."); return; }
+    refreshFrom(refreshed.settings);
+  }
 
   function validate(nextDraft = draft) {
     const validation = validateDraftTemplate(nextDraft, { candidateType, templateKey, settings });
@@ -80,28 +97,29 @@ export default function CommunicationTemplateDraftsPanel({ settings = {}, setSet
     return validation;
   }
 
-  function save(status = "Draft") {
+  async function save(status = "Draft", draftOverride = draft) {
     if (!guard.ok) { setNotice(guard.error); return; }
-    const candidate = { ...draft, status };
+    const candidate = { ...draftOverride, status };
     const validation = validate(candidate);
     if (status === "Needs Review" && !validation.valid) { setNotice("Blocked drafts cannot be marked Needs Review."); return; }
-    const savedResult = kind === "text"
-      ? saveTextDraft(settings, { candidateType, draft: candidate, status })
-      : saveDraftVariant(settings, { templateKey: spec.templateKey, candidateType, draft: candidate, status });
-    setSettings(savedResult.settings);
+    const operation = { kind, templateKey, candidateType, draft: candidate, status };
+    const savedResult = onSaveDraft
+      ? await onSaveDraft({ baseline, operation })
+      : saveCommunicationDraftSafely({ latestSettings: settings, baseline, ...operation });
+    if (!savedResult?.ok) { setReviewSave(false); setNotice(savedResult?.error || "WelcomeFlow could not save this draft."); return; }
+    if (!onSaveDraft) setSettings(savedResult.settings);
     setDraft(savedResult.draft);
+    setBaseline(createDraftEditBaseline(savedResult.settings, { kind, templateKey, candidateType }));
     setReviewSave(false);
     setNotice(`${candidateType} ${kind === "text" ? "text" : spec.communicationType} saved as ${savedResult.draft.status}. No template was activated.`);
   }
 
-  function restore(version) {
+  async function restore(version) {
     if (!guard.ok) { setNotice(guard.error); return; }
     if (kind === "text") { setNotice("Select and edit a prior text version to restore it as a new Draft."); return; }
-    const restored = restoreDraftVersionAsNew(settings, { templateKey: spec.templateKey, candidateType, version });
-    if (restored.error) { setNotice(restored.error); return; }
-    setSettings(restored.settings);
-    setDraft(restored.draft);
-    setNotice(`Version ${version} restored as new Draft version ${restored.draft.version}.`);
+    const selectedVersion = (saved?.history || []).find((item) => Number(item.version) === Number(version));
+    if (!selectedVersion) { setNotice("Previous version not found."); return; }
+    await save("Draft", { ...selectedVersion, status: "Draft" });
   }
 
   const unsupported = result?.unsupportedTokens || [];
@@ -148,6 +166,7 @@ export default function CommunicationTemplateDraftsPanel({ settings = {}, setSet
         <button type="button" style={buttonStyle} disabled={!previous || kind === "text"} onClick={() => previous && restore(previous.version)}>Restore as New Draft</button>
         <button type="button" style={buttonStyle} onClick={() => validate()}>Validate Draft</button>
         <button type="button" style={buttonStyle} onClick={() => validate()}>Preview With Synthetic Scenario</button>
+        <button type="button" style={buttonStyle} onClick={refreshDraft}>Refresh Draft</button>
         <button type="button" style={buttonStyle} onClick={() => setReviewSave(true)}>Save Draft</button>
         <button type="button" style={buttonStyle} onClick={() => save("Needs Review")}>Mark Needs Review</button>
       </div>
