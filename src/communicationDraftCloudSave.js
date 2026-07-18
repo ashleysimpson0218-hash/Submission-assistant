@@ -3,6 +3,24 @@ import { saveCommunicationDraftSafely } from "./communicationTemplateDrafts";
 
 export const CLOUD_DRAFT_CONFLICT_ERROR = "The workspace changed while this draft was saving. Refresh and try again.";
 
+export function preserveLatestCommunicationDrafts(outgoingSettings = {}, latestSettings = {}) {
+  const settings = { ...outgoingSettings, templates: { ...(outgoingSettings.templates || {}) } };
+  ["hiringManager", "candidateConfirmation", "atsUpdate"].forEach((templateKey) => {
+    const outgoingRoot = outgoingSettings.templates?.[templateKey] || {};
+    const latestVariants = latestSettings.templates?.[templateKey]?.draftVariants;
+    const root = { ...outgoingRoot };
+    if (latestVariants) root.draftVariants = latestVariants;
+    else delete root.draftVariants;
+    settings.templates[templateKey] = root;
+  });
+  if (latestSettings.communicationTemplateDrafts) {
+    settings.communicationTemplateDrafts = latestSettings.communicationTemplateDrafts;
+  } else {
+    delete settings.communicationTemplateDrafts;
+  }
+  return settings;
+}
+
 export async function loadLatestDraftSettings({ client, table, workspaceId, runtime, normalizeSettings = (value) => value } = {}) {
   const guard = assertTestRuntime(runtime);
   if (!guard.ok) return { ok: false, error: guard.error };
@@ -30,6 +48,30 @@ export async function saveCommunicationDraftToCloud({ client, table, workspaceId
       .maybeSingle();
     const { data, error } = await query;
     if (!error && data?.updated_at) return { ...result, updatedAt: data.updated_at };
+    if (attempt === 1) return { ok: false, error: CLOUD_DRAFT_CONFLICT_ERROR };
+  }
+  return { ok: false, error: CLOUD_DRAFT_CONFLICT_ERROR };
+}
+
+export async function saveWorkspacePreservingCommunicationDraftsToCloud({ client, table, workspaceId, runtime, workspaceState, normalizeSettings = (value) => value, now = () => new Date().toISOString() } = {}) {
+  const guard = assertTestRuntime(runtime);
+  if (!guard.ok) return { ok: false, error: guard.error };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const latest = await loadLatestDraftSettings({ client, table, workspaceId, runtime, normalizeSettings });
+    if (!latest.ok) return latest;
+    const savedAt = now();
+    const payload = {
+      ...workspaceState,
+      settings: preserveLatestCommunicationDrafts(workspaceState.settings, latest.settings),
+      savedAt,
+    };
+    const { data, error } = await client.from(table)
+      .update({ data: payload, updated_at: savedAt })
+      .eq("workspace_id", workspaceId)
+      .eq("updated_at", latest.updatedAt)
+      .select("updated_at")
+      .maybeSingle();
+    if (!error && data?.updated_at) return { ok: true, updatedAt: data.updated_at };
     if (attempt === 1) return { ok: false, error: CLOUD_DRAFT_CONFLICT_ERROR };
   }
   return { ok: false, error: CLOUD_DRAFT_CONFLICT_ERROR };

@@ -24,7 +24,7 @@ import { isFeatureFlagEnabled } from "./featureFlags";
 import { readRuntimeConfig } from "./runtimeConfig";
 import { buildCommunicationPreview } from "./communicationGeneration";
 import CommunicationTemplateDraftsPanel from "./CommunicationTemplateDraftsPanel";
-import { loadLatestDraftSettings, saveCommunicationDraftToCloud } from "./communicationDraftCloudSave";
+import { loadLatestDraftSettings, saveCommunicationDraftToCloud, saveWorkspacePreservingCommunicationDraftsToCloud } from "./communicationDraftCloudSave";
 import {
   SAFE_REQUISITION_ERROR,
   assertTestRuntime,
@@ -1105,9 +1105,15 @@ async function loadCloudWorkspaceState() {
 
 async function saveCloudWorkspaceState(data) {
   if (!supabase) return { error: "Supabase not configured" };
-  const payload = { workspace_id: CLOUD_WORKSPACE_ID, data, updated_at: new Date().toISOString() };
-  const { error } = await supabase.from(CLOUD_TABLE).upsert(payload, { onConflict: "workspace_id" });
-  return { error };
+  const result = await saveWorkspacePreservingCommunicationDraftsToCloud({
+    client: supabase,
+    table: CLOUD_TABLE,
+    workspaceId: CLOUD_WORKSPACE_ID,
+    runtime: { environment: runtimeConfig.environment, projectRef: runtimeConfig.projectRef },
+    workspaceState: data,
+    normalizeSettings: (value) => normalizeSettings(mergeDefaults(DEFAULT_SETTINGS, value || {})),
+  });
+  return { error: result.ok ? null : result.error };
 }
 
 function buildWorkspaceState(settings, tracker, history, notesText, manualQueueItems, hotLeads, reportHistory, reportInclusions, intakeDraft, intakeDrafts, hotLeadBulkDrafts) {
@@ -23809,7 +23815,6 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
     {renderTemplateDrawer()}
   </>;
 }
-
 
 
 

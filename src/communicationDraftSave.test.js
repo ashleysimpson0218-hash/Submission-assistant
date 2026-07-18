@@ -2,7 +2,12 @@ import fs from "fs";
 import path from "path";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import CommunicationTemplateDraftsPanel from "./CommunicationTemplateDraftsPanel";
-import { loadLatestDraftSettings, saveCommunicationDraftToCloud } from "./communicationDraftCloudSave";
+import {
+  loadLatestDraftSettings,
+  preserveLatestCommunicationDrafts,
+  saveCommunicationDraftToCloud,
+  saveWorkspacePreservingCommunicationDraftsToCloud,
+} from "./communicationDraftCloudSave";
 import {
   DRAFT_SAVE_ERRORS,
   DRAFT_TEMPLATE_SPECS,
@@ -201,6 +206,35 @@ describe("communication draft save hardening", () => {
     expect(updateEqFirst).toHaveBeenCalledWith("workspace_id", "default");
     expect(updateEqSecond).toHaveBeenCalledWith("updated_at", "before");
     expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  test("ordinary workspace autosave preserves the latest cloud draft collection", () => {
+    const latest = allDraftSettings();
+    const outgoing = rootSettings();
+    outgoing.templates.hiringManager.subject = "A legitimate root edit";
+    const merged = preserveLatestCommunicationDrafts(outgoing, latest);
+    expect(draftRecordCount(merged)).toBe(10);
+    expect(merged.templates.hiringManager.subject).toBe("A legitimate root edit");
+    expect(merged.communicationTemplateDrafts).toEqual(latest.communicationTemplateDrafts);
+  });
+
+  test("ordinary workspace cloud writer reloads and optimistically preserves all ten drafts", async () => {
+    const latestSettings = allDraftSettings();
+    const loadMaybeSingle = jest.fn().mockResolvedValue({ data: { data: { settings: latestSettings, tracker: [] }, updated_at: "before" }, error: null });
+    const updateMaybeSingle = jest.fn().mockResolvedValue({ data: { updated_at: "after" }, error: null });
+    const updateEqSecond = jest.fn(() => ({ select: () => ({ maybeSingle: updateMaybeSingle }) }));
+    const updateEqFirst = jest.fn(() => ({ eq: updateEqSecond }));
+    const update = jest.fn(() => ({ eq: updateEqFirst }));
+    const client = { from: jest.fn(() => ({ select: () => ({ eq: () => ({ maybeSingle: loadMaybeSingle }) }), update })) };
+    const result = await saveWorkspacePreservingCommunicationDraftsToCloud({
+      client, table: "workspace", workspaceId: "default", runtime: TEST_RUNTIME,
+      workspaceState: { settings: rootSettings(), tracker: [] },
+      now: () => "save-time",
+    });
+    expect(result.ok).toBe(true);
+    const written = update.mock.calls[0][0].data.settings;
+    expect(draftRecordCount(written)).toBe(10);
+    expect(updateEqSecond).toHaveBeenCalledWith("updated_at", "before");
   });
 
   test("UI shows stale conflict and Refresh Draft loads the current record", async () => {
