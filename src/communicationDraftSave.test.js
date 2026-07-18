@@ -11,6 +11,7 @@ import {
 import {
   DRAFT_SAVE_ERRORS,
   DRAFT_TEMPLATE_SPECS,
+  applyDefaultRootPreservingDraftVariants,
   createDraftEditBaseline,
   createInitialDraft,
   createInitialTextDraft,
@@ -216,6 +217,15 @@ describe("communication draft save hardening", () => {
     expect(draftRecordCount(merged)).toBe(10);
     expect(merged.templates.hiringManager.subject).toBe("A legitimate root edit");
     expect(merged.communicationTemplateDrafts).toEqual(latest.communicationTemplateDrafts);
+  });
+
+  test("default root normalization preserves all facility draft variants", () => {
+    const settings = allDraftSettings();
+    const current = settings.templates.hiringManager;
+    const normalized = applyDefaultRootPreservingDraftVariants({ subject: "Default root", body: "Default body" }, current);
+    expect(normalized.subject).toBe("Default root");
+    expect(Object.keys(normalized.draftVariants)).toEqual(["External", "Internal", "Rehire"]);
+    expect(normalized.draftVariants).toEqual(current.draftVariants);
   });
 
   test("ordinary workspace cloud writer reloads and optimistically preserves all ten drafts", async () => {

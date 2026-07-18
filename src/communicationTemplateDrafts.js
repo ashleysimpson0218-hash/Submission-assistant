@@ -191,6 +191,12 @@ export const DRAFT_SAVE_ERRORS = Object.freeze({
   coverage: "Draft coverage changed unexpectedly. Refresh and try again.",
 });
 
+export function applyDefaultRootPreservingDraftVariants(defaultRoot = {}, currentRoot = {}) {
+  const next = { ...defaultRoot };
+  if (currentRoot?.draftVariants) next.draftVariants = currentRoot.draftVariants;
+  return next;
+}
+
 export function draftRootHashes(settings = {}) {
   return {
     hiringManager: stableDraftHash(rootWithoutVariants(settings.templates?.hiringManager || {})),

@@ -24,6 +24,7 @@ import { isFeatureFlagEnabled } from "./featureFlags";
 import { readRuntimeConfig } from "./runtimeConfig";
 import { buildCommunicationPreview } from "./communicationGeneration";
 import CommunicationTemplateDraftsPanel from "./CommunicationTemplateDraftsPanel";
+import { applyDefaultRootPreservingDraftVariants } from "./communicationTemplateDrafts";
 import { loadLatestDraftSettings, saveCommunicationDraftToCloud, saveWorkspacePreservingCommunicationDraftsToCloud } from "./communicationDraftCloudSave";
 import {
   SAFE_REQUISITION_ERROR,
@@ -1669,7 +1670,7 @@ function normalizeSettings(input = {}) {
   next.contacts = (next.contacts || DEFAULT_SETTINGS.contacts || []).map((contact) => ({ status: "Active", ...contact, id: contact.id || makeId("contact") }));
   ["hiringManager", "candidateConfirmation", "onboardingApplicationEmail", "onboardingRoadmapCredentialed", "onboardingRoadmapNonCredentialed", "onboardingBackgroundCheck", "internalPromotionConfirmation", "internalPromotionFacilityFilled", "onboardingStatusCredentialed", "onboardingStatusNonCredentialed", "rehirePreboardingFirst", "rehirePreboardingSecond", "rehirePreboardingFinal"].forEach((key) => {
     if (!next.templates?.[key]?.useCustom) {
-      next.templates[key] = { ...DEFAULT_SETTINGS.templates[key] };
+      next.templates[key] = applyDefaultRootPreservingDraftVariants(DEFAULT_SETTINGS.templates[key], next.templates[key]);
     }
   });
   if (!next.templates?.atsUpdate?.useCustom && /ATS Submission \| \{candidate_name\}/i.test(next.templates?.atsUpdate?.subject || "")) {
