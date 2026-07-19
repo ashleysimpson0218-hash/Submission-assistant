@@ -18910,7 +18910,7 @@ function rowifyCandidate(item = {}) {
                 </Card>
               ) : null}
               {profileDrawerTab === "emails" ? (
-                <Card compact title="ATS Updates" subtitle="Copy-ready ATS notes generated from the current candidate workflow.">
+                reviewedSubmissionCommunicationActionsEnabled && selectedSubmission.reviewedSubmissionPackage ? <Card compact title="ATS Updates" subtitle="Reviewed-package actions are controlled from Submission Communications."><div style={{ display: "grid", gap: 10 }}><div style={{ color: THEME.muted, fontSize: 12 }}>Legacy regenerated ATS actions are disabled for this reviewed package. Use the exact saved ATS update after the facility submission is marked sent.</div><Button primary onClick={() => setProfileDrawerTab("communication")}>Open Submission Communications</Button></div></Card> : <Card compact title="ATS Updates" subtitle="Copy-ready ATS notes generated from the current candidate workflow.">
                   <div style={{ display: "grid", gap: 10 }}>
                     <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 6, padding: 12, background: THEME.panel, whiteSpace: "pre-wrap", color: THEME.muted, fontSize: 13 }}>{makeTemplateEmail(selectedSubmission, "atsUpdate", "ATS Update", {}, false).body}</div>
                     <div style={{ display: "flex", justifyContent: "flex-end" }}><Button primary onClick={() => { const email = makeTemplateEmail(selectedSubmission, "atsUpdate", "ATS Update", {}, false); safeCopy(email.body); if (selectedSubmission?.id) addHistory("ATS Update Copied", email.subject, email.body, selectedSubmission.id, { candidate: selectedSubmission.candidate, facility: selectedSubmission.site }); }}>Copy ATS Update</Button></div>
@@ -18925,7 +18925,19 @@ function rowifyCandidate(item = {}) {
                 </Card>
               ) : null}
               {profileDrawerTab === "communication" ? (
-                <Card compact title="Communication" subtitle="Open, copy, or complete candidate and facility messages.">
+                reviewedSubmissionCommunicationActionsEnabled && selectedSubmission.reviewedSubmissionPackage ? <SubmissionCommunicationsPanel
+                  record={selectedSubmission}
+                  processing={communicationActionProcessing}
+                  onViewPackage={() => setSavedSubmissionPackage(selectedSubmission.reviewedSubmissionPackage)}
+                  onOpenFacility={() => openSavedFacilityEmail(selectedSubmission)}
+                  onMarkFacility={() => setCommunicationActionReview({ action: "facilitySent", recordId: selectedSubmission.id, acknowledged: false })}
+                  onOpenCandidate={() => openSavedCandidateEmail(selectedSubmission)}
+                  onMarkCandidate={() => setCommunicationActionReview({ action: "candidateSent", recordId: selectedSubmission.id, acknowledged: false })}
+                  onCopyText={() => copySavedCandidateText(selectedSubmission)}
+                  onMarkText={() => setCommunicationActionReview({ action: "textSent", recordId: selectedSubmission.id, acknowledged: false })}
+                  onCopyAts={() => copySavedAtsUpdate(selectedSubmission)}
+                  onMarkAts={() => setCommunicationActionReview({ action: "atsCompleted", recordId: selectedSubmission.id, acknowledged: false })}
+                /> : <Card compact title="Communication" subtitle="Open, copy, or complete candidate and facility messages.">
                   <div style={{ display: "grid", gap: 10 }}>
                     <Field label="Message Category"><SelectInput value={selectedCandidateOutreachCategory} onChange={(event) => setSelectedCandidateOutreachCategory(event.target.value)} options={candidateOutreachCategories} /></Field>
                     <Field label="Email / Text"><SelectInput value={selectedCandidateOutreachOption?.id || ""} onChange={(event) => setSelectedCandidateOutreachId(event.target.value)} options={filteredCandidateOutreachOptions.map((option) => ({ value: option.id, label: option.label }))} /></Field>

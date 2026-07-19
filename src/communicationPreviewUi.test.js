@@ -146,6 +146,8 @@ describe("side-effect-free submission package preview", () => {
     expect(source).toMatch(/testRuntime\.ok && isFeatureFlagEnabled\(settings, "reviewedSubmissionCommunicationActions"\)/);
     expect(source).toMatch(/reviewedSubmissionCommunicationActionsEnabled && selectedSubmission\.reviewedSubmissionPackage \? <SubmissionCommunicationsPanel/);
     expect(source).toMatch(/: <Accordion title="Communication Command Center"/);
+    expect(source).toMatch(/profileDrawerTab === "communication"[\s\S]*reviewedSubmissionCommunicationActionsEnabled && selectedSubmission\.reviewedSubmissionPackage \? <SubmissionCommunicationsPanel/);
+    expect(source).toMatch(/Legacy regenerated ATS actions are disabled for this reviewed package/);
     expect(source).toMatch(/runReviewedCommunicationAction\(record\.id, applyFacilityEmailOpened/);
     expect(source).toMatch(/latest\.reviewedSubmissionPackage\?\.rendered\?\.candidateText\?\.body/);
     expect(source).toMatch(/latest\.reviewedSubmissionPackage\?\.rendered\?\.atsUpdate\?\.body/);
