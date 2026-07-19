@@ -30,6 +30,19 @@ import {
   applyCandidateReadyConfirmation,
   validateCandidateReadyEligibility,
 } from "./candidateReadyConfirmation";
+import {
+  ACTION_STATES,
+  applyAtsUpdateCompleted,
+  applyAtsUpdateCopied,
+  applyCandidateConfirmationSent,
+  applyCandidateEmailOpened,
+  applyCandidateTextCopied,
+  applyCandidateTextSent,
+  applyCommunicationActionToWorkspace,
+  applyFacilityEmailOpened,
+  applyFacilitySubmissionSent,
+  normalizeReviewedCommunicationRecord,
+} from "./submissionCommunicationActions";
 import CommunicationTemplateDraftsPanel from "./CommunicationTemplateDraftsPanel";
 import { applyDefaultRootPreservingDraftVariants } from "./communicationTemplateDrafts";
 import { releaseConditionLabel } from "./communicationTemplateActivation";
@@ -1935,7 +1948,7 @@ function migrateTrackerRecords(records, settings) {
     const snapshot = item.formSnapshot || {};
     const candidate = item.candidate || snapshot.fullName || "Unnamed Candidate";
     const position = normalizeCommonSpelling(item.position || snapshot.position || "N/A");
-    return {
+    const migrated = {
       ...item,
       id: item.id || makeId("sub"),
       candidate,
@@ -1947,9 +1960,12 @@ function migrateTrackerRecords(records, settings) {
       requisitionId: item.requisitionId || snapshot.selectedRequisitionId || "",
       managerEmail: managerEmailFor(settings, item),
       submissionDate: item.reviewedSubmissionPackage ? (item.submissionDate || "") : (item.submissionDate || todayIso()),
-      status: item.status || "Submitted",
+      status: item.status || (item.reviewedSubmissionPackage ? "Ready for Facility Submission" : "Submitted"),
+      pipelineStage: item.pipelineStage || (item.reviewedSubmissionPackage ? "Submit" : item.pipelineStage),
+      stage: item.stage || (item.reviewedSubmissionPackage ? "Submit" : item.stage),
       owner: item.owner || "Recruiter",
-      nextAction: item.nextAction || (isClosedStatus(item.status) ? "No action needed" : "Awaiting manager review"),
+      nextAction: item.nextAction || (item.reviewedSubmissionPackage ? "Send facility submission" : isClosedStatus(item.status) ? "No action needed" : "Awaiting manager review"),
+      waitingOn: item.waitingOn || (item.reviewedSubmissionPackage ? "Recruiter" : item.waitingOn),
       approvalLevel: item.approvalLevel || "Recruiter approval required",
       relationshipOwner: item.relationshipOwner || "Recruiter",
       interviewDate: item.interviewDate || snapshot.interviewDate || "",
@@ -1962,6 +1978,7 @@ function migrateTrackerRecords(records, settings) {
       archiveNotes: item.archiveNotes || "",
       audit: item.reviewedSubmissionPackage && Array.isArray(item.audit) ? item.audit : item.audit?.length ? item.audit : [{ id: makeId("audit"), timestamp: new Date().toISOString(), label: "Record migrated", detail: `${candidate} | ${position}` }],
     };
+    return item.reviewedSubmissionPackage ? normalizeReviewedCommunicationRecord(migrated) : migrated;
   });
 }
 
@@ -5735,6 +5752,7 @@ function RecruiterApp() {
   const [candidateManagementSearch, setCandidateManagementSearch] = useState("");
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const reviewedCandidateReadyConfirmationEnabled = testRuntime.ok && isFeatureFlagEnabled(settings, "reviewedCandidateReadyConfirmation");
+  const reviewedSubmissionCommunicationActionsEnabled = testRuntime.ok && isFeatureFlagEnabled(settings, "reviewedSubmissionCommunicationActions");
   const communicationPreviewFlowEnabled = testRuntime.ok && (isFeatureFlagEnabled(settings, "communicationPreviewFlow") || reviewedCandidateReadyConfirmationEnabled);
   const [ignoredDuplicateUniqueIds, setIgnoredDuplicateUniqueIds] = useState(() => loadStoredValue("welcomeflow-ignored-duplicate-unique-ids", []));
   const [form, setForm] = useState(DEFAULT_FORM);
@@ -5750,6 +5768,8 @@ function RecruiterApp() {
   const [candidateReadyConfirmationProcessing, setCandidateReadyConfirmationProcessing] = useState(false);
   const [candidateReadyConfirmationResult, setCandidateReadyConfirmationResult] = useState(null);
   const [savedSubmissionPackage, setSavedSubmissionPackage] = useState(null);
+  const [communicationActionReview, setCommunicationActionReview] = useState(null);
+  const [communicationActionProcessing, setCommunicationActionProcessing] = useState(false);
   const [activeIntakeStep, setActiveIntakeStep] = useState("setup");
   const [intakeHandoffOpen, setIntakeHandoffOpen] = useState(false);
   const [completedIntakeSteps, setCompletedIntakeSteps] = useState([]);
@@ -9971,6 +9991,90 @@ function RecruiterApp() {
     } finally {
       setCandidateReadyConfirmationProcessing(false);
     }
+  }
+
+  async function runReviewedCommunicationAction(recordId, transition, { acknowledgment = false, copyValueFor = null, openMailto = false, successMessage = "Communication action saved." } = {}) {
+    if (!reviewedSubmissionCommunicationActionsEnabled || communicationActionProcessing) return null;
+    setCommunicationActionProcessing(true);
+    setCloudStatus("Saving reviewed communication action in WelcomeFlow Test...");
+    try {
+      const cloud = await loadCloudWorkspaceState();
+      if (!cloud.data) throw new Error(cloud.error || "The WelcomeFlow Test workspace could not be loaded.");
+      const latestSettings = normalizeSettings(mergeDefaults(DEFAULT_SETTINGS, cloud.data.settings || {}));
+      const matches = (Array.isArray(cloud.data.tracker) ? cloud.data.tracker : []).filter((record) => record?.id === recordId);
+      if (matches.length !== 1) throw new Error(matches.length ? "WelcomeFlow found more than one candidate record for this action." : "The reviewed candidate record could not be found.");
+      let copied = false;
+      if (copyValueFor) {
+        const exactValue = copyValueFor(matches[0]);
+        if (!exactValue) throw new Error("The exact saved communication is not available.");
+        if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is not available. Nothing was changed.");
+        await navigator.clipboard.writeText(exactValue);
+        copied = true;
+      }
+      const now = new Date().toISOString();
+      const actionResult = applyCommunicationActionToWorkspace({
+        workspace: { ...cloud.data, settings: latestSettings },
+        candidateId: recordId,
+        transition,
+        transitionInput: {
+          settings: latestSettings,
+          runtime: { environment: runtimeConfig.environment, projectRef: runtimeConfig.projectRef },
+          acknowledgment,
+          copied,
+          now,
+        },
+      });
+      if (!actionResult.ok) throw new Error(actionResult.error || "The communication action was blocked.");
+      if (!actionResult.idempotent) {
+        const saved = await saveCloudWorkspaceState(actionResult.workspace);
+        if (saved.error) throw new Error(saved.error);
+      }
+      setSettings(latestSettings);
+      setTracker(migrateTrackerRecords(actionResult.workspace.tracker, latestSettings));
+      setHistory(actionResult.workspace.history || []);
+      setSelectedId(recordId);
+      setCommunicationActionReview(null);
+      setCloudStatus(actionResult.idempotent ? "Communication action already recorded" : "Saved to WelcomeFlow Test");
+      setCopyNotice(actionResult.idempotent ? "This action was already completed. No duplicate timestamp, history, or event was created." : successMessage);
+      if (openMailto && actionResult.mailtoUrl) window.open(actionResult.mailtoUrl, "_self");
+      return actionResult;
+    } catch (error) {
+      console.error("WelcomeFlow reviewed communication action failed", error);
+      setCloudStatus("Communication action blocked");
+      setCopyNotice(error?.message || "The communication action was blocked.");
+      return null;
+    } finally {
+      setCommunicationActionProcessing(false);
+    }
+  }
+
+  function openSavedFacilityEmail(record) {
+    return runReviewedCommunicationAction(record.id, applyFacilityEmailOpened, { openMailto: true, successMessage: "Exact saved facility email opened. It has not been marked sent." });
+  }
+
+  function openSavedCandidateEmail(record) {
+    return runReviewedCommunicationAction(record.id, applyCandidateEmailOpened, { openMailto: true, successMessage: "Exact saved candidate email opened. It has not been marked sent." });
+  }
+
+  function copySavedCandidateText(record) {
+    return runReviewedCommunicationAction(record.id, applyCandidateTextCopied, { copyValueFor: (latest) => latest.reviewedSubmissionPackage?.rendered?.candidateText?.body || "", successMessage: "Exact saved candidate text copied. Confirm only after it has been sent manually." });
+  }
+
+  function copySavedAtsUpdate(record) {
+    return runReviewedCommunicationAction(record.id, applyAtsUpdateCopied, { copyValueFor: (latest) => latest.reviewedSubmissionPackage?.rendered?.atsUpdate?.body || "", successMessage: "Exact saved ATS update copied. Confirm only after it has been pasted and saved manually." });
+  }
+
+  function confirmReviewedCommunicationAction() {
+    if (!communicationActionReview?.recordId || !communicationActionReview?.acknowledged) return;
+    const transitions = {
+      facilitySent: [applyFacilitySubmissionSent, "Facility submission marked sent. Candidate communication and ATS steps are now released."],
+      candidateSent: [applyCandidateConfirmationSent, "Candidate confirmation marked sent."],
+      textSent: [applyCandidateTextSent, "Candidate follow-up text marked sent."],
+      atsCompleted: [applyAtsUpdateCompleted, "ATS submission update marked complete."],
+    };
+    const selected = transitions[communicationActionReview.action];
+    if (!selected) return;
+    runReviewedCommunicationAction(communicationActionReview.recordId, selected[0], { acknowledgment: true, successMessage: selected[1] });
   }
 
   function generateOutput() {
@@ -16594,7 +16698,7 @@ function rowifyCandidate(item = {}) {
                             <span><strong style={{ color: THEME.text }}>Original Submittal:</strong> {selectedOriginalSubmittalDate ? displayDate(selectedOriginalSubmittalDate) : "Pending"}</span>
                           </div>
                           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", marginTop: 8, color: THEME.muted, fontSize: 12 }}>
-                            {selectedSubmission.candidateEmail ? <a href={`mailto:${selectedSubmission.candidateEmail}`} style={{ color: THEME.primary2, fontWeight: 900, textDecoration: "none" }}>Email: {selectedSubmission.candidateEmail}</a> : <span>Email: No email</span>}
+                            {selectedSubmission.candidateEmail && !(reviewedSubmissionCommunicationActionsEnabled && selectedSubmission.reviewedSubmissionPackage) ? <a href={`mailto:${selectedSubmission.candidateEmail}`} style={{ color: THEME.primary2, fontWeight: 900, textDecoration: "none" }}>Email: {selectedSubmission.candidateEmail}</a> : <span>Email: {selectedSubmission.candidateEmail || "No email"}</span>}
                             <span>|</span>
                             <span style={{ color: THEME.green, fontWeight: 900 }}>Phone: {selectedSubmission.formSnapshot?.phoneNumber || "No phone"}</span>
                           </div>
@@ -16636,7 +16740,19 @@ function rowifyCandidate(item = {}) {
                   </div>
 
                   {activeProfileTab === "communication" ? (
-                    <Accordion title="Communication Command Center" subtitle="Candidate, facility leadership, HR, preboarding, and ATS-ready messages in one place." defaultOpen>
+                    reviewedSubmissionCommunicationActionsEnabled && selectedSubmission.reviewedSubmissionPackage ? <SubmissionCommunicationsPanel
+                      record={selectedSubmission}
+                      processing={communicationActionProcessing}
+                      onViewPackage={() => setSavedSubmissionPackage(selectedSubmission.reviewedSubmissionPackage)}
+                      onOpenFacility={() => openSavedFacilityEmail(selectedSubmission)}
+                      onMarkFacility={() => setCommunicationActionReview({ action: "facilitySent", recordId: selectedSubmission.id, acknowledged: false })}
+                      onOpenCandidate={() => openSavedCandidateEmail(selectedSubmission)}
+                      onMarkCandidate={() => setCommunicationActionReview({ action: "candidateSent", recordId: selectedSubmission.id, acknowledged: false })}
+                      onCopyText={() => copySavedCandidateText(selectedSubmission)}
+                      onMarkText={() => setCommunicationActionReview({ action: "textSent", recordId: selectedSubmission.id, acknowledged: false })}
+                      onCopyAts={() => copySavedAtsUpdate(selectedSubmission)}
+                      onMarkAts={() => setCommunicationActionReview({ action: "atsCompleted", recordId: selectedSubmission.id, acknowledged: false })}
+                    /> : <Accordion title="Communication Command Center" subtitle="Candidate, facility leadership, HR, preboarding, and ATS-ready messages in one place." defaultOpen>
                       <div style={{ display: "grid", gap: 12 }}>
                         <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : "210px minmax(260px, 1fr) auto auto auto", alignItems: "end" }}>
                           <Field label="Message Category">
@@ -18976,11 +19092,121 @@ function rowifyCandidate(item = {}) {
         {communicationPreviewFlowEnabled && communicationPreviewOpen && communicationPreview ? <CommunicationPreviewModal preview={communicationPreview} outOfDate={communicationPreviewOutOfDate} onClose={() => setCommunicationPreviewOpen(false)} onRefresh={refreshCommunicationPreview} confirmationEnabled={reviewedCandidateReadyConfirmationEnabled} confirmationProcessing={candidateReadyConfirmationProcessing} onConfirm={confirmReviewedCandidateReady} /> : null}
         {candidateReadyConfirmationResult ? <CandidateReadyConfirmationResult record={candidateReadyConfirmationResult} onViewPackage={() => setSavedSubmissionPackage(candidateReadyConfirmationResult.reviewedSubmissionPackage)} onOpenCandidate={() => { setSelectedId(candidateReadyConfirmationResult.id); setCandidateReadyConfirmationResult(null); setTrackerPanelOpen(false); setActivePage("candidates"); }} onReturnWorkspace={() => { setCandidateReadyConfirmationResult(null); setActivePage("home"); }} /> : null}
         {savedSubmissionPackage ? <SavedSubmissionPackageModal packageData={savedSubmissionPackage} onClose={() => setSavedSubmissionPackage(null)} /> : null}
+        {communicationActionReview ? <CommunicationActionConfirmationModal review={communicationActionReview} record={safeTrackerRows.find((item) => item.id === communicationActionReview.recordId)} processing={communicationActionProcessing} onChangeAcknowledged={(acknowledged) => setCommunicationActionReview((current) => current ? { ...current, acknowledged } : current)} onClose={() => setCommunicationActionReview(null)} onConfirm={confirmReviewedCommunicationAction} /> : null}
         {copyNotice ? <div style={{ position: "fixed", right: 18, bottom: 18, zIndex: 20, background: THEME.primary, color: "#ffffff", borderRadius: 6, padding: "11px 14px", fontWeight: 800, boxShadow: "0 12px 30px rgba(16,24,40,0.22)" }}>{copyNotice}</div> : null}
         <footer style={{ marginTop: 24, textAlign: "center", color: THEME.muted, fontSize: 13 }}>(c) Central 54 Holdings LLC</footer>
         </main>
       </div>
       )}
+    </div>
+  );
+}
+
+function SubmissionCommunicationsPanel({ record, processing = false, onViewPackage, onOpenFacility, onMarkFacility, onOpenCandidate, onMarkCandidate, onCopyText, onMarkText, onCopyAts, onMarkAts }) {
+  const normalized = normalizeReviewedCommunicationRecord(record);
+  const packageData = normalized.reviewedSubmissionPackage || {};
+  const states = normalized.communicationActionStates || {};
+  const recipients = packageData.recipients || {};
+  const rendered = packageData.rendered || {};
+  const steps = [
+    {
+      key: "facilitySubmission",
+      label: "1. Facility Submission",
+      state: states.facilitySubmission,
+      release: packageData.releaseConditions?.facilitySubmission,
+      recipient: [...(recipients.facility?.to || []), ...(recipients.facility?.cc || []).map((value) => `CC: ${value}`)].join("; "),
+      subject: rendered.facilityEmail?.subject,
+      lastAt: normalized.facilitySubmissionDraftOpenedAt,
+      completedAt: normalized.facilitySubmissionSentAt,
+      action: states.facilitySubmission === ACTION_STATES.facilityReady ? ["Open Facility Email", onOpenFacility] : states.facilitySubmission === ACTION_STATES.facilityOpened ? ["Mark Facility Submission Sent", onMarkFacility] : null,
+      locked: "",
+    },
+    {
+      key: "candidateConfirmation",
+      label: "2. Candidate Confirmation",
+      state: states.candidateConfirmation,
+      release: packageData.releaseConditions?.candidateConfirmation,
+      recipient: (recipients.candidate?.to || []).join("; "),
+      subject: rendered.candidateEmail?.subject,
+      lastAt: normalized.candidateConfirmationDraftOpenedAt,
+      completedAt: normalized.candidateConfirmationSentAt,
+      action: states.candidateConfirmation === ACTION_STATES.candidateReady ? ["Open Candidate Email", onOpenCandidate] : states.candidateConfirmation === ACTION_STATES.candidateOpened ? ["Mark Candidate Email Sent", onMarkCandidate] : null,
+      locked: states.candidateConfirmation === ACTION_STATES.locked ? "Facility Submission must be marked Sent first." : "",
+    },
+    {
+      key: "candidateFollowUpText",
+      label: "3. Candidate Follow-Up Text",
+      state: states.candidateFollowUpText,
+      release: packageData.releaseConditions?.candidateFollowUpText,
+      recipient: normalized.candidatePhone || normalized.formSnapshot?.phoneNumber || "Candidate phone from reviewed intake",
+      subject: "",
+      lastAt: normalized.candidateTextCopiedAt,
+      completedAt: normalized.textSentAt,
+      action: states.candidateFollowUpText === ACTION_STATES.copyReady ? ["Copy Candidate Text", onCopyText] : states.candidateFollowUpText === ACTION_STATES.textCopied ? ["Mark Candidate Text Sent", onMarkText] : null,
+      locked: states.candidateFollowUpText === ACTION_STATES.locked ? "Facility Submission must be marked Sent first." : states.candidateFollowUpText === ACTION_STATES.textOptional ? "No saved candidate text is configured; this optional step does not block completion." : "",
+    },
+    {
+      key: "atsSubmissionUpdate",
+      label: "4. ATS Submission Update",
+      state: states.atsSubmissionUpdate,
+      release: packageData.releaseConditions?.atsSubmissionUpdate,
+      recipient: "Manual ATS entry",
+      subject: rendered.atsUpdate?.subject,
+      lastAt: normalized.atsCopiedAt,
+      completedAt: normalized.atsCompletedAt,
+      action: states.atsSubmissionUpdate === ACTION_STATES.copyReady ? ["Copy ATS Update", onCopyAts] : states.atsSubmissionUpdate === ACTION_STATES.atsCopied ? ["Mark ATS Update Complete", onMarkAts] : null,
+      locked: states.atsSubmissionUpdate === ACTION_STATES.locked ? "Facility Submission must be marked Sent first." : "",
+    },
+  ];
+  return (
+    <Accordion title="Submission Communications" subtitle="Controlled manual actions from the exact reviewed package." defaultOpen>
+      <div style={{ display: "grid", gap: 12 }}>
+        <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 8 }}>
+          {[["Candidate", normalized.candidate], ["Position", normalized.position], ["Facility", normalized.site], ["Req Number", normalized.reqNumber], ["Snapshot Hash", packageData.snapshotHash], ["Package Confirmed At", packageData.confirmedAt], ["Package Confirmed By", packageData.confirmedBy], ["Current Status", normalized.status], ["Current Next Action", normalized.nextAction]].map(([label, value]) => <ProfileSummaryBlock key={label} title={label}>{value || "Not provided"}</ProfileSummaryBlock>)}
+        </section>
+        <section style={{ border: `1px solid ${THEME.primary2}`, borderRadius: 8, padding: 12, background: THEME.blueBg, color: THEME.text, fontSize: 12, lineHeight: 1.55 }}>
+          <strong>Manual action control</strong><div>WelcomeFlow opens or copies the saved communication. It does not send email, send text, or update the ATS automatically.</div>
+        </section>
+        <div style={{ display: "grid", gap: 10 }}>
+          {steps.map((step) => <section key={step.key} style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 13, background: THEME.panelAlt, display: "grid", gap: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}><strong style={{ color: THEME.text }}>{step.label}</strong><Badge tone={step.state === "Sent" || step.state === "Completed" || step.state === ACTION_STATES.textOptional ? "Low" : step.state === ACTION_STATES.locked ? "Medium" : "Interview"}>{step.state}</Badge></div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 7, color: THEME.muted, fontSize: 12 }}>
+              <div><strong style={{ color: THEME.text }}>Release condition:</strong> {releaseConditionLabel(step.release || "Not configured")}</div>
+              {step.recipient ? <div><strong style={{ color: THEME.text }}>Recipient:</strong> {step.recipient}</div> : null}
+              {step.subject ? <div><strong style={{ color: THEME.text }}>Subject:</strong> {step.subject}</div> : null}
+              <div><strong style={{ color: THEME.text }}>Last action:</strong> {step.lastAt ? new Date(step.lastAt).toLocaleString() : "Not started"}</div>
+              <div><strong style={{ color: THEME.text }}>Completed:</strong> {step.completedAt ? new Date(step.completedAt).toLocaleString() : "Not completed"}</div>
+            </div>
+            {step.locked ? <div style={{ color: THEME.amber, fontSize: 12, fontWeight: 800 }}>{step.locked}</div> : null}
+            {step.action ? <div><Button primary onClick={step.action[1]} disabled={processing}>{processing ? "Saving..." : step.action[0]}</Button></div> : null}
+          </section>)}
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end" }}><Button subtle onClick={onViewPackage}>View Exact Saved Package</Button></div>
+      </div>
+    </Accordion>
+  );
+}
+
+function CommunicationActionConfirmationModal({ review, record, processing = false, onChangeAcknowledged, onClose, onConfirm }) {
+  if (!record) return null;
+  const packageData = record.reviewedSubmissionPackage || {};
+  const definitions = {
+    facilitySent: { title: "Mark Facility Submission Sent", meaning: "This records that the exact saved facility email was sent manually. It sets the submission date and releases candidate and ATS actions.", acknowledgment: "I sent the exact saved facility email to the listed To and CC recipients.", recipient: [...(packageData.recipients?.facility?.to || []), ...(packageData.recipients?.facility?.cc || []).map((value) => `CC: ${value}`)].join("; ") },
+    candidateSent: { title: "Mark Candidate Email Sent", meaning: "This records that the exact saved candidate confirmation email was sent manually.", acknowledgment: "I sent the exact saved candidate confirmation email to the listed candidate address.", recipient: (packageData.recipients?.candidate?.to || []).join("; ") },
+    textSent: { title: "Mark Candidate Text Sent", meaning: "This records that the exact saved candidate text was sent manually.", acknowledgment: "I sent the exact saved text message to the candidate.", recipient: record.candidatePhone || record.formSnapshot?.phoneNumber || "Candidate phone from reviewed intake" },
+    atsCompleted: { title: "Mark ATS Update Complete", meaning: "This records that the exact saved ATS update was pasted and saved manually. WelcomeFlow will not call an ATS API.", acknowledgment: "I pasted and saved the exact reviewed ATS update in the ATS.", recipient: "Manual ATS entry" },
+  };
+  const definition = definitions[review.action];
+  if (!definition) return null;
+  return (
+    <div role="dialog" aria-modal="true" aria-label={definition.title} onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 150, background: "rgba(16, 10, 43, 0.62)", display: "grid", placeItems: "center", padding: 16 }}>
+      <div onClick={(event) => event.stopPropagation()} style={{ width: "min(660px, 100%)", background: THEME.panel, border: `1px solid ${THEME.primary2}`, borderRadius: 10, boxShadow: "0 28px 80px rgba(16,10,43,0.34)", padding: 18, display: "grid", gap: 13 }}>
+        <div><div style={{ color: THEME.primary2, fontSize: 11, fontWeight: 950, textTransform: "uppercase" }}>WelcomeFlow Test manual completion</div><h2 style={{ margin: "5px 0", color: THEME.text }}>{definition.title}</h2></div>
+        <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>{[["Candidate", record.candidate], ["Current Action", definition.title], ["Snapshot Hash", packageData.snapshotHash], ["Recipient", definition.recipient]].map(([label, value]) => <ProfileSummaryBlock key={label} title={label}>{value || "Not provided"}</ProfileSummaryBlock>)}</section>
+        <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 12, background: THEME.panelAlt, color: THEME.text, fontSize: 12, lineHeight: 1.55 }}><strong>Exact completion meaning</strong><div>{definition.meaning}</div></div>
+        <label style={{ display: "flex", gap: 9, alignItems: "flex-start", color: THEME.text, fontSize: 12, lineHeight: 1.5, cursor: "pointer" }}><input type="checkbox" checked={review.acknowledged === true} onChange={(event) => onChangeAcknowledged(event.target.checked)} />{definition.acknowledgment}</label>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}><Button subtle onClick={onClose} disabled={processing}>Cancel</Button><Button primary onClick={onConfirm} disabled={!review.acknowledged || processing}>{processing ? "Saving in WelcomeFlow Test..." : definition.title}</Button></div>
+      </div>
     </div>
   );
 }

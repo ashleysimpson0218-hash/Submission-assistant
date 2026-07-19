@@ -136,5 +136,22 @@ describe("side-effect-free submission package preview", () => {
     const source = fs.readFileSync(path.join(__dirname, "App.js"), "utf8");
     expect(source).toMatch(/submissionDate: item\.reviewedSubmissionPackage \? \(item\.submissionDate \|\| ""\)/);
     expect(source).toMatch(/item\.reviewedSubmissionPackage && Array\.isArray\(item\.audit\) \? item\.audit/);
+    expect(source).toMatch(/item\.reviewedSubmissionPackage \? "Ready for Facility Submission" : "Submitted"/);
+    expect(source).toMatch(/item\.reviewedSubmissionPackage \? "Send facility submission"/);
+    expect(source).toMatch(/item\.reviewedSubmissionPackage \? "Recruiter"/);
+  });
+
+  test("Phase 2E communication actions are test-flagged and replace legacy actions only for reviewed packages", () => {
+    const source = fs.readFileSync(path.join(__dirname, "App.js"), "utf8");
+    expect(source).toMatch(/testRuntime\.ok && isFeatureFlagEnabled\(settings, "reviewedSubmissionCommunicationActions"\)/);
+    expect(source).toMatch(/reviewedSubmissionCommunicationActionsEnabled && selectedSubmission\.reviewedSubmissionPackage \? <SubmissionCommunicationsPanel/);
+    expect(source).toMatch(/: <Accordion title="Communication Command Center"/);
+    expect(source).toMatch(/runReviewedCommunicationAction\(record\.id, applyFacilityEmailOpened/);
+    expect(source).toMatch(/latest\.reviewedSubmissionPackage\?\.rendered\?\.candidateText\?\.body/);
+    expect(source).toMatch(/latest\.reviewedSubmissionPackage\?\.rendered\?\.atsUpdate\?\.body/);
+    const actionStart = source.indexOf("async function runReviewedCommunicationAction");
+    const actionEnd = source.indexOf("function generateOutput", actionStart);
+    const actionSource = source.slice(actionStart, actionEnd);
+    expect(actionSource).not.toMatch(/buildOutput|generateOutput|applyTokens|\/api\//);
   });
 });
