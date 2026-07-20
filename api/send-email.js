@@ -16,6 +16,10 @@ function cleanText(value, limit = 500) {
 }
 
 module.exports = async function handler(req, res) {
+  if (process.env.WELCOMEFLOW_UAT_EXTERNAL_ACTIONS_DISABLED === "true") {
+    json(res, 503, { error: "Outbound communication is disabled in Owner UAT." });
+    return;
+  }
   if (process.env.WELCOMEFLOW_MAINTENANCE_MODE === "true") {
     json(res, 503, { error: "WelcomeFlow is temporarily unavailable." });
     return;

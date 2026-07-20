@@ -1,4 +1,4 @@
-if (process.env.WELCOMEFLOW_MAINTENANCE_MODE === "true") {
+if (process.env.WELCOMEFLOW_MAINTENANCE_MODE === "true" || process.env.WELCOMEFLOW_UAT_EXTERNAL_ACTIONS_DISABLED === "true") {
   module.exports = async function maintenanceHandler(req, res) {
     res.statusCode = 503;
     res.setHeader("Content-Type", "application/json");

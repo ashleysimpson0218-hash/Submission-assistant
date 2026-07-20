@@ -1,5 +1,6 @@
 export const TEST_SUPABASE_PROJECT_REF = "bjverobaoujhfaylyrzi";
 export const PRODUCTION_SUPABASE_PROJECT_REF = "qfpgednixvveelgwfylv";
+export const OWNER_UAT_SUPABASE_PROJECT_REF = "zleslkwnbjxknmkqywyv";
 export const SAFE_REQUISITION_ERROR = "WelcomeFlow could not safely identify one requisition to update.";
 
 export const COMMUNICATION_DETAIL_FIELDS = [
@@ -45,6 +46,15 @@ export function assertTestRuntime(runtime = {}) {
   if (projectRef === PRODUCTION_SUPABASE_PROJECT_REF) return { ok: false, error: "Test mode refuses the production Supabase project.", environment, projectRef };
   if (projectRef !== TEST_SUPABASE_PROJECT_REF) return { ok: false, error: "Communication Details requires the WelcomeFlow Test Supabase project.", environment, projectRef };
   return { ok: true, environment, projectRef };
+}
+
+export function assertCommunicationRuntime(runtime = {}) {
+  const environment = String(runtime.environment || "").trim().toLowerCase();
+  const projectRef = String(runtime.projectRef || "").trim().toLowerCase();
+  if (environment === "test") return assertTestRuntime(runtime);
+  if (environment === "uat" && projectRef === OWNER_UAT_SUPABASE_PROJECT_REF) return { ok: true, environment, projectRef, isOwnerUat: true };
+  if (projectRef === PRODUCTION_SUPABASE_PROJECT_REF) return { ok: false, error: "Communication workflow refuses the production Supabase project.", environment, projectRef };
+  return { ok: false, error: "Communication workflow requires the approved Test or Owner UAT project.", environment, projectRef };
 }
 
 export function normalizeBenefitsEligible(value) {

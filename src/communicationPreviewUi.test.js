@@ -127,7 +127,7 @@ describe("side-effect-free submission package preview", () => {
   test("changing candidate type clears explicit confirmation only in the flagged test flow", () => {
     const source = fs.readFileSync(path.join(__dirname, "App.js"), "utf8");
     expect(source).toMatch(/if \(communicationPreviewFlowEnabled\) \{\s*next\.candidateTypeConfirmed = false/);
-    expect(source).toMatch(/testRuntime\.ok && isFeatureFlagEnabled\(settings, "reviewedCandidateReadyConfirmation"\)/);
+    expect(source).toMatch(/communicationRuntimeEnabled && isFeatureFlagEnabled\(settings, "reviewedCandidateReadyConfirmation"\)/);
     expect(source).toMatch(/isFeatureFlagEnabled\(settings, "communicationPreviewFlow"\) \|\| reviewedCandidateReadyConfirmationEnabled/);
     expect(source).toMatch(/candidateTypeConfirmed: form\.candidateTypeConfirmed === true/);
   });

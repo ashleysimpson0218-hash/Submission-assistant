@@ -74,8 +74,9 @@ test("confirmation copy and action states are exact", () => {
   });
 });
 
-test("test runtime is accepted and production or missing runtime is rejected", () => {
+test("approved Test and Owner UAT runtimes are accepted while production or missing runtime is rejected", () => {
   expect(validateCandidateReadyEligibility({ runtime, reviewedPreview: preview(), freshPreview: preview(), acknowledgments }).ok).toBe(true);
+  expect(validateCandidateReadyEligibility({ runtime: { environment: "uat", projectRef: "zleslkwnbjxknmkqywyv" }, reviewedPreview: preview(), freshPreview: preview(), acknowledgments }).ok).toBe(true);
   expect(validateCandidateReadyEligibility({ runtime: { environment: "test", projectRef: "qfpgednixvveelgwfylv" }, reviewedPreview: preview(), freshPreview: preview(), acknowledgments }).ok).toBe(false);
   expect(validateCandidateReadyEligibility({ runtime: {}, reviewedPreview: preview(), freshPreview: preview(), acknowledgments }).ok).toBe(false);
 });

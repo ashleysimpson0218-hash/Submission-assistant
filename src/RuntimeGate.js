@@ -31,3 +31,15 @@ export function TestModeFrame({ children }) {
     </div>
   );
 }
+
+export function OwnerUatFrame({ children }) {
+  return (
+    <div data-testid="owner-uat-frame">
+      <div role="status" style={{ position: "sticky", top: 0, zIndex: 10000, padding: "10px 16px", background: "#7f1d1d", color: "#fff", textAlign: "center", fontFamily: "Inter, Arial, sans-serif", fontSize: 13, fontWeight: 950, letterSpacing: "0.04em", boxShadow: "0 4px 14px rgba(69,10,10,0.28)" }}>
+        <div>OWNER UAT — REAL PRODUCTION DATA COPY — CONTROLLED WRITES</div>
+        <div style={{ marginTop: 3, fontSize: 12, fontWeight: 800, letterSpacing: 0 }}>Do not contact candidates from this environment. Email, text, ATS, booking, and resume actions are disabled.</div>
+      </div>
+      {children}
+    </div>
+  );
+}

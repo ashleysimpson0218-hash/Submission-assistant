@@ -1,5 +1,5 @@
 import {
-  assertTestRuntime,
+  assertCommunicationRuntime,
   normalizeBenefitsEligible,
   normalizeOptionalText,
   normalizeWeeklyHours,
@@ -554,7 +554,7 @@ export function buildCommunicationPreview({
 } = {}) {
   const blockers = [];
   const warnings = [];
-  const runtimeResult = assertTestRuntime(runtime);
+  const runtimeResult = assertCommunicationRuntime(runtime);
   if (!runtimeResult.ok) blockers.push(blocker("TEST_RUNTIME_REJECTED", runtimeResult.error, "runtime", "projectRef"));
 
   const requisitionResult = resolveExactRequisition(requisitions, requisitionId);

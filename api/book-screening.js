@@ -64,6 +64,10 @@ async function saveWorkspace(client, data) {
 }
 
 module.exports = async function handler(req, res) {
+  if (process.env.WELCOMEFLOW_UAT_EXTERNAL_ACTIONS_DISABLED === "true") {
+    json(res, 503, { error: "Booking is disabled in Owner UAT." });
+    return;
+  }
   if (process.env.WELCOMEFLOW_MAINTENANCE_MODE === "true") {
     json(res, 503, { error: "WelcomeFlow is temporarily unavailable." });
     return;

@@ -1,4 +1,4 @@
-import { assertTestRuntime } from "./requisitionCommunicationDetails";
+import { assertCommunicationRuntime } from "./requisitionCommunicationDetails";
 
 export const REVIEW_ACKNOWLEDGMENT = "I reviewed the candidate, candidate type, requisition, employment details, facility recipients, and all communication content.";
 export const TEST_ACTION_ACKNOWLEDGMENT = "I understand this will mark the candidate Ready for Facility Submission in WelcomeFlow Test. It will not send or copy any communication.";
@@ -105,7 +105,7 @@ export function compareReviewedPreview(reviewedPreview = {}, freshPreview = {}) 
 }
 
 export function validateCandidateReadyEligibility({ runtime = {}, reviewedPreview = {}, freshPreview = {}, outOfDate = false, acknowledgments = {} } = {}) {
-  const runtimeResult = assertTestRuntime(runtime);
+  const runtimeResult = assertCommunicationRuntime(runtime);
   const errors = [];
   if (!runtimeResult.ok) errors.push(runtimeResult.error);
   if (!reviewedPreview.canConfirm || (reviewedPreview.blockers || []).length) errors.push("The reviewed Preview still contains blocking issues.");
@@ -197,12 +197,12 @@ export function buildCandidateReadyHistoryEntry(candidate = {}, reviewedPackage 
       "Status: Ready for Facility Submission",
       "Next Action: Send facility submission",
       `Timestamp: ${reviewedPackage.confirmedAt}`,
-      "Environment: test",
+      `Environment: ${reviewedPackage.environment || "test"}`,
     ].join("\n"),
     candidate: candidate.candidate || intake.candidateName || "",
     facility: candidate.site || requisition.facility || "",
     timestamp: reviewedPackage.confirmedAt,
-    environment: "test",
+    environment: reviewedPackage.environment || "test",
     snapshotHash: reviewedPackage.snapshotHash,
     confirmationKey,
   };

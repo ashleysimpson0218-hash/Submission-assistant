@@ -355,8 +355,9 @@ describe("side-effect-free communication preview resolver", () => {
     expect(first.snapshot.requisition).not.toBe(inputSet().requisitions[0]);
   });
 
-  test("runtime guard accepts only the approved test project", () => {
+  test("runtime guard accepts approved Test and Owner UAT projects only", () => {
     expect(immutablePreview().canConfirm).toBe(true);
+    expect(immutablePreview({ runtime: { environment: "uat", projectRef: "zleslkwnbjxknmkqywyv" } }).canConfirm).toBe(true);
     expect(codes(immutablePreview({ runtime: { environment: "test", projectRef: "qfpgednixvveelgwfylv" } }))).toContain("TEST_RUNTIME_REJECTED");
     expect(codes(immutablePreview({ runtime: { environment: "production", projectRef: "bjverobaoujhfaylyrzi" } }))).toContain("TEST_RUNTIME_REJECTED");
     expect(codes(immutablePreview({ runtime: {} }))).toContain("TEST_RUNTIME_REJECTED");

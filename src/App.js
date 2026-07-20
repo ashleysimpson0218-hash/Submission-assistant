@@ -2,7 +2,6 @@
 // Premium Purple Precision Polish - squared UI, cleaner header, dark mode contrast, glossary-first help
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
 import {
   buildCompleteProcessArchivePatch,
@@ -22,6 +21,7 @@ import {
 } from "./communicationReadiness";
 import { isFeatureFlagEnabled } from "./featureFlags";
 import { readRuntimeConfig } from "./runtimeConfig";
+import { getRuntimeSupabaseClient } from "./supabaseRuntimeClient";
 import { buildCommunicationPreview } from "./communicationGeneration";
 import {
   REVIEW_ACKNOWLEDGMENT,
@@ -74,8 +74,11 @@ const CLOUD_WORKSPACE_ID = "default";
 const CLOUD_TABLE = "welcomeflow_workspace_state";
 const runtimeConfig = readRuntimeConfig();
 const testRuntime = assertTestRuntime(runtimeConfig);
+const ownerUatMode = Boolean(runtimeConfig.ok && runtimeConfig.isUat);
 if (runtimeConfig.ok) console.info("WelcomeFlow runtime", { environment: runtimeConfig.environment, projectRef: runtimeConfig.projectRef });
-const supabase = runtimeConfig.ok && testRuntime.ok ? createClient(runtimeConfig.supabaseUrl, runtimeConfig.supabaseAnonKey) : null;
+const supabase = runtimeConfig.ok && (testRuntime.ok || ownerUatMode) ? getRuntimeSupabaseClient(runtimeConfig) : null;
+let ownerUatWorkspaceVersion = 0;
+let ownerUatSaveQueue = Promise.resolve();
 
 const BRAND = {
   appName: "WelcomeFlow",
@@ -548,6 +551,7 @@ function fileToBase64(file) {
 }
 
 async function parseResumeFileWithApi(file) {
+  if (ownerUatMode) return null;
   if (!file || typeof fetch !== "function") return null;
   try {
     const base64 = await fileToBase64(file);
@@ -566,6 +570,10 @@ async function parseResumeFileWithApi(file) {
 
 async function extractResumeFileText(file) {
   if (!file) return "";
+  if (ownerUatMode) {
+    if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "Resume actions are disabled in Owner UAT." }));
+    return "";
+  }
   const name = String(file.name || "").toLowerCase();
   const type = String(file.type || "").toLowerCase();
   const apiResult = await parseResumeFileWithApi(file);
@@ -621,6 +629,10 @@ function downloadSimplePdf(name, content) {
 }
 
 function safeCopy(text) {
+  if (ownerUatMode) {
+    if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "Copy actions are disabled in Owner UAT." }));
+    return;
+  }
   if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
     navigator.clipboard.writeText(text || "").then(() => {
       if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "Copied to clipboard" }));
@@ -1105,6 +1117,7 @@ function displayDate(value) {
 
 function loadStoredValue(key, fallback) {
   try {
+    if (ownerUatMode) return fallback;
     if (typeof window === "undefined") return fallback;
     const raw = window.localStorage.getItem(key);
     return raw ? JSON.parse(raw) : fallback;
@@ -1115,18 +1128,43 @@ function loadStoredValue(key, fallback) {
 
 function saveStoredValue(key, value) {
   try {
+    if (ownerUatMode) return;
     if (typeof window !== "undefined") window.localStorage.setItem(key, JSON.stringify(value));
   } catch {}
 }
 
 async function loadCloudWorkspaceState() {
   if (!supabase) return { data: null, error: "Supabase not configured" };
-  const { data, error } = await supabase.from(CLOUD_TABLE).select("data").eq("workspace_id", CLOUD_WORKSPACE_ID).maybeSingle();
+  const fields = ownerUatMode ? "data,updated_at,version" : "data";
+  const { data, error } = await supabase.from(CLOUD_TABLE).select(fields).eq("workspace_id", CLOUD_WORKSPACE_ID).maybeSingle();
+  if (ownerUatMode && data?.version) ownerUatWorkspaceVersion = Number(data.version);
   return { data: data?.data || null, error };
+}
+
+function safeOpenExternalUrl(url, target = "_blank") {
+  if (ownerUatMode) {
+    if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "External links and communication actions are disabled in Owner UAT." }));
+    return;
+  }
+  if (url && typeof window !== "undefined") window.open(url, target, "noopener,noreferrer");
 }
 
 async function saveCloudWorkspaceState(data) {
   if (!supabase) return { error: "Supabase not configured" };
+  if (ownerUatMode) {
+    const save = async () => {
+      if (!ownerUatWorkspaceVersion) return { error: "Owner UAT workspace version is unavailable. Reload before saving." };
+      const { data: saved, error } = await supabase.rpc("welcomeflow_save_owner_uat_workspace", {
+        expected_version: ownerUatWorkspaceVersion,
+        next_data: data,
+      });
+      const result = Array.isArray(saved) ? saved[0] : saved;
+      if (!error && result?.version) ownerUatWorkspaceVersion = Number(result.version);
+      return { error: error ? "Owner UAT save was blocked because the workspace changed or authorization expired. Reload before continuing." : null, version: ownerUatWorkspaceVersion };
+    };
+    ownerUatSaveQueue = ownerUatSaveQueue.then(save, save);
+    return ownerUatSaveQueue;
+  }
   const result = await saveWorkspacePreservingCommunicationDraftsToCloud({
     client: supabase,
     table: CLOUD_TABLE,
@@ -2016,6 +2054,10 @@ function mailtoLink(to, subject, body, options = {}) {
 }
 
 function openMailto(to, subject, body, onOpenDraft, options = {}) {
+  if (ownerUatMode) {
+    if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "Email actions are disabled in Owner UAT." }));
+    return;
+  }
   const href = mailtoLink(to, subject, body, options);
   if (typeof onOpenDraft === "function") onOpenDraft();
   window.location.href = href;
@@ -3415,6 +3457,7 @@ function publicBookingLeadId() {
 }
 
 async function sendWelcomeFlowEmail({ to, subject, body, cc, replyTo, metadata } = {}) {
+  if (ownerUatMode) throw new Error("Email is disabled in Owner UAT.");
   const response = await fetch("/api/send-email", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -5615,6 +5658,11 @@ function PublicBookingPage({ leadId }) {
     async function loadLead() {
       setLoading(true);
       setError("");
+      if (ownerUatMode) {
+        setError("Booking actions are disabled in Owner UAT.");
+        setLoading(false);
+        return;
+      }
       try {
         const response = await fetch(`/api/book-screening?leadId=${encodeURIComponent(leadId)}`);
         const data = await response.json().catch(() => ({}));
@@ -5643,6 +5691,10 @@ function PublicBookingPage({ leadId }) {
   }
 
   async function submitBookingRequest() {
+    if (ownerUatMode) {
+      setError("Booking actions are disabled in Owner UAT.");
+      return;
+    }
     if (!form.requestedDate || !form.requestedTime) {
       setError("Choose a preferred date and time before submitting.");
       return;
@@ -5709,7 +5761,7 @@ function PublicBookingPage({ leadId }) {
                   </div>
                   <Field label="Notes / Alternate Times"><TextArea value={form.notes} onChange={(event) => updateBookingField("notes", event.target.value)} minHeight={88} placeholder="If this time is flexible, or you need another option, add it here." /></Field>
                   <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "space-between", alignItems: "center" }}>
-                    {lead.externalSchedulingLink ? <Button subtle onClick={() => window.open(lead.externalSchedulingLink, "_blank", "noopener,noreferrer")}>Open Recruiter Calendar Link</Button> : <span />}
+                    {lead.externalSchedulingLink ? <Button subtle onClick={() => safeOpenExternalUrl(lead.externalSchedulingLink)}>Open Recruiter Calendar Link</Button> : <span />}
                     <Button primary onClick={submitBookingRequest} disabled={saving}>{saving ? "Sending..." : "Request This Time"}</Button>
                   </div>
                 </>
@@ -5751,9 +5803,10 @@ function RecruiterApp() {
   const [candidateManagementTab, setCandidateManagementTab] = useState("connect");
   const [candidateManagementSearch, setCandidateManagementSearch] = useState("");
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
-  const reviewedCandidateReadyConfirmationEnabled = testRuntime.ok && isFeatureFlagEnabled(settings, "reviewedCandidateReadyConfirmation");
+  const communicationRuntimeEnabled = testRuntime.ok || ownerUatMode;
+  const reviewedCandidateReadyConfirmationEnabled = communicationRuntimeEnabled && isFeatureFlagEnabled(settings, "reviewedCandidateReadyConfirmation");
   const reviewedSubmissionCommunicationActionsEnabled = testRuntime.ok && isFeatureFlagEnabled(settings, "reviewedSubmissionCommunicationActions");
-  const communicationPreviewFlowEnabled = testRuntime.ok && (isFeatureFlagEnabled(settings, "communicationPreviewFlow") || reviewedCandidateReadyConfirmationEnabled);
+  const communicationPreviewFlowEnabled = communicationRuntimeEnabled && (isFeatureFlagEnabled(settings, "communicationPreviewFlow") || reviewedCandidateReadyConfirmationEnabled);
   const [ignoredDuplicateUniqueIds, setIgnoredDuplicateUniqueIds] = useState(() => loadStoredValue("welcomeflow-ignored-duplicate-unique-ids", []));
   const [form, setForm] = useState(DEFAULT_FORM);
   const [submissionDate, setSubmissionDate] = useState(todayIso());
@@ -6130,8 +6183,12 @@ function RecruiterApp() {
         setHotLeadWorkingReqId(cloud.data.hotLeadWorkingReqId || localHotLeadWorkingReqId || "");
         setReportHistory(Array.isArray(cloud.data.reportHistory) ? cloud.data.reportHistory : []);
         setReportInclusions({ ...DEFAULT_REPORT_INCLUSIONS, ...(cloud.data.reportInclusions || {}) });
-        setCloudStatus("Cloud storage connected");
+        setCloudStatus(ownerUatMode ? "Owner UAT authenticated workspace connected" : "Cloud storage connected");
       } else {
+        if (ownerUatMode) {
+          setCloudStatus("Owner UAT load blocked - reload or sign in again");
+          return;
+        }
         setSettings(localSettings);
         setTracker(localTracker);
         setHistory(Array.isArray(localHistory) ? localHistory : []);
@@ -6406,7 +6463,7 @@ function RecruiterApp() {
       setCloudStatus("Saving to cloud...");
       const workspaceState = { ...buildWorkspaceState(settings, tracker, history, notesText, manualQueueItems, hotLeads, reportHistory, reportInclusions, currentIntakeDraftSnapshot(), intakeDrafts, hotLeadBulkDrafts), hotLeadWorkingReqId };
       const result = await saveCloudWorkspaceState(workspaceState);
-      setCloudStatus(result.error ? "Cloud save paused - using this browser backup" : "Saved to cloud");
+      setCloudStatus(result.error ? (ownerUatMode ? result.error : "Cloud save paused - using this browser backup") : (ownerUatMode ? "Saved securely to Owner UAT" : "Saved to cloud"));
     }, 900);
     return () => window.clearTimeout(timeoutId);
   }, [settings, tracker, history, notesText, manualQueueItems, hotLeads, hotLeadBulkDrafts, hotLeadWorkingReqId, reportHistory, reportInclusions, currentIntakeDraftSnapshot, intakeDrafts, hasLoaded]);
@@ -9994,6 +10051,10 @@ function RecruiterApp() {
   }
 
   async function runReviewedCommunicationAction(recordId, transition, { acknowledgment = false, copyValueFor = null, openMailto = false, successMessage = "Communication action saved." } = {}) {
+    if (ownerUatMode) {
+      setCopyNotice("Communication actions are disabled in Owner UAT.");
+      return null;
+    }
     if (!reviewedSubmissionCommunicationActionsEnabled || communicationActionProcessing) return null;
     setCommunicationActionProcessing(true);
     setCloudStatus("Saving reviewed communication action in WelcomeFlow Test...");
@@ -14646,7 +14707,7 @@ function rowifyCandidate(item = {}) {
                   {nav.map(([key, label, icon]) => <option key={key} value={key}>{icon} {label}</option>)}
                 </select>
               ) : null}
-              {runtimeConfig.isTest ? <span aria-label="Test mode indicator" style={{ display: "inline-flex", alignItems: "center", minHeight: 40, border: "1px solid #d97706", borderRadius: 6, padding: "0 10px", background: "#fef3c7", color: "#92400e", fontSize: 11, fontWeight: 950 }}>TEST</span> : null}
+              {runtimeConfig.isTest ? <span aria-label="Test mode indicator" style={{ display: "inline-flex", alignItems: "center", minHeight: 40, border: "1px solid #d97706", borderRadius: 6, padding: "0 10px", background: "#fef3c7", color: "#92400e", fontSize: 11, fontWeight: 950 }}>TEST</span> : runtimeConfig.isUat ? <span aria-label="Owner UAT mode indicator" style={{ display: "inline-flex", alignItems: "center", minHeight: 40, border: "1px solid #991b1b", borderRadius: 6, padding: "0 10px", background: "#fee2e2", color: "#7f1d1d", fontSize: 11, fontWeight: 950 }}>OWNER UAT</span> : null}
               <select value={themeMode} onChange={(event) => setThemeMode(event.target.value)} style={controlStyle}>
                 <option value="light">Light Mode</option>
                 <option value="dark">Dark Mode</option>
@@ -16698,7 +16759,7 @@ function rowifyCandidate(item = {}) {
                             <span><strong style={{ color: THEME.text }}>Original Submittal:</strong> {selectedOriginalSubmittalDate ? displayDate(selectedOriginalSubmittalDate) : "Pending"}</span>
                           </div>
                           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", marginTop: 8, color: THEME.muted, fontSize: 12 }}>
-                            {selectedSubmission.candidateEmail && !(reviewedSubmissionCommunicationActionsEnabled && selectedSubmission.reviewedSubmissionPackage) ? <a href={`mailto:${selectedSubmission.candidateEmail}`} style={{ color: THEME.primary2, fontWeight: 900, textDecoration: "none" }}>Email: {selectedSubmission.candidateEmail}</a> : <span>Email: {selectedSubmission.candidateEmail || "No email"}</span>}
+                            {selectedSubmission.candidateEmail && !ownerUatMode && !(reviewedSubmissionCommunicationActionsEnabled && selectedSubmission.reviewedSubmissionPackage) ? <a href={`mailto:${selectedSubmission.candidateEmail}`} style={{ color: THEME.primary2, fontWeight: 900, textDecoration: "none" }}>Email: {selectedSubmission.candidateEmail}</a> : <span>Email: {selectedSubmission.candidateEmail || "No email"}</span>}
                             <span>|</span>
                             <span style={{ color: THEME.green, fontWeight: 900 }}>Phone: {selectedSubmission.formSnapshot?.phoneNumber || "No phone"}</span>
                           </div>
@@ -17115,9 +17176,9 @@ function rowifyCandidate(item = {}) {
                         <ProfileSummaryBlock title="Coordinator">{managerEmailFor(settings, selectedSubmission) || "See Settings"}</ProfileSummaryBlock>
                       </div>
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
-                        <Button subtle onClick={() => selectedSubmission.facilityInterviewCalendarLink ? window.open(selectedSubmission.facilityInterviewCalendarLink, "_blank", "noopener,noreferrer") : setCopyNotice("No calendar link saved for this candidate")}>Open Calendar Link</Button>
+                        <Button subtle onClick={() => selectedSubmission.facilityInterviewCalendarLink ? safeOpenExternalUrl(selectedSubmission.facilityInterviewCalendarLink) : setCopyNotice("No calendar link saved for this candidate")}>Open Calendar Link</Button>
                         <Button subtle onClick={() => { const invite = `${selectedSubmission.candidate}\n${selectedSubmission.position} | ${selectedSubmission.site}\nInterview: ${selectedSubmission.rescheduledInterviewDate ? `Rescheduled ${displayDate(selectedSubmission.rescheduledInterviewDate)}` : selectedSubmission.interviewDate ? displayDate(selectedSubmission.interviewDate) : "Not scheduled"}\nCoordinator: ${managerEmailFor(settings, selectedSubmission) || "See Settings"}`; safeCopy(invite); addHistory("Facility Interview Invite Copied", "Facility Interview Coordination", invite, selectedSubmission.id, { candidate: selectedSubmission.candidate, facility: selectedSubmission.site }); }}>Copy Invite</Button>
-                        <Button subtle onClick={() => selectedSubmission.facilityInterviewCalendarLink ? window.open(selectedSubmission.facilityInterviewCalendarLink, "_blank", "noopener,noreferrer") : setCopyNotice("No reschedule link saved for this candidate")}>Reschedule Interview</Button>
+                        <Button subtle onClick={() => selectedSubmission.facilityInterviewCalendarLink ? safeOpenExternalUrl(selectedSubmission.facilityInterviewCalendarLink) : setCopyNotice("No reschedule link saved for this candidate")}>Reschedule Interview</Button>
                         <Button primary onClick={() => { const email = makeTemplateEmail(selectedSubmission, "interviewReminder", "Interview Reminder"); openMailto(selectedSubmission.candidateEmail, email.subject, email.body, () => addHistory("Interview Reminder Draft Opened", email.subject, email.body, selectedSubmission.id, { candidate: selectedSubmission.candidate, facility: selectedSubmission.site })); }}>Send Reminder</Button>
                       </div>
                     </div>
@@ -20932,7 +20993,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
 
   function saveCommunicationChanges(addAnother = false) {
     if (!draftReq || drawerMode !== "edit") return;
-    if (!testRuntime.ok) {
+    if (!testRuntime.ok && !ownerUatMode) {
       setCommunicationSaveError(testRuntime.error || "Test environment safety check failed.");
       return;
     }

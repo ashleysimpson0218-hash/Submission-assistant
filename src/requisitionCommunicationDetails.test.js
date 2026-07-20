@@ -1,6 +1,7 @@
 import { evaluateRequisitionCommunicationReadiness } from "./communicationReadiness";
 import {
   SAFE_REQUISITION_ERROR,
+  assertCommunicationRuntime,
   assertTestRuntime,
   communicationDetailChanges,
   communicationDetailsFromRequisition,
@@ -131,6 +132,8 @@ describe("requisition Communication Details", () => {
 
   test("approved test runtime is accepted", () => {
     expect(assertTestRuntime({ environment: "test", projectRef: "bjverobaoujhfaylyrzi" }).ok).toBe(true);
+    expect(assertCommunicationRuntime({ environment: "uat", projectRef: "zleslkwnbjxknmkqywyv" }).ok).toBe(true);
+    expect(assertCommunicationRuntime({ environment: "uat", projectRef: "qfpgednixvveelgwfylv" }).ok).toBe(false);
   });
 
   test.each([
