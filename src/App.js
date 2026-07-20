@@ -601,13 +601,20 @@ function parseOpenXmlWorkbook() { return []; }
 function parseExcelWorkbook() { return []; }
 
 function downloadTextFile(name, content, type = "text/plain") {
-  const blob = new Blob([content || ""], { type });
+  const isSpreadsheet = /excel|csv/i.test(type);
+  const blob = new Blob(isSpreadsheet ? ["\ufeff", content || ""] : [content || ""], { type });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = name;
+  anchor.rel = "noopener";
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
   anchor.click();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => {
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }, 3000);
 }
 
 function safeExcelSheetName(name = "Sheet") {
@@ -14048,12 +14055,16 @@ function rowifyCandidate(item = {}) {
 
   function exportFacilityWorkbooks() {
     const rows = selectedFacilityReportRows.length ? selectedFacilityReportRows : facilityReportQueueFiltered;
-    rows.forEach((row) => {
+    const sheets = rows.flatMap((row) => {
       const model = facilityReportModel(row.facility);
-      downloadExcelWorkbook(`welcomeflow-${safeExcelSheetName(model.facility).replace(/\s+/g, "-").toLowerCase()}-${reportStartDate}.xls`, facilityWorkbookSheets(model));
+      return facilityWorkbookSheets(model).map((sheet) => ({
+        ...sheet,
+        name: `${model.facility} - ${sheet.name}`,
+      }));
     });
+    downloadExcelWorkbook(`welcomeflow-facility-workbooks-${reportStartDate}.xls`, sheets);
     markFacilityReports(rows, "Exported");
-    setCopyNotice(`${rows.length} facility workbook${rows.length === 1 ? "" : "s"} downloaded.`);
+    setCopyNotice(`${rows.length} facility report${rows.length === 1 ? "" : "s"} downloaded in one Excel file.`);
   }
 
   function saveReportsToHistory(rows = selectedFacilityReportRows, status = "Draft Generated") {
