@@ -1032,7 +1032,9 @@ const DEFAULT_FORM = {
   interviewDate: "",
   interviewTime: "",
   licenseStatus: "",
+  licenseVerificationComplete: null,
   licenseType: "",
+  licenseCertificationNotes: "",
   cprStatus: "",
   cprExpirationYear: "",
   licensedYear: "",
@@ -1042,7 +1044,7 @@ const DEFAULT_FORM = {
   onCallRequirement: "",
   workArea: "",
   facilityDistanceMinutes: "",
-  scheduleConfirmed: false,
+  scheduleConfirmed: null,
   otConfirmed: false,
   weekendConfirmed: false,
   onCallConfirmed: false,
@@ -2884,17 +2886,20 @@ function HotLeadWorkflowMockup({
   const renderConnectQueueCards = (title, cards, columns = 4) => (
     <div style={{ display: "grid", gap: 7 }}>
       <div style={{ color: THEME.primary2, fontSize: 11, fontWeight: 950, textTransform: "uppercase", letterSpacing: 0 }}>{title}</div>
-      <div style={{ display: "grid", gap: 8, gridTemplateColumns: isNarrow ? "1fr" : `repeat(${columns}, minmax(0, 1fr))`, alignItems: "stretch" }}>
+      <div style={{ display: "grid", gap: 8, gridTemplateColumns: isNarrow ? "repeat(2, minmax(0, 1fr))" : `repeat(${columns}, minmax(0, 1fr))`, alignItems: "stretch" }}>
         {cards.map(([label, value, detail]) => {
           const visual = statVisuals[label] || { icon: "", color: THEME.primary2 };
           return (
-            <button key={label} type="button" title={detail} onClick={() => { setStatFilter(label); setDrawerOpen(false); }} style={{ border: `1px solid ${statFilter === label ? visual.color : THEME.borderSoft}`, borderRadius: 8, background: statFilter === label ? THEME.blueBg : THEME.panel, padding: "8px 10px", minHeight: 58, display: "grid", gridTemplateColumns: "30px 1fr", gap: 8, alignItems: "center", cursor: "pointer", textAlign: "left", color: THEME.text, boxShadow: statFilter === label ? "0 8px 16px rgba(109,40,217,0.10)" : THEME.shadow, font: "inherit" }}>
-              <span style={{ width: 28, height: 28, borderRadius: 10, display: "grid", placeItems: "center", color: "#fff", background: visual.color, fontWeight: 950, fontSize: 14 }}>{visual.icon}</span>
-              <span>
-                <span style={{ display: "block", fontWeight: 950, fontSize: 11, lineHeight: 1.15 }}>{label}</span>
-                <strong style={{ display: "block", fontSize: 18, lineHeight: 1.05, marginTop: 3 }}>{value}</strong>
-              </span>
-            </button>
+            <div key={label} style={{ position: "relative" }}>
+              <button type="button" title={detail} onClick={() => { setStatFilter(label); setDrawerOpen(false); }} style={{ width: "100%", height: "100%", border: `1px solid ${statFilter === label ? visual.color : THEME.borderSoft}`, borderRadius: 8, background: statFilter === label ? THEME.blueBg : THEME.panel, padding: label === "New Leads" ? "6px 92px 6px 8px" : "6px 8px", minHeight: 46, display: "grid", gridTemplateColumns: "26px 1fr", gap: 7, alignItems: "center", cursor: "pointer", textAlign: "left", color: THEME.text, boxShadow: statFilter === label ? "0 8px 16px rgba(109,40,217,0.10)" : THEME.shadow, font: "inherit" }}>
+                <span style={{ width: 24, height: 24, borderRadius: 8, display: "grid", placeItems: "center", color: "#fff", background: visual.color, fontWeight: 950, fontSize: 12 }}>{visual.icon}</span>
+                <span>
+                  <span style={{ display: "block", fontWeight: 950, fontSize: 10.5, lineHeight: 1.1 }}>{label}</span>
+                  <strong style={{ display: "block", fontSize: 16, lineHeight: 1, marginTop: 2 }}>{value}</strong>
+                </span>
+              </button>
+              {label === "New Leads" ? <button type="button" onClick={() => { setQuickAddHidden(false); setQuickAddMode("single"); }} style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", maxWidth: 80, border: 0, borderRadius: 6, background: THEME.primary2, color: "#fff", padding: "5px 7px", fontSize: 9.5, lineHeight: 1.1, fontWeight: 950, cursor: "pointer" }}>Add Lead to Opening</button> : null}
+            </div>
           );
         })}
       </div>
@@ -2910,7 +2915,6 @@ function HotLeadWorkflowMockup({
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {onBack ? <Button subtle onClick={onBack}>{liveMode ? "Back" : "Back to Connect Queue"}</Button> : null}
-          <Button primary onClick={() => { setQuickAddHidden(false); setQuickAddMode("single"); }}>Add Lead to Opening</Button>
           <Button subtle onClick={() => mockNotice("Use the status cards and search to filter the Connect Queue.")}>Filters</Button>
         </div>
       </div>
@@ -5841,6 +5845,7 @@ function RecruiterApp() {
   const [automationTab, setAutomationTab] = useState("report");
   const [candidateManagementTab, setCandidateManagementTab] = useState("connect");
   const [candidateManagementSearch, setCandidateManagementSearch] = useState("");
+  const [manualRoleMatchOpen, setManualRoleMatchOpen] = useState(false);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const communicationRuntimeEnabled = testRuntime.ok || ownerUatMode;
   const reviewedCandidateReadyConfirmationEnabled = communicationRuntimeEnabled && isFeatureFlagEnabled(settings, "reviewedCandidateReadyConfirmation");
@@ -14487,6 +14492,7 @@ function rowifyCandidate(item = {}) {
     setCompletedIntakeSteps([]);
     setActiveIntakeDraftId("");
     setActiveIntakeStep("setup");
+    setManualRoleMatchOpen(false);
     setIntakeHandoffOpen(handoffOpen);
     setIntakeWithdrawOpen(false);
     setIntakeWithdrawReason("");
@@ -15764,18 +15770,27 @@ function rowifyCandidate(item = {}) {
                     </div>
                     <div style={{ padding: 16, display: "grid", gap: 14 }}>
                       <Field label="Req # / Opening*"><RequisitionSearchInput value={form.selectedRequisitionId} requisitions={activeRequisitions} onSelect={applyRequisitionToForm} placeholder="Search req, facility, or position" /></Field>
-                      <div style={{ display: "grid", gap: 12, gridTemplateColumns: formCompact ? "1fr" : "repeat(4, minmax(0, 1fr))" }}>
-                        <Field label="Facility*">{selectedRequisition ? <TextInput value={form.siteName} readOnly /> : <SelectInput value={form.siteName} onChange={(event) => updateRoleMatchFacility(event.target.value)} options={activeSites.map((site) => site.siteName)} />}</Field>
-                        <Field label="Position*">{selectedRequisition ? <TextInput value={form.position} readOnly /> : <SelectInput value={form.position} onChange={(event) => updateForm("position", event.target.value)} options={facilityPositionOptions} placeholder={form.siteName ? "Select position tied to facility" : "Select facility first or choose position"} />}</Field>
-                        <Field label="Shift*"><SelectInput value={form.shiftPreference} onChange={(event) => updateForm("shiftPreference", event.target.value)} options={settings.options.shiftOptions || []} placeholder="Select shift" /></Field>
-                        <Field label="FTE / PRN*"><SelectInput value={form.fte || form.employmentType} onChange={(event) => { updateForm("fte", event.target.value); if (["Full-time", "Part-time", "PRN"].includes(event.target.value)) updateForm("employmentType", event.target.value); }} options={[...FTE_OPTIONS, "Full-time", "Part-time", "PRN"]} placeholder="Select" /></Field>
-                      </div>
-                      <div style={{ display: "grid", gap: 12, gridTemplateColumns: formCompact ? "1fr" : "repeat(3, minmax(0, 1fr))" }}>
-                        <Field label="License Year / Experience Years*"><TextInput value={form.yearsExperience} onChange={(event) => { updateForm("yearsExperience", event.target.value); if (event.target.value) updateForm("newlyLicensed", false); }} placeholder="Example: 2022, 2.5, or 4 years" /></Field>
-                        <Field label="Pay Expectation"><TextInput value={form.estimatedCompensation || (hasRateExperienceInput(form) ? estimatedComp : "")} onChange={(event) => updateForm("estimatedCompensation", event.target.value)} placeholder={hasRateExperienceInput(form) ? "$32 - $36 / hr" : "Enter years to calculate"} /></Field>
-                        <Field label="Availability to Start"><TextInput type="date" value={form.startAvailability} onChange={(event) => updateForm("startAvailability", event.target.value)} /></Field>
-                      </div>
-                      <Field label="Schedule Limitations"><TextInput value={form.scheduleNotes} onChange={(event) => updateForm("scheduleNotes", event.target.value)} placeholder="None" /></Field>
+                      {selectedRequisition ? (
+                        <div style={{ border: `1px solid ${THEME.primary2}`, borderRadius: 8, padding: 12, background: THEME.blueBg, display: "grid", gap: 10 }}>
+                          <div><strong>Matched opening</strong><div style={{ color: THEME.muted, fontSize: 12, marginTop: 3 }}>Facility, position, shift, and FTE come from the selected requisition and are shown here without a second editable copy.</div></div>
+                          <div style={{ display: "grid", gap: 10, gridTemplateColumns: formCompact ? "1fr 1fr" : "repeat(5, minmax(0, 1fr))" }}>
+                            {[['Req #', form.reqNumber || selectedRequisition.reqNumber], ['Facility', form.siteName || selectedRequisition.siteName], ['Position', form.position || selectedRequisition.positionTitle], ['Shift', form.shiftPreference || selectedRequisition.shiftPreference || 'Not listed'], ['FTE', form.fte || selectedRequisition.fte || form.employmentType || 'Not listed']].map(([label, value]) => <div key={label} style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 6, padding: 9, background: THEME.panel }}><div style={{ color: THEME.muted, fontSize: 10, fontWeight: 950, textTransform: "uppercase" }}>{label}</div><div style={{ marginTop: 4, fontWeight: 900 }}>{value || 'Not listed'}</div></div>)}
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ display: "grid", gap: 10 }}>
+                          <Button subtle onClick={() => setManualRoleMatchOpen((open) => !open)} style={{ justifySelf: "start" }}>{manualRoleMatchOpen ? "Hide Manual Opening Fields" : "Can't find a matching requisition? Enter opening details"}</Button>
+                          {manualRoleMatchOpen ? <div style={{ border: `1px dashed ${THEME.border}`, borderRadius: 8, padding: 12, background: THEME.panelAlt, display: "grid", gap: 12 }}>
+                            <div style={{ color: THEME.muted, fontSize: 12 }}>Use these fields only when the correct requisition is not available. This does not create a duplicate requisition.</div>
+                            <div style={{ display: "grid", gap: 12, gridTemplateColumns: formCompact ? "1fr" : "repeat(4, minmax(0, 1fr))" }}>
+                              <Field label="Facility*"><SelectInput value={form.siteName} onChange={(event) => updateRoleMatchFacility(event.target.value)} options={activeSites.map((site) => site.siteName)} /></Field>
+                              <Field label="Position*"><SelectInput value={form.position} onChange={(event) => updateForm("position", event.target.value)} options={facilityPositionOptions} placeholder={form.siteName ? "Select position tied to facility" : "Select facility first"} /></Field>
+                              <Field label="Shift*"><SelectInput value={form.shiftPreference} onChange={(event) => updateForm("shiftPreference", event.target.value)} options={settings.options.shiftOptions || []} placeholder="Select shift" /></Field>
+                              <Field label="FTE / PRN*"><SelectInput value={form.fte || form.employmentType} onChange={(event) => { updateForm("fte", event.target.value); if (["Full-time", "Part-time", "PRN"].includes(event.target.value)) updateForm("employmentType", event.target.value); }} options={[...FTE_OPTIONS, "Full-time", "Part-time", "PRN"]} placeholder="Select" /></Field>
+                            </div>
+                          </div> : null}
+                        </div>
+                      )}
                     </div>
                   </section>
 
@@ -15785,15 +15800,25 @@ function rowifyCandidate(item = {}) {
                       <div style={{ color: THEME.muted, fontSize: 12, marginTop: 4 }}>Build the facility-facing story, fit notes, strengths, watchouts, and any site-specific screening answers.</div>
                     </div>
                     <div style={{ padding: 16, display: "grid", gap: 12 }}>
-                      <Field label="License Year / Experience Years*"><TextInput value={form.yearsExperience} onChange={(event) => { updateForm("yearsExperience", event.target.value); if (event.target.value) updateForm("newlyLicensed", false); }} placeholder="Example: 2022, 2.5, or 4 years" /></Field>
-                      <Field label="Experience Summary*"><TextArea value={form.experienceNotes} onChange={(event) => updateForm("experienceNotes", event.target.value)} minHeight={78} placeholder="Years, setting, patient type, and strengths." /></Field>
-                      <Field label="Why a Fit*"><TextArea value={form.whyFit || form.candidateTalkingPoints || ""} onChange={(event) => updateForm("whyFit", event.target.value)} minHeight={78} placeholder="Why this candidate should be reviewed." /></Field>
-                      <Field label="Strengths"><TextArea value={form.candidateStrengths || ""} onChange={(event) => updateForm("candidateStrengths", event.target.value)} minHeight={78} placeholder="Clinical strengths, reliability, schedule fit, or role match." /></Field>
-                      <Field label="Weaknesses / Watchouts"><TextArea value={form.candidateWeaknesses || ""} onChange={(event) => updateForm("candidateWeaknesses", event.target.value)} minHeight={78} placeholder="Anything to verify, coach, or clarify before submission." /></Field>
-                      <Field label="Schedule Availability*"><TextArea value={form.interviewAvailability || ""} onChange={(event) => updateForm("interviewAvailability", event.target.value)} minHeight={78} placeholder="Availability, schedule fit, and notice." /></Field>
-                      <Field label="License / Credential Note*"><TextArea value={form.additionalLicenseInfo || form.licenseType || ""} onChange={(event) => updateForm("additionalLicenseInfo", event.target.value)} minHeight={78} placeholder="License or credential standing." /></Field>
-                      <Field label="Concerns / Follow Up"><TextInput value={form.concernsFollowUp || form.confirmationNotes || ""} onChange={(event) => updateForm("concernsFollowUp", event.target.value)} placeholder="Verify CPR expiration." /></Field>
-                      <Field label="Recruiter Recommendation*"><SelectInput value={form.recruiterRecommendation || ""} onChange={(event) => updateForm("recruiterRecommendation", event.target.value)} options={["Recommend to Submit", "Hold for Follow-Up", "Needs Manager Review", "Save as Lead", "Archive / Not Moving Forward"]} placeholder="Select recommendation" /></Field>
+                      <div style={{ color: THEME.primary2, fontSize: 12, fontWeight: 950, textTransform: "uppercase" }}>License / Certification</div>
+                      <div style={{ display: "grid", gap: 12, gridTemplateColumns: formCompact ? "1fr" : "repeat(3, minmax(0, 1fr))" }}>
+                        <Field label="License / Certification Year"><TextInput value={form.licensedYear || ""} onChange={(event) => updateForm("licensedYear", event.target.value)} placeholder="Example: 2022" /></Field>
+                        <Field label="Experience Years*"><TextInput value={form.yearsExperience} onChange={(event) => { updateForm("yearsExperience", event.target.value); if (event.target.value) updateForm("newlyLicensed", false); }} placeholder="Example: 2.5 or 4 years" /></Field>
+                        <Field label="Pay Rate"><TextInput value={form.estimatedCompensation || (hasRateExperienceInput(form) ? estimatedComp : "")} onChange={(event) => updateForm("estimatedCompensation", event.target.value)} placeholder={hasRateExperienceInput(form) ? "$32 - $36 / hr" : "Enter experience to calculate"} /></Field>
+                      </div>
+                      <div style={{ display: "grid", gap: 12, gridTemplateColumns: formCompact ? "1fr" : "2fr 1fr" }}>
+                        <Field label="License / Certification Note"><TextArea value={form.licenseCertificationNotes || ""} onChange={(event) => updateForm("licenseCertificationNotes", event.target.value)} minHeight={72} placeholder="Verification notes, standing, expiration, or follow-up." /></Field>
+                        <Field label="Verification Complete"><SelectInput value={form.licenseVerificationComplete === true ? "Yes" : form.licenseVerificationComplete === false ? "No" : ""} onChange={(event) => updateForm("licenseVerificationComplete", event.target.value === "Yes" ? true : event.target.value === "No" ? false : null)} options={["Yes", "No"]} placeholder="Select Yes or No" /></Field>
+                      </div>
+                      <Field label="Additional License / Certification"><TextArea value={form.additionalLicenseInfo || ""} onChange={(event) => updateForm("additionalLicenseInfo", event.target.value)} minHeight={68} placeholder="List any additional licenses, certifications, or credentials." /></Field>
+
+                      <div style={{ color: THEME.primary2, fontSize: 12, fontWeight: 950, textTransform: "uppercase", marginTop: 4 }}>Experience</div>
+                      <Field label="Experience Summary*"><TextArea value={form.experienceNotes} onChange={(event) => updateForm("experienceNotes", event.target.value)} minHeight={78} placeholder="Years, setting, patient type, and relevant experience." /></Field>
+                      <div style={{ display: "grid", gap: 12, gridTemplateColumns: formCompact ? "1fr" : "repeat(3, minmax(0, 1fr))" }}>
+                        <Field label="Why a Fit*"><TextArea value={form.whyFit || form.candidateTalkingPoints || ""} onChange={(event) => updateForm("whyFit", event.target.value)} minHeight={78} placeholder="Why this candidate should be reviewed." /></Field>
+                        <Field label="Strengths"><TextArea value={form.candidateStrengths || ""} onChange={(event) => updateForm("candidateStrengths", event.target.value)} minHeight={78} placeholder="Clinical strengths, reliability, schedule fit, or role match." /></Field>
+                        <Field label="Weaknesses / Watchouts"><TextArea value={form.candidateWeaknesses || ""} onChange={(event) => updateForm("candidateWeaknesses", event.target.value)} minHeight={78} placeholder="Anything to verify, coach, or clarify before submission." /></Field>
+                      </div>
                       {selectedScreeningQuestions.length ? (
                         <div style={{ gridColumn: "1 / -1", border: `1px solid ${THEME.primary2}`, borderRadius: 8, padding: 12, background: THEME.lightPurple, display: "grid", gap: 10 }}>
                           <div><strong style={{ color: THEME.text }}>Site-Specific Screening Questions</strong><div style={{ color: THEME.muted, fontSize: 12, marginTop: 3 }}>These questions come from the selected facility or requisition and save into the candidate profile.</div></div>
@@ -15813,6 +15838,29 @@ function rowifyCandidate(item = {}) {
                           </div>
                         </div>
                       ) : null}
+
+                      <div style={{ color: THEME.primary2, fontSize: 12, fontWeight: 950, textTransform: "uppercase", marginTop: 4 }}>Availability</div>
+                      <div style={{ display: "grid", gap: 12, gridTemplateColumns: formCompact ? "1fr" : "1fr 2fr" }}>
+                        <Field label="Confirmed Available for Posted Schedule?"><SelectInput value={form.scheduleConfirmed === true ? "Yes" : form.scheduleConfirmed === false ? "No" : ""} onChange={(event) => updateForm("scheduleConfirmed", event.target.value === "Yes" ? true : event.target.value === "No" ? false : null)} options={["Yes", "No"]} placeholder="Select Yes or No" /></Field>
+                        <Field label="Schedule Availability Notes"><TextInput value={form.scheduleNotes || ""} onChange={(event) => updateForm("scheduleNotes", event.target.value)} placeholder="Add schedule exceptions, limitations, or confirmation details." /></Field>
+                      </div>
+                      <div style={{ display: "grid", gap: 12, gridTemplateColumns: formCompact ? "1fr" : "1fr 1fr" }}>
+                        <Field label="Interview Availability Notes*"><TextArea value={form.interviewAvailability || ""} onChange={(event) => updateForm("interviewAvailability", event.target.value)} minHeight={78} placeholder="Days, times, notice needed, and preferred interview format." /></Field>
+                        <div style={{ display: "grid", gap: 10 }}>
+                          <Field label="Start Date Availability"><TextInput value={form.startAvailability || ""} onChange={(event) => updateForm("startAvailability", event.target.value)} placeholder="Example: July 29 or two weeks after offer" /></Field>
+                          <Field label="Start Date Availability Notes"><TextArea value={form.startNotes || ""} onChange={(event) => updateForm("startNotes", event.target.value)} minHeight={58} placeholder="Notice period, planned time off, or onboarding timing." /></Field>
+                        </div>
+                      </div>
+
+                      <div style={{ color: THEME.primary2, fontSize: 12, fontWeight: 950, textTransform: "uppercase", marginTop: 4 }}>Recruiter Notes and Observation</div>
+                      <Field label="Recruiter Notes and Observation"><TextArea value={form.candidateNotes} onChange={(event) => updateForm("candidateNotes", event.target.value)} minHeight={92} placeholder="Recruiter observations, screening context, concerns, and follow-up details." /></Field>
+                      <div style={{ display: "grid", gap: 12, gridTemplateColumns: formCompact ? "1fr" : "2fr 1fr", alignItems: "end" }}>
+                        <Field label="Recruiter Recommendation*"><SelectInput value={form.recruiterRecommendation || ""} onChange={(event) => updateForm("recruiterRecommendation", event.target.value)} options={["Recommend to Submit", "Hold for Follow-Up", "Needs Manager Review", "Save as Lead", "Archive / Not Moving Forward"]} placeholder="Select recommendation" /></Field>
+                        <label style={{ display: "flex", alignItems: "center", gap: 9, minHeight: 42, color: THEME.text, fontWeight: 800 }}>
+                          <input type="checkbox" checked={Boolean(form.markAsHotLead)} onChange={(event) => updateForm("markAsHotLead", event.target.checked)} />
+                          Mark as Hot Candidate
+                        </label>
+                      </div>
                       {form.recruiterRecommendation === "Archive / Not Moving Forward" ? (
                         <div style={{ gridColumn: "1 / -1", border: `1px solid ${THEME.red}`, borderRadius: 8, padding: 12, background: THEME.redBg, display: "grid", gap: 10 }}>
                           <div>
@@ -15829,13 +15877,6 @@ function rowifyCandidate(item = {}) {
                           </div>
                         </div>
                       ) : null}
-                      <label style={{ display: "flex", alignItems: "center", gap: 9, color: THEME.text, fontWeight: 800, paddingTop: 22 }}>
-                        <input type="checkbox" checked={Boolean(form.markAsHotLead)} onChange={(event) => updateForm("markAsHotLead", event.target.checked)} />
-                        Mark as Hot Lead
-                      </label>
-                      <div style={{ gridColumn: "1 / -1" }}>
-                        <Field label="Submission Notes"><TextArea value={form.candidateNotes} onChange={(event) => updateForm("candidateNotes", event.target.value)} minHeight={92} placeholder="Recruiter notes, screening context, concerns, HR/facility follow-up, or anything that should carry to the candidate profile and report history." /></Field>
-                      </div>
                     </div>
                   </section>
 
@@ -20337,11 +20378,18 @@ function CandidateManagementPage({ activeTab, setActiveTab, search, setSearch, h
     ["screening", "Screening Queue", "\uD83D\uDEE1"],
   ];
   const candidateSectionOptions = [
-    { value: "connect", label: "Candidate Connect" },
-    { value: "add", label: "Intake Form / Drafts" },
-    { value: "active", label: "Profiles" },
-    { value: "archived", label: "Archived" },
+    { value: "connect", label: "Candidate Queue" },
+    { value: "add", label: "Candidate Intake" },
+    { value: "active", label: "Active Candidate Profiles" },
+    { value: "archived", label: "Archived Candidates" },
   ];
+  function goToCandidateSection(value) {
+    setActiveTab(value);
+    if (value === "connect") onOpenConnect();
+    if (value === "add") onOpenAdd();
+    if (value === "active") onOpenCandidateProfiles();
+    if (value === "archived") onOpenArchivedProfiles();
+  }
   const detailRows = selectedRow ? [
     ["Phone", selectedRow.phone || "No phone listed"],
     ["Email", selectedRow.email || "No email listed"],
@@ -20414,7 +20462,7 @@ function CandidateManagementPage({ activeTab, setActiveTab, search, setSearch, h
         </div>
         <div style={{ minWidth: isNarrow ? "100%" : 260 }}>
           <Field label="Go To Candidate Section">
-            <SelectInput value={activeTab} onChange={(event) => setActiveTab(event.target.value)} options={candidateSectionOptions} />
+            <SelectInput value="" onChange={(event) => goToCandidateSection(event.target.value)} options={candidateSectionOptions} placeholder="Choose a working page" />
           </Field>
         </div>
       </div>
