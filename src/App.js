@@ -56,6 +56,13 @@ import {
   requisitionDraftChanges,
   updateExistingRequisition,
 } from "./requisitionCommunicationDetails";
+import WeeklyCleanupReportBuilder from "./WeeklyCleanupReportBuilder";
+import {
+  REGIONAL_CONTACT_ROLES,
+  applyCanonicalFacilityUpdate,
+  createDefaultReportPresets,
+  normalizeReportingSettings,
+} from "./weeklyCleanupReporting";
 
 const NL = String.fromCharCode(10);
 
@@ -621,14 +628,30 @@ function safeExcelSheetName(name = "Sheet") {
   return String(name || "Sheet").replace(/[\\/?*[\]:]/g, " ").slice(0, 31).trim() || "Sheet";
 }
 
+function escapeExcelXml(value) {
+  return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function excelXmlCell(value, styleId = "", formula = "") {
+  const isNumber = typeof value === "number" && Number.isFinite(value);
+  const attributes = `${styleId ? ` ss:StyleID="${escapeExcelXml(styleId)}"` : ""}${formula ? ` ss:Formula="${escapeExcelXml(formula)}"` : ""}`;
+  return `<Cell${attributes}><Data ss:Type="${isNumber ? "Number" : "String"}">${escapeExcelXml(value)}</Data></Cell>`;
+}
+
 function downloadExcelWorkbook(name, sheets = []) {
   const safeSheets = Array.isArray(sheets) && sheets.length ? sheets : [{ name: "Report", rows: [] }];
-  const html = `<!doctype html><html><head><meta charset="utf-8"></head><body>${safeSheets.map((sheet) => {
+  const workbook = `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet" xmlns:x="urn:schemas-microsoft-com:office:excel"><Styles><Style ss:ID="Default" ss:Name="Normal"><Alignment ss:Vertical="Top" ss:WrapText="1"/><Font ss:FontName="Arial" ss:Size="10"/></Style><Style ss:ID="Header"><Font ss:FontName="Arial" ss:Size="10" ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#6D28D9" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders></Style><Style ss:ID="Total"><Font ss:FontName="Arial" ss:Size="10" ss:Bold="1"/><Interior ss:Color="#F3EEFE" ss:Pattern="Solid"/></Style></Styles>${safeSheets.map((sheet) => {
     const rows = Array.isArray(sheet.rows) ? sheet.rows : [];
     const columns = sheet.columns || Array.from(new Set(rows.flatMap((row) => Object.keys(row || {}))));
-    return `<h2>${safeExcelSheetName(sheet.name)}</h2><table border="1"><thead><tr>${columns.map((column) => `<th>${column}</th>`).join("")}</tr></thead><tbody>${(rows.length ? rows : [{ Status: "No active records" }]).map((row) => `<tr>${columns.map((column) => `<td>${row[column] ?? ""}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
-  }).join("<br/>")}</body></html>`;
-  downloadTextFile(name || "welcomeflow-report.xls", html, "application/vnd.ms-excel");
+    const renderedRows = rows.length ? rows : [{ [columns[0] || "Status"]: "No active records" }];
+    const headerRow = `<Row>${columns.map((column) => excelXmlCell(column, "Header")).join("")}</Row>`;
+    const dataRows = renderedRows.map((row) => `<Row>${columns.map((column) => excelXmlCell(row[column] ?? "")).join("")}</Row>`).join("");
+    const totalRow = sheet.totals ? `<Row>${excelXmlCell(sheet.totals.label || "Total", "Total")}${columns.length > 1 ? `${excelXmlCell(sheet.totals.value ?? "", "Total", sheet.totals.formula || "")}${columns.slice(2).map(() => excelXmlCell("", "Total")).join("")}` : ""}</Row>` : "";
+    const lastDataRow = renderedRows.length + 1;
+    const autoFilter = sheet.autoFilter && columns.length ? `<AutoFilter x:Range="R1C1:R${lastDataRow}C${columns.length}" xmlns="urn:schemas-microsoft-com:office:excel"/>` : "";
+    return `<Worksheet ss:Name="${escapeExcelXml(safeExcelSheetName(sheet.name))}"><Table>${headerRow}${dataRows}${totalRow}</Table>${autoFilter}</Worksheet>`;
+  }).join("")}</Workbook>`;
+  downloadTextFile(name || "welcomeflow-report.xls", workbook, "application/vnd.ms-excel");
 }
 
 function downloadSimplePdf(name, content) {
@@ -1624,6 +1647,11 @@ const DEFAULT_SETTINGS = {
     candidateTypes: CANDIDATE_TYPE_RULES,
   },
   pricingPlans: DEFAULT_PRICING_PLANS,
+  reporting: {
+    regions: [],
+    reportPresets: createDefaultReportPresets(),
+    facilityDataUpdatedAt: "",
+  },
   sites: [
     { id: "site-1", siteName: "Demo Facility", siteType: "24-hour operation", location: "Douglasville, GA", siteAddress: "", siteCity: "Douglasville", siteState: "GA", siteZipCode: "", hiringManagerName: "", hiringManagerTitle: "", hiringManagerEmail: "", hiringManagerPhone: "", additionalHiringManagers: [], adminContactName: "", adminContactEmail: "", adminContactPhone: "", requiresShiftConfirmation: false, requiresStartDateApproval: false, requiresManagerReview: true, requiresCoverageFteRules: false, requiresClearance: false, requiresPayApproval: false, requiresBackground: false, requiresDrugScreen: false, siteSpecificQuestions: [], status: "Active", notes: "" },
   ],
@@ -1716,6 +1744,7 @@ function normalizeSettings(input = {}) {
   next.requisitions = objectRecords(next.requisitions);
   next.contacts = objectRecords(next.contacts);
   next.compensationStructure = next.compensationStructure || DEFAULT_SETTINGS.compensationStructure;
+  next.reporting = normalizeReportingSettings(next.reporting);
   next.options.educationLevels = Array.from(new Set((textRecords(next.options.educationLevels).length ? textRecords(next.options.educationLevels) : DEFAULT_SETTINGS.options.educationLevels).filter((level) => level !== "Bachelor of Science in Nursing").concat("Some college")));
   const employmentMap = { FT: "Full-time", PT: "Part-time", "FT or PT": "Full-time or Part-time" };
   next.options.employmentTypes = (textRecords(next.options.employmentTypes).length ? textRecords(next.options.employmentTypes) : EMPLOYMENT_TYPE_OPTIONS).map((value) => employmentMap[value] || value);
@@ -1733,7 +1762,7 @@ function normalizeSettings(input = {}) {
   next.options.approvalLevelOptions = Array.from(new Set([...textRecords(next.options.approvalLevelOptions), ...APPROVAL_LEVEL_OPTIONS].filter(Boolean)));
   next.options.workflowRules = { ...DEFAULT_SETTINGS.options.workflowRules, ...(next.options.workflowRules || {}) };
   next.options.hotCandidateRules = { ...DEFAULT_SETTINGS.options.hotCandidateRules, ...(next.options.hotCandidateRules || {}) };
-  next.contacts = (next.contacts || DEFAULT_SETTINGS.contacts || []).map((contact) => ({ status: "Active", ...contact, id: contact.id || makeId("contact") }));
+  next.contacts = (next.contacts || DEFAULT_SETTINGS.contacts || []).map((contact) => ({ status: "Active", contactRole: "", regionId: "", active: contact.status !== "Inactive", ...contact, assignedFacilityIds: Array.isArray(contact.assignedFacilityIds) ? Array.from(new Set(contact.assignedFacilityIds.filter(Boolean))) : [], id: contact.id || makeId("contact") }));
   ["hiringManager", "candidateConfirmation", "onboardingApplicationEmail", "onboardingRoadmapCredentialed", "onboardingRoadmapNonCredentialed", "onboardingBackgroundCheck", "internalPromotionConfirmation", "internalPromotionFacilityFilled", "onboardingStatusCredentialed", "onboardingStatusNonCredentialed", "rehirePreboardingFirst", "rehirePreboardingSecond", "rehirePreboardingFinal"].forEach((key) => {
     if (!next.templates?.[key]?.useCustom) {
       next.templates[key] = applyDefaultRootPreservingDraftVariants(DEFAULT_SETTINGS.templates[key], next.templates[key]);
@@ -1783,6 +1812,9 @@ function normalizeSettings(input = {}) {
   }));
   next.sites = (next.sites || []).map((site) => ({
     ...site,
+    facilityCode: site.facilityCode || "",
+    aliases: Array.isArray(site.aliases) ? Array.from(new Set(site.aliases.map((alias) => String(alias || "").trim()).filter(Boolean))) : [],
+    regionId: site.regionId || "",
     siteAddress: site.siteAddress || "",
     siteCity: site.siteCity || "",
     siteState: site.siteState || "",
@@ -18555,6 +18587,17 @@ function rowifyCandidate(item = {}) {
 
         {activePage === "reports" && reportsTab === "exports" ? (
           <div style={{ display: "grid", gap: 18 }}>
+            <WeeklyCleanupReportBuilder
+              settings={settings}
+              setSettings={setSettings}
+              tracker={safeTrackerRows}
+              hasLoaded={hasLoaded}
+              loadError={/not ready|blocked|could not load/i.test(cloudStatus || "") ? cloudStatus : ""}
+              reportStartDate={reportStartDate}
+              reportEndDate={reportEndDate}
+              generatedBy={settings.general?.recruiterName || ""}
+              downloadExcelWorkbook={downloadExcelWorkbook}
+            />
             <Card compact>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap", marginBottom: 16 }}>
                 <div>
@@ -20529,6 +20572,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
   const [readinessFilter, setReadinessFilter] = useState("All");
   const [readinessSearch, setReadinessSearch] = useState("");
   const [readinessIncludeArchived, setReadinessIncludeArchived] = useState(false);
+  const [newRegionName, setNewRegionName] = useState("");
 
   useEffect(() => {
     const handler = (event) => {
@@ -20540,6 +20584,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
 
   const allSites = useMemo(() => safeObjectRecords(settings.sites), [settings.sites]);
   const allReqs = useMemo(() => safeObjectRecords(settings.requisitions), [settings.requisitions]);
+  const reportingRegions = useMemo(() => normalizeReportingSettings(settings.reporting).regions, [settings.reporting]);
   const liveReqs = useMemo(() => allReqs.filter(isLiveRequisition), [allReqs]);
   const allRules = useMemo(() => safeObjectRecords(settings.compensationStructure?.rules), [settings.compensationStructure?.rules]);
   const communicationReadinessReport = useMemo(() => {
@@ -21093,6 +21138,9 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
   const emptySite = (seed = {}) => ({
     id: makeId("site"),
     siteName: "",
+    facilityCode: "",
+    aliases: [],
+    regionId: "",
     siteType: "24-hour operation",
     location: "",
     siteAddress: "",
@@ -21122,7 +21170,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
 
   function openFacilityDrawer(seed = {}, mode = "add") {
     const base = mode === "edit" ? { ...emptySite(), ...seed } : emptySite(seed);
-    setDraftSite({ ...base, siteSpecificQuestionsText: serializeScreeningQuestions(base.siteSpecificQuestions) });
+    setDraftSite({ ...base, aliasesText: (base.aliases || []).join("\n"), originalSiteName: base.siteName || "", siteSpecificQuestionsText: serializeScreeningQuestions(base.siteSpecificQuestions) });
     setFacilityDrawerMode(mode);
     setFacilityDrawerOpen(true);
   }
@@ -21133,19 +21181,21 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
 
   function saveDraftSite(addAnother = false) {
     if (!draftSite) return;
-    const { siteSpecificQuestionsText, ...siteDraft } = draftSite;
-    const saved = {
+    const { siteSpecificQuestionsText, aliasesText, originalSiteName, ...siteDraft } = draftSite;
+    const currentSite = safeObjectRecords(settings.sites).find((site) => site.id === siteDraft.id) || { id: siteDraft.id, siteName: originalSiteName, aliases: [] };
+    const saved = applyCanonicalFacilityUpdate(currentSite, {
       ...siteDraft,
+      aliases: String(aliasesText || "").split(/\r?\n|;|,/).map((alias) => alias.trim()).filter(Boolean),
       siteName: String(siteDraft.siteName || "").trim(),
       location: siteDraft.location || [siteDraft.siteCity, siteDraft.siteState].filter(Boolean).join(", "),
       siteSpecificQuestions: normalizeScreeningQuestions(siteSpecificQuestionsText || siteDraft.siteSpecificQuestions),
       createdAt: siteDraft.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-    };
+    });
     setSettings((prev) => {
       const current = safeObjectRecords(prev.sites);
       const exists = current.some((site) => site.id === saved.id);
-      return { ...prev, sites: exists ? current.map((site) => site.id === saved.id ? saved : site) : [saved, ...current] };
+      return { ...prev, sites: exists ? current.map((site) => site.id === saved.id ? saved : site) : [saved, ...current], reporting: { ...normalizeReportingSettings(prev.reporting), facilityDataUpdatedAt: saved.updatedAt } };
     });
     setSelectedSiteId(saved.id);
     window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "Facility saved from Facility & Position Setup." }));
@@ -21157,6 +21207,16 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
       setDraftSite(null);
       setFacilityDrawerMode("add");
     }
+  }
+
+  function addReportingRegion() {
+    const name = newRegionName.trim();
+    if (!name) return;
+    const existing = reportingRegions.find((region) => region.name.toLowerCase() === name.toLowerCase());
+    const region = existing || { id: makeId("region"), name, active: true };
+    if (!existing) setSettings((prev) => ({ ...prev, reporting: { ...normalizeReportingSettings(prev.reporting), regions: [...normalizeReportingSettings(prev.reporting).regions, region] } }));
+    updateDraftSite("regionId", region.id);
+    setNewRegionName("");
   }
 
   function addFacilityLocationQuestion(site) {
@@ -21313,6 +21373,10 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
   const pill = (text, tone = "Low") => <Badge tone={tone}>{text}</Badge>;
 
   const facilityInfoRows = [
+    ["Facility ID", selectedSite?.id],
+    ["Facility Code", selectedSite?.facilityCode],
+    ["Region", reportingRegions.find((region) => region.id === selectedSite?.regionId)?.name],
+    ["Aliases", (selectedSite?.aliases || []).join(", ")],
     ["Operating Model", selectedSite?.siteType],
     ["Address", selectedSite?.siteAddress],
     ["City, State, ZIP", [selectedSite?.siteCity, selectedSite?.siteState, selectedSite?.siteZipCode].filter(Boolean).join(", ") || selectedSite?.location],
@@ -22006,6 +22070,9 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
             <div style={{ display: "grid", gap: 14 }}>
               <div style={{ display: "grid", gridTemplateColumns: width < 760 ? "1fr" : "repeat(2, minmax(0, 1fr))", gap: 10 }}>
                 <Field label="Facility Name"><TextInput value={draftSite.siteName} onChange={(event) => updateDraftSite("siteName", event.target.value)} /></Field>
+                <Field label="Stable Facility ID"><input value={draftSite.id || ""} readOnly style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panelAlt, color: THEME.muted }} /></Field>
+                <Field label="Organization Facility Code"><TextInput value={draftSite.facilityCode || ""} onChange={(event) => updateDraftSite("facilityCode", event.target.value)} placeholder="Optional facility code" /></Field>
+                <Field label="Region"><select value={draftSite.regionId || ""} onChange={(event) => updateDraftSite("regionId", event.target.value)} style={{ width: "100%", border: `1px solid ${THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panel }}><option value="">No region assigned</option>{reportingRegions.filter((region) => region.active !== false).map((region) => <option key={region.id} value={region.id}>{region.name}</option>)}</select></Field>
                 <Field label="Facility Type / Operating Model"><SelectInput value={draftSite.siteType} onChange={(event) => updateDraftSite("siteType", event.target.value)} options={SITE_OPERATIONAL_TIME_OPTIONS} /></Field>
                 <Field label="Location Summary"><TextInput value={draftSite.location} onChange={(event) => updateDraftSite("location", event.target.value)} placeholder="Example: Alto, GA" /></Field>
                 <Field label="Status"><SelectInput value={draftSite.status} onChange={(event) => updateDraftSite("status", event.target.value)} options={["Active", "Inactive"]} /></Field>
@@ -22013,6 +22080,13 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
                 <Field label="City"><TextInput value={draftSite.siteCity} onChange={(event) => updateDraftSite("siteCity", event.target.value)} /></Field>
                 <Field label="State"><TextInput value={draftSite.siteState} onChange={(event) => updateDraftSite("siteState", event.target.value)} /></Field>
                 <Field label="Zip Code"><TextInput value={draftSite.siteZipCode} onChange={(event) => updateDraftSite("siteZipCode", event.target.value)} /></Field>
+              </div>
+
+              <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 12, background: THEME.panelAlt, display: "grid", gap: 10 }}>
+                <strong>Canonical Facility Identity</strong>
+                <Field label="Previous Names or Aliases"><TextArea value={draftSite.aliasesText || ""} onChange={(event) => updateDraftSite("aliasesText", event.target.value)} minHeight={82} placeholder="One alias per line, for example Burruss CTC" /></Field>
+                <div style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap" }}><Field label="Add Region"><TextInput value={newRegionName} onChange={(event) => setNewRegionName(event.target.value)} placeholder="Example: Southeast" /></Field><Button subtle onClick={addReportingRegion}>Add + Assign Region</Button></div>
+                <span style={{ color: THEME.muted, fontSize: 12 }}>Renaming this facility preserves its stable ID and automatically stores the previous canonical name as an alias.</span>
               </div>
 
               <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 12, background: THEME.panelAlt }}>
@@ -22139,6 +22213,7 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
   const [positionManagementView, setPositionManagementView] = useState("Active");
   const [positionManagementOpenToken, setPositionManagementOpenToken] = useState(0);
   const [positionManagementCollapseToken, setPositionManagementCollapseToken] = useState(0);
+  const [regionalAssignmentSearch, setRegionalAssignmentSearch] = useState({});
   const [templateDrawerRef, setTemplateDrawerRef] = useState(null);
   const [templateFlowHidden, setTemplateFlowHidden] = useState(false);
   const [activeTemplateFlowGroup, setActiveTemplateFlowGroup] = useState("Candidate Submission");
@@ -22174,11 +22249,16 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
   );
 
   function updateArrayRecord(collection, id, key, value) {
-    setSettings((prev) => ({ ...prev, [collection]: prev[collection].map((item) => {
-      if (item.id !== id) return item;
-      const nextItem = { ...item, [key]: value };
-      return collection === "requisitions" && key === "status" ? normalizeRequisitionForStatus(nextItem) : nextItem;
-    }) }));
+    setSettings((prev) => {
+      const updatedAt = new Date().toISOString();
+      const nextCollection = prev[collection].map((item) => {
+        if (item.id !== id) return item;
+        if (collection === "sites" && key === "siteName") return { ...applyCanonicalFacilityUpdate(item, { ...item, siteName: value }), updatedAt };
+        const nextItem = { ...item, [key]: value, updatedAt };
+        return collection === "requisitions" && key === "status" ? normalizeRequisitionForStatus(nextItem) : nextItem;
+      });
+      return { ...prev, [collection]: nextCollection, ...(collection === "sites" ? { reporting: { ...normalizeReportingSettings(prev.reporting), facilityDataUpdatedAt: updatedAt } } : {}) };
+    });
     if (collection === "requisitions") {
       onRequisitionReferenceChange(id, { [key]: value });
     }
@@ -22189,7 +22269,19 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
   }
 
   function addContact(department = "") {
-    setSettings((prev) => ({ ...prev, contacts: [...(prev.contacts || []), { id: makeId("contact"), department, duty: "", name: "", title: "", email: "", phone: "", status: "Active", notes: "" }] }));
+    setSettings((prev) => ({ ...prev, contacts: [...(prev.contacts || []), { id: makeId("contact"), department, duty: "", name: "", title: "", email: "", phone: "", contactRole: "", regionId: "", assignedFacilityIds: [], active: true, status: "Active", notes: "" }] }));
+  }
+
+  function updateRegionalFacilityAssignment(contactId, facilityId, checked) {
+    setSettings((prev) => ({ ...prev, contacts: safeObjectRecords(prev.contacts).map((contact) => {
+      if (contact.id !== contactId) return contact;
+      const current = Array.isArray(contact.assignedFacilityIds) ? contact.assignedFacilityIds : [];
+      return { ...contact, assignedFacilityIds: checked ? Array.from(new Set([...current, facilityId])) : current.filter((id) => id !== facilityId), updatedAt: new Date().toISOString() };
+    }) }));
+  }
+
+  function setAllRegionalFacilityAssignments(contactId, facilityIds) {
+    setSettings((prev) => ({ ...prev, contacts: safeObjectRecords(prev.contacts).map((contact) => contact.id === contactId ? { ...contact, assignedFacilityIds: Array.from(new Set(facilityIds)), updatedAt: new Date().toISOString() } : contact) }));
   }
 
   function addTextTemplate() {
@@ -22943,6 +23035,8 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
   if (activeSettingsTab === "contacts") {
     const contactSearch = searchFor("contacts");
     const filteredContacts = (settings.contacts || []).filter((contact) => matchesSettingsSearch(contact, contactSearch));
+    const reportingConfig = normalizeReportingSettings(settings.reporting);
+    const canonicalFacilities = safeObjectRecords(settings.sites).filter((site) => site.status !== "Inactive" && site.id).sort((a, b) => String(a.siteName || "").localeCompare(String(b.siteName || "")));
     const departmentDefaults = ["Human Resources", "HR Department", "Background Check", "Credentialing", "Onboarding", "IT", "Payroll", "Benefits", "Facility Leadership", "Recruiting", "Other"];
     const departmentOptions = Array.from(new Set([...departmentDefaults, ...(settings.contacts || []).map((contact) => contact.department).filter(Boolean)])).sort((a, b) => a.localeCompare(b));
     const contactsByDepartment = filteredContacts.reduce((groups, contact) => {
@@ -22984,6 +23078,18 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
           <Field label="Status">
             <SelectInput value={contact.status || "Active"} onChange={(event) => updateArrayRecord("contacts", contact.id, "status", event.target.value)} options={["Active", "Inactive"]} />
           </Field>
+          <div style={{ gridColumn: "1 / -1", border: `1px solid ${THEME.primary2}`, borderRadius: 8, padding: 12, background: THEME.lightPurple, display: "grid", gap: 10 }}>
+            <div><strong>Regional Assignment</strong><div style={{ color: THEME.muted, fontSize: 12, marginTop: 3 }}>Reporting metadata only. These assignments do not make the contact an email recipient.</div></div>
+            <div style={{ display: "grid", gridTemplateColumns: width < 900 ? "1fr" : "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+              <Field label="Contact Role"><SelectInput value={contact.contactRole || ""} onChange={(event) => updateArrayRecord("contacts", contact.id, "contactRole", event.target.value)} options={["", ...REGIONAL_CONTACT_ROLES]} /></Field>
+              <Field label="Region"><select value={contact.regionId || ""} onChange={(event) => updateArrayRecord("contacts", contact.id, "regionId", event.target.value)} style={{ width: "100%", border: `1px solid ${THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panel }}><option value="">No region assigned</option>{reportingConfig.regions.filter((region) => region.active !== false).map((region) => <option key={region.id} value={region.id}>{region.name}</option>)}</select></Field>
+            </div>
+            <Field label="Search Assigned Facilities"><TextInput value={regionalAssignmentSearch[contact.id] || ""} onChange={(event) => setRegionalAssignmentSearch((prev) => ({ ...prev, [contact.id]: event.target.value }))} placeholder="Search canonical facility name, code, or alias" /></Field>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}><Button subtle onClick={() => setAllRegionalFacilityAssignments(contact.id, canonicalFacilities.map((site) => site.id))}>Select All Active Facilities</Button><Button subtle onClick={() => setAllRegionalFacilityAssignments(contact.id, [])}>Clear All</Button><strong>{(contact.assignedFacilityIds || []).length} selected</strong></div>
+            <div style={{ display: "grid", gap: 6, maxHeight: 210, overflowY: "auto", background: THEME.panel, border: `1px solid ${THEME.borderSoft}`, borderRadius: 6, padding: 8 }}>
+              {canonicalFacilities.filter((site) => !regionalAssignmentSearch[contact.id] || [site.siteName, site.facilityCode, ...(site.aliases || [])].join(" ").toLowerCase().includes(regionalAssignmentSearch[contact.id].toLowerCase())).map((site) => <label key={site.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: 6, cursor: "pointer" }}><input type="checkbox" checked={(contact.assignedFacilityIds || []).includes(site.id)} onChange={(event) => updateRegionalFacilityAssignment(contact.id, site.id, event.target.checked)} /><span><strong>{site.siteName || "Unnamed Facility"}</strong><span style={{ display: "block", color: THEME.muted, fontSize: 11 }}>{site.id}{site.facilityCode ? ` | ${site.facilityCode}` : ""}</span></span></label>)}
+            </div>
+          </div>
           <div style={{ gridColumn: "1 / -1" }}>
             <Field label="Notes">
               <TextArea value={contact.notes || ""} onChange={(event) => updateArrayRecord("contacts", contact.id, "notes", event.target.value)} minHeight={72} />

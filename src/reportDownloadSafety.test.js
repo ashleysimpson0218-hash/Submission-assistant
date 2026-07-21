@@ -15,3 +15,10 @@ test("facility workbook export creates one browser download", () => {
   expect(exportBody.match(/downloadExcelWorkbook\(/g)).toHaveLength(1);
   expect(exportBody).toMatch(/downloaded in one Excel file/);
 });
+
+test("Excel workbook downloads use genuine SpreadsheetML worksheets and trusted formulas", () => {
+  expect(appSource).toMatch(/<Workbook xmlns=/);
+  expect(appSource).toMatch(/<Worksheet ss:Name=/);
+  expect(appSource).toMatch(/ss:Formula=/);
+  expect(appSource).toMatch(/<AutoFilter x:Range=/);
+});
