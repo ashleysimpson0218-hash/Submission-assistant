@@ -14193,7 +14193,6 @@ function rowifyCandidate(item = {}) {
     ["actions", "Workspace", "\u26A1"],
     ["positions", "Facility & Position Setup", "\uD83C\uDFE2"],
     ["reports", "Weekly Cleanup", "\uD83E\uDDF9"],
-    ["automation", "Automation Center", "\u2728"],
     ["settings", "Settings", "\u2699\uFE0F"],
     ["account", "Profile & Account", "\uD83D\uDC64"],
   ];
@@ -15491,9 +15490,12 @@ function rowifyCandidate(item = {}) {
 
         {activePage === "automation" ? (
           <div style={{ display: "grid", gap: 16 }}>
-            <div>
-              <h1 style={{ margin: 0, color: THEME.text, fontSize: 24, fontWeight: 950 }}>Automation Center</h1>
-              <div style={{ color: THEME.muted, fontSize: 13, marginTop: 5 }}>Control recruiter workflow automations while keeping recruiters in charge of what moves and what gets sent.</div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
+              <div>
+                <h1 style={{ margin: 0, color: THEME.text, fontSize: 24, fontWeight: 950 }}>Automation Center</h1>
+                <div style={{ color: THEME.muted, fontSize: 13, marginTop: 5 }}>Control recruiter workflow automations while keeping recruiters in charge of what moves and what gets sent.</div>
+              </div>
+              <Button subtle onClick={() => setActivePage("positions")}>Back to Setup</Button>
             </div>
             <Card compact>
               <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : "repeat(5, minmax(0, 1fr))" }}>
@@ -21396,6 +21398,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
           <p style={{ margin: "6px 0 0", color: THEME.muted, fontWeight: 700 }}>Manage your facilities, positions, requirements, and rate rules in one place.</p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Button subtle onClick={() => setActivePage("automation")}>✨ Automation Center</Button>
           <Button subtle onClick={() => setActiveTab("import")}>Import Center</Button>
           <Button primary onClick={() => openFacilityDrawer({}, "add")}>+ Add Facility</Button>
         </div>
