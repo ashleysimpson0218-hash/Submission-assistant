@@ -35,14 +35,23 @@ import {
   applyAtsUpdateCompleted,
   applyAtsUpdateCopied,
   applyCandidateConfirmationSent,
+  applyCandidateConfirmationSkipped,
   applyCandidateEmailOpened,
   applyCandidateTextCopied,
   applyCandidateTextSent,
+  applyCandidateTextSkipped,
   applyCommunicationActionToWorkspace,
   applyFacilityEmailOpened,
   applyFacilitySubmissionSent,
   normalizeReviewedCommunicationRecord,
 } from "./submissionCommunicationActions";
+import {
+  CANDIDATE_COMMUNICATION_PRESETS,
+  COMMUNICATION_MODES,
+  applyCommunicationPlanPreset,
+  normalizeCommunicationWorkflow,
+  updateCommunicationMode,
+} from "./communicationWorkflow";
 import CommunicationTemplateDraftsPanel from "./CommunicationTemplateDraftsPanel";
 import { applyDefaultRootPreservingDraftVariants } from "./communicationTemplateDrafts";
 import { releaseConditionLabel } from "./communicationTemplateActivation";
@@ -423,12 +432,13 @@ function contactRecipientPresetOptions(settings = {}) {
 
 function activeSubmissionStepKeysFor(settings = {}) {
   const templateActive = (key) => String((settings.templates || {})[key]?.status || "Active").toLowerCase() === "active";
+  const communicationPlan = normalizeCommunicationWorkflow(settings);
   const keys = [
     templateActive("hiringManager") ? "manager" : "",
-    templateActive("candidateConfirmation") ? "candidate" : "",
+    communicationPlan.candidateEmailMode !== COMMUNICATION_MODES.off && templateActive("candidateConfirmation") ? "candidate" : "",
     templateActive("atsUpdate") ? "ats" : "",
   ].filter(Boolean);
-  return keys.length ? keys : ["manager", "candidate", "ats"];
+  return keys;
 }
 
 function templateRecordForSettings(settings = {}, key = "") {
@@ -1584,6 +1594,11 @@ const TEMPLATE_CONDITIONAL_BLOCK_LABELS = [
 ];
 
 const DEFAULT_SETTINGS = {
+  communicationWorkflow: {
+    candidateCommunicationPlan: "New Hire Liaison Text Only",
+    candidateEmailMode: "Off",
+    candidateTextMode: "Required",
+  },
   general: {
     workspaceName: "Central 54 Recruiting",
     companyName: "",
@@ -10165,6 +10180,14 @@ function RecruiterApp() {
     return runReviewedCommunicationAction(record.id, applyCandidateTextCopied, { copyValueFor: (latest) => latest.reviewedSubmissionPackage?.rendered?.candidateText?.body || "", successMessage: "Exact saved candidate text copied. Confirm only after it has been sent manually." });
   }
 
+  function skipOptionalCandidateEmail(record) {
+    return runReviewedCommunicationAction(record.id, applyCandidateConfirmationSkipped, { successMessage: "Optional candidate email skipped. The candidate workflow can continue." });
+  }
+
+  function skipOptionalCandidateText(record) {
+    return runReviewedCommunicationAction(record.id, applyCandidateTextSkipped, { successMessage: "Optional candidate text skipped. The candidate workflow can continue." });
+  }
+
   function copySavedAtsUpdate(record) {
     return runReviewedCommunicationAction(record.id, applyAtsUpdateCopied, { copyValueFor: (latest) => latest.reviewedSubmissionPackage?.rendered?.atsUpdate?.body || "", successMessage: "Exact saved ATS update copied. Confirm only after it has been pasted and saved manually." });
   }
@@ -16895,8 +16918,10 @@ function rowifyCandidate(item = {}) {
                       onMarkFacility={() => setCommunicationActionReview({ action: "facilitySent", recordId: selectedSubmission.id, acknowledged: false })}
                       onOpenCandidate={() => openSavedCandidateEmail(selectedSubmission)}
                       onMarkCandidate={() => setCommunicationActionReview({ action: "candidateSent", recordId: selectedSubmission.id, acknowledged: false })}
+                      onSkipCandidate={() => skipOptionalCandidateEmail(selectedSubmission)}
                       onCopyText={() => copySavedCandidateText(selectedSubmission)}
                       onMarkText={() => setCommunicationActionReview({ action: "textSent", recordId: selectedSubmission.id, acknowledged: false })}
+                      onSkipText={() => skipOptionalCandidateText(selectedSubmission)}
                       onCopyAts={() => copySavedAtsUpdate(selectedSubmission)}
                       onMarkAts={() => setCommunicationActionReview({ action: "atsCompleted", recordId: selectedSubmission.id, acknowledged: false })}
                     /> : <Accordion title="Communication Command Center" subtitle="Candidate, facility leadership, HR, preboarding, and ATS-ready messages in one place." defaultOpen>
@@ -19091,8 +19116,10 @@ function rowifyCandidate(item = {}) {
                   onMarkFacility={() => setCommunicationActionReview({ action: "facilitySent", recordId: selectedSubmission.id, acknowledged: false })}
                   onOpenCandidate={() => openSavedCandidateEmail(selectedSubmission)}
                   onMarkCandidate={() => setCommunicationActionReview({ action: "candidateSent", recordId: selectedSubmission.id, acknowledged: false })}
+                  onSkipCandidate={() => skipOptionalCandidateEmail(selectedSubmission)}
                   onCopyText={() => copySavedCandidateText(selectedSubmission)}
                   onMarkText={() => setCommunicationActionReview({ action: "textSent", recordId: selectedSubmission.id, acknowledged: false })}
+                  onSkipText={() => skipOptionalCandidateText(selectedSubmission)}
                   onCopyAts={() => copySavedAtsUpdate(selectedSubmission)}
                   onMarkAts={() => setCommunicationActionReview({ action: "atsCompleted", recordId: selectedSubmission.id, acknowledged: false })}
                 /> : <Card compact title="Communication" subtitle="Open, copy, or complete candidate and facility messages.">
@@ -19272,12 +19299,13 @@ function rowifyCandidate(item = {}) {
   );
 }
 
-function SubmissionCommunicationsPanel({ record, processing = false, onViewPackage, onOpenFacility, onMarkFacility, onOpenCandidate, onMarkCandidate, onCopyText, onMarkText, onCopyAts, onMarkAts }) {
+function SubmissionCommunicationsPanel({ record, processing = false, onViewPackage, onOpenFacility, onMarkFacility, onOpenCandidate, onMarkCandidate, onSkipCandidate, onCopyText, onMarkText, onSkipText, onCopyAts, onMarkAts }) {
   const normalized = normalizeReviewedCommunicationRecord(record);
   const packageData = normalized.reviewedSubmissionPackage || {};
   const states = normalized.communicationActionStates || {};
   const recipients = packageData.recipients || {};
   const rendered = packageData.rendered || {};
+  const communicationPlan = normalizeCommunicationWorkflow(packageData.communicationPlan || {});
   const steps = [
     {
       key: "facilitySubmission",
@@ -19300,8 +19328,9 @@ function SubmissionCommunicationsPanel({ record, processing = false, onViewPacka
       subject: rendered.candidateEmail?.subject,
       lastAt: normalized.candidateConfirmationDraftOpenedAt,
       completedAt: normalized.candidateConfirmationSentAt,
-      action: states.candidateConfirmation === ACTION_STATES.candidateReady ? ["Open Candidate Email", onOpenCandidate] : states.candidateConfirmation === ACTION_STATES.candidateOpened ? ["Mark Candidate Email Sent", onMarkCandidate] : null,
-      locked: states.candidateConfirmation === ACTION_STATES.locked ? "Facility Submission must be marked Sent first." : "",
+      action: [ACTION_STATES.candidateReady, ACTION_STATES.optionalReady].includes(states.candidateConfirmation) ? ["Open Candidate Email", onOpenCandidate] : states.candidateConfirmation === ACTION_STATES.candidateOpened ? ["Mark Candidate Email Sent", onMarkCandidate] : null,
+      secondaryAction: communicationPlan.candidateEmailMode === COMMUNICATION_MODES.optional && ![ACTION_STATES.candidateSent, ACTION_STATES.skipped].includes(states.candidateConfirmation) ? ["Skip Optional Email", onSkipCandidate] : null,
+      locked: states.candidateConfirmation === ACTION_STATES.locked ? "Facility Submission must be marked Sent first." : states.candidateConfirmation === ACTION_STATES.notRequired ? "Candidate email is intentionally off for this reviewed plan." : "",
     },
     {
       key: "candidateFollowUpText",
@@ -19312,8 +19341,9 @@ function SubmissionCommunicationsPanel({ record, processing = false, onViewPacka
       subject: "",
       lastAt: normalized.candidateTextCopiedAt,
       completedAt: normalized.textSentAt,
-      action: states.candidateFollowUpText === ACTION_STATES.copyReady ? ["Copy Candidate Text", onCopyText] : states.candidateFollowUpText === ACTION_STATES.textCopied ? ["Mark Candidate Text Sent", onMarkText] : null,
-      locked: states.candidateFollowUpText === ACTION_STATES.locked ? "Facility Submission must be marked Sent first." : states.candidateFollowUpText === ACTION_STATES.textOptional ? "No saved candidate text is configured; this optional step does not block completion." : "",
+      action: [ACTION_STATES.copyReady, ACTION_STATES.optionalReady].includes(states.candidateFollowUpText) ? ["Copy Candidate Text", onCopyText] : states.candidateFollowUpText === ACTION_STATES.textCopied ? ["Mark Candidate Text Sent", onMarkText] : null,
+      secondaryAction: communicationPlan.candidateTextMode === COMMUNICATION_MODES.optional && ![ACTION_STATES.textSent, ACTION_STATES.skipped].includes(states.candidateFollowUpText) ? ["Skip Optional Text", onSkipText] : null,
+      locked: states.candidateFollowUpText === ACTION_STATES.locked ? "Facility Submission must be marked Sent first." : states.candidateFollowUpText === ACTION_STATES.textOptional ? "No saved candidate text is configured; this optional step does not block completion." : states.candidateFollowUpText === ACTION_STATES.notRequired ? "Candidate text is intentionally off for this reviewed plan." : "",
     },
     {
       key: "atsSubmissionUpdate",
@@ -19339,7 +19369,7 @@ function SubmissionCommunicationsPanel({ record, processing = false, onViewPacka
         </section>
         <div style={{ display: "grid", gap: 10 }}>
           {steps.map((step) => <section key={step.key} style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 13, background: THEME.panelAlt, display: "grid", gap: 8 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}><strong style={{ color: THEME.text }}>{step.label}</strong><Badge tone={step.state === "Sent" || step.state === "Completed" || step.state === ACTION_STATES.textOptional ? "Low" : step.state === ACTION_STATES.locked ? "Medium" : "Interview"}>{step.state}</Badge></div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}><strong style={{ color: THEME.text }}>{step.label}</strong><Badge tone={step.state === "Sent" || step.state === "Completed" || [ACTION_STATES.textOptional, ACTION_STATES.notRequired, ACTION_STATES.skipped].includes(step.state) ? "Low" : step.state === ACTION_STATES.locked ? "Medium" : "Interview"}>{step.state}</Badge></div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 7, color: THEME.muted, fontSize: 12 }}>
               <div><strong style={{ color: THEME.text }}>Release condition:</strong> {releaseConditionLabel(step.release || "Not configured")}</div>
               {step.recipient ? <div><strong style={{ color: THEME.text }}>Recipient:</strong> {step.recipient}</div> : null}
@@ -19348,7 +19378,7 @@ function SubmissionCommunicationsPanel({ record, processing = false, onViewPacka
               <div><strong style={{ color: THEME.text }}>Completed:</strong> {step.completedAt ? new Date(step.completedAt).toLocaleString() : "Not completed"}</div>
             </div>
             {step.locked ? <div style={{ color: THEME.amber, fontSize: 12, fontWeight: 800 }}>{step.locked}</div> : null}
-            {step.action ? <div><Button primary onClick={step.action[1]} disabled={processing}>{processing ? "Saving..." : step.action[0]}</Button></div> : null}
+            {step.action || step.secondaryAction ? <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{step.action ? <Button primary onClick={step.action[1]} disabled={processing}>{processing ? "Saving..." : step.action[0]}</Button> : null}{step.secondaryAction ? <Button subtle onClick={step.secondaryAction[1]} disabled={processing}>{step.secondaryAction[0]}</Button> : null}</div> : null}
           </section>)}
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end" }}><Button subtle onClick={onViewPackage}>View Exact Saved Package</Button></div>
@@ -19412,6 +19442,7 @@ export function CommunicationPreviewModal({ preview, outOfDate = false, onClose,
   const blockers = preview.blockers || [];
   const warnings = preview.warnings || [];
   const rendered = preview.rendered || {};
+  const communicationPlan = normalizeCommunicationWorkflow(preview.communicationPlan || {});
   const facilityRecipients = preview.recipients?.facility || { to: [], cc: [] };
   const candidateRecipients = preview.recipients?.candidate || { to: [] };
   return (
@@ -19441,6 +19472,11 @@ export function CommunicationPreviewModal({ preview, outOfDate = false, onClose,
             ].map(([label, value]) => <div key={label} style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panelAlt }}><div style={{ color: THEME.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>{label}</div><div style={{ color: THEME.text, fontWeight: 850, fontSize: 12, marginTop: 3, overflowWrap: "anywhere" }}>{value}</div></div>)}
           </section>
 
+          <section style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 12, background: THEME.panelAlt, display: "grid", gap: 5, color: THEME.text, fontSize: 12 }}>
+            <strong>Candidate Communication Plan: {communicationPlan.candidateCommunicationPlan}</strong>
+            <div>Candidate Email: <strong>{communicationPlan.candidateEmailMode}</strong> · Candidate Text: <strong>{communicationPlan.candidateTextMode}</strong></div>
+          </section>
+
           {outOfDate ? <section style={{ border: `1px solid ${THEME.amber}`, borderRadius: 8, padding: 12, background: THEME.amberBg }}><strong style={{ color: THEME.amber }}>Out of Date</strong><div style={{ color: THEME.text, fontSize: 12, marginTop: 6 }}>Relevant intake, requisition, facility, recipient, or template information changed. Refresh Preview to review a current immutable snapshot.</div></section> : null}
           {blockers.length ? <section style={{ border: `1px solid ${THEME.red}`, borderRadius: 8, padding: 12, background: THEME.redBg }}><strong style={{ color: THEME.red }}>Action Required</strong><div style={{ display: "grid", gap: 7, marginTop: 8 }}>{blockers.map((item, index) => <div key={`${item.code}-${item.field}-${index}`} style={{ color: THEME.text, fontSize: 12 }}><strong>{item.code}</strong> — {item.message}</div>)}</div></section> : <section style={{ border: `1px solid ${THEME.green}`, borderRadius: 8, padding: 12, background: THEME.greenBg }}><strong style={{ color: THEME.green }}>Templates Approved in Test</strong><div style={{ color: THEME.text, fontSize: 12, marginTop: 6 }}><strong>Preview Complete</strong><br />{confirmationEnabled ? "The communication package is ready for final reviewed confirmation in WelcomeFlow Test. No communication will be sent or copied." : "The communication package is ready for review. Final Candidate Ready confirmation is not enabled in this phase."}</div></section>}
           {warnings.length ? <section style={{ border: `1px solid ${THEME.amber}`, borderRadius: 8, padding: 12, background: THEME.amberBg }}><strong style={{ color: THEME.amber }}>Warnings</strong><div style={{ display: "grid", gap: 7, marginTop: 8 }}>{warnings.map((item, index) => <div key={`${item.code}-${index}`} style={{ color: THEME.text, fontSize: 12 }}>{item.message}</div>)}</div></section> : null}
@@ -19448,7 +19484,7 @@ export function CommunicationPreviewModal({ preview, outOfDate = false, onClose,
           {(preview.unresolvedTokens?.length || preview.restrictedTokens?.length) ? <section style={{ border: `1px solid ${THEME.red}`, borderRadius: 8, padding: 12, background: THEME.redBg, display: "grid", gap: 7 }}><strong style={{ color: THEME.red }}>Template tokens requiring correction</strong>{preview.unresolvedTokens?.length ? <div style={{ fontSize: 12 }}><strong>Unresolved:</strong> {preview.unresolvedTokens.join(", ")}</div> : null}{preview.restrictedTokens?.length ? <div style={{ fontSize: 12 }}><strong>Restricted in ATS:</strong> {preview.restrictedTokens.join(", ")}</div> : null}</section> : null}
 
           <CommunicationPreviewDocument title="Facility Submission Email" templateKey={rendered.facilityEmail?.templateKey} variantKey={rendered.facilityEmail?.variantKey} subject={rendered.facilityEmail?.subject} body={rendered.facilityEmail?.body} to={facilityRecipients.to} cc={facilityRecipients.cc} releaseCondition={rendered.facilityEmail?.releaseCondition} />
-          <CommunicationPreviewDocument title="Candidate Confirmation Email" templateKey={rendered.candidateEmail?.templateKey} variantKey={rendered.candidateEmail?.variantKey} subject={rendered.candidateEmail?.subject} body={rendered.candidateEmail?.body} to={candidateRecipients.to} releaseCondition={rendered.candidateEmail?.releaseCondition} />
+          {rendered.candidateEmail ? <CommunicationPreviewDocument title="Candidate Confirmation Email" templateKey={rendered.candidateEmail.templateKey} variantKey={rendered.candidateEmail.variantKey} subject={rendered.candidateEmail.subject} body={rendered.candidateEmail.body} to={candidateRecipients.to} releaseCondition={rendered.candidateEmail.releaseCondition} /> : <section style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 12, background: THEME.panelAlt, color: THEME.muted, fontSize: 12 }}><strong style={{ color: THEME.text }}>Candidate Confirmation Email — {communicationPlan.candidateEmailMode}</strong><div style={{ marginTop: 4 }}>No candidate email will be generated or required by this reviewed plan.</div></section>}
           {rendered.candidateText ? <CommunicationPreviewDocument title="Candidate Follow-Up Text" templateKey={rendered.candidateText.templateKey} variantKey={rendered.candidateText.variantKey} body={rendered.candidateText.body} releaseCondition={rendered.candidateText.releaseCondition} /> : <section style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 12, background: THEME.panelAlt, color: THEME.muted, fontSize: 12 }}><strong style={{ color: THEME.text }}>Candidate Follow-Up Text</strong><div style={{ marginTop: 4 }}>No explicitly selected submission text template. No text will be generated or sent.</div></section>}
           <CommunicationPreviewDocument title="ATS Submission Update" templateKey={rendered.atsUpdate?.templateKey} variantKey={rendered.atsUpdate?.variantKey} subject={rendered.atsUpdate?.subject} body={rendered.atsUpdate?.body} releaseCondition={rendered.atsUpdate?.releaseCondition} />
           {confirmationEnabled && preview.canConfirm && !outOfDate ? <section aria-label="Candidate Ready confirmation acknowledgments" style={{ border: `1px solid ${THEME.primary2}`, borderRadius: 8, padding: 14, background: THEME.blueBg, display: "grid", gap: 11 }}>
@@ -19498,6 +19534,7 @@ function CandidateReadyConfirmationResult({ record, onViewPackage, onOpenCandida
 function SavedSubmissionPackageModal({ packageData, onClose }) {
   const rendered = packageData.rendered || {};
   const recipients = packageData.recipients || {};
+  const communicationPlan = normalizeCommunicationWorkflow(packageData.communicationPlan || {});
   return (
     <div role="dialog" aria-modal="true" aria-label="Saved reviewed submission package" onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 140, background: "rgba(16, 10, 43, 0.62)", display: "grid", placeItems: "center", padding: 16 }}>
       <div onClick={(event) => event.stopPropagation()} style={{ width: "min(1120px, 100%)", maxHeight: "94vh", overflow: "auto", background: THEME.panel, border: `1px solid ${THEME.border}`, borderRadius: 10, boxShadow: "0 28px 80px rgba(16,10,43,0.34)" }}>
@@ -19505,7 +19542,8 @@ function SavedSubmissionPackageModal({ packageData, onClose }) {
         <div style={{ padding: 16, display: "grid", gap: 14 }}>
           <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>{[["Snapshot Hash", packageData.snapshotHash], ["Confirmed At", packageData.confirmedAt], ["Confirmed By", packageData.confirmedBy], ["Environment", packageData.environment], ["Project Ref", packageData.projectRef]].map(([label, value]) => <ProfileSummaryBlock key={label} title={label}>{value || "Not provided"}</ProfileSummaryBlock>)}</section>
           <CommunicationPreviewDocument title="Facility Submission Email" templateKey={rendered.facilityEmail?.templateKey} variantKey={rendered.facilityEmail?.variantKey} subject={rendered.facilityEmail?.subject} body={rendered.facilityEmail?.body} to={recipients.facility?.to || []} cc={recipients.facility?.cc || []} releaseCondition={rendered.facilityEmail?.releaseCondition} />
-          <CommunicationPreviewDocument title="Candidate Confirmation Email" templateKey={rendered.candidateEmail?.templateKey} variantKey={rendered.candidateEmail?.variantKey} subject={rendered.candidateEmail?.subject} body={rendered.candidateEmail?.body} to={recipients.candidate?.to || []} releaseCondition={rendered.candidateEmail?.releaseCondition} />
+          <section style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 12, background: THEME.panelAlt, fontSize: 12 }}><strong>Candidate Communication Plan: {communicationPlan.candidateCommunicationPlan}</strong><div>Candidate Email: {communicationPlan.candidateEmailMode} · Candidate Text: {communicationPlan.candidateTextMode}</div></section>
+          {rendered.candidateEmail ? <CommunicationPreviewDocument title="Candidate Confirmation Email" templateKey={rendered.candidateEmail.templateKey} variantKey={rendered.candidateEmail.variantKey} subject={rendered.candidateEmail.subject} body={rendered.candidateEmail.body} to={recipients.candidate?.to || []} releaseCondition={rendered.candidateEmail.releaseCondition} /> : null}
           {rendered.candidateText ? <CommunicationPreviewDocument title="Candidate Follow-Up Text" templateKey={rendered.candidateText.templateKey} variantKey={rendered.candidateText.variantKey} body={rendered.candidateText.body} releaseCondition={rendered.candidateText.releaseCondition} /> : null}
           <CommunicationPreviewDocument title="ATS Submission Update" templateKey={rendered.atsUpdate?.templateKey} variantKey={rendered.atsUpdate?.variantKey} subject={rendered.atsUpdate?.subject} body={rendered.atsUpdate?.body} releaseCondition={rendered.atsUpdate?.releaseCondition} />
         </div>
@@ -20390,6 +20428,7 @@ function CandidateManagementPage({ activeTab, setActiveTab, search, setSearch, h
     if (value === "active") onOpenCandidateProfiles();
     if (value === "archived") onOpenArchivedProfiles();
   }
+
   const detailRows = selectedRow ? [
     ["Phone", selectedRow.phone || "No phone listed"],
     ["Email", selectedRow.email || "No email listed"],
@@ -24423,7 +24462,22 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
     );
   };
 
+  const communicationWorkflow = normalizeCommunicationWorkflow(settings);
   return <>
+    {assertTestRuntime(runtime).ok ? <Card title="Candidate Communication Plan" subtitle="Choose which candidate communications are required, optional, or intentionally off. Facility submission and ATS tracking remain separate.">
+      <div style={{ display: "grid", gap: 12 }}>
+        <div style={{ border: `1px solid ${THEME.primary2}`, borderRadius: 8, padding: 12, background: THEME.blueBg, color: THEME.text, fontSize: 12, lineHeight: 1.55 }}>
+          <strong>Current plan: {communicationWorkflow.candidateCommunicationPlan}</strong>
+          <div>“Off” channels are omitted from Preview and do not block the candidate workflow. “Optional” channels may be sent or explicitly skipped.</div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+          <Field label="Plan Preset"><SelectInput value={communicationWorkflow.candidateCommunicationPlan} onChange={(event) => setSettings((current) => applyCommunicationPlanPreset(current, event.target.value))} options={[...Object.keys(CANDIDATE_COMMUNICATION_PRESETS), "Custom"]} /></Field>
+          <Field label="Candidate Email"><SelectInput value={communicationWorkflow.candidateEmailMode} onChange={(event) => setSettings((current) => updateCommunicationMode(current, "candidateEmail", event.target.value))} options={Object.values(COMMUNICATION_MODES)} /></Field>
+          <Field label="Candidate Text"><SelectInput value={communicationWorkflow.candidateTextMode} onChange={(event) => setSettings((current) => updateCommunicationMode(current, "candidateText", event.target.value))} options={Object.values(COMMUNICATION_MODES)} /></Field>
+        </div>
+        <div style={{ color: THEME.muted, fontSize: 12 }}>The default New Hire Liaison plan turns Candidate Email off and requires only the liaison handoff text. Templates remain editable below; activating an approved draft now preserves its exact wording.</div>
+      </div>
+    </Card> : null}
     {assertTestRuntime(runtime).ok ? <Card title="Candidate-Type Communication Drafts" subtitle="Review and activate validated candidate-type communications in WelcomeFlow Test without sending them."><CommunicationTemplateDraftsPanel settings={settings} setSettings={setSettings} runtime={runtime} onSaveDraft={onSaveCommunicationDraft} onRefreshDraft={onRefreshCommunicationDraft} onActivateVariant={onActivateCommunicationVariant} onDeactivateVariant={onDeactivateCommunicationVariant} /></Card> : null}
     <Card title="Email & Text Process Flows" subtitle="Build each workflow as queued emails/texts with editable recipients, subject lines, body copy, and next steps." action={<div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}><Button subtle onClick={() => setTemplateFlowHidden((value) => !value)}>{templateFlowHidden ? "Show" : "Hide"}</Button><Button primary onClick={() => window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "All template changes saved." }))}>Save All Templates</Button></div>}>
       <div style={{ display: "grid", gap: 12 }}>

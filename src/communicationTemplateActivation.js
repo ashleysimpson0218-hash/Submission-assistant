@@ -1,7 +1,6 @@
 import { assertTestRuntime } from "./requisitionCommunicationDetails";
 import {
   DRAFT_CANDIDATE_TYPES,
-  DRAFT_TEXT_SPECS,
   createDraftEditBaseline,
   draftRootHashes,
   stableDraftHash,
@@ -62,14 +61,7 @@ function currentRootHash(settings = {}, { kind, templateKey } = {}) {
 
 export function finalizeApprovedCommunication(record = {}, selection = {}) {
   const next = clone(record) || {};
-  const { kind, templateKey, candidateType } = selection;
-  if (templateKey === "candidateConfirmation") {
-    next.body = String(next.body || "")
-      .replace("Your profile has been prepared for submission", "Your profile has been submitted")
-      .replace("Your information has been prepared for internal consideration", "Your information has been submitted for internal consideration")
-      .replace("Your information has been prepared for rehire consideration", "Your information has been submitted for rehire consideration");
-  }
-  if (kind === "text" && DRAFT_TEXT_SPECS[candidateType]) next.body = DRAFT_TEXT_SPECS[candidateType].body;
+  const { templateKey } = selection;
   if (templateKey === "atsUpdate") {
     next.body = String(next.body || "").replace("Status: Submission package prepared for recruiter review.", "Status: Candidate submitted to facility for review.");
   }

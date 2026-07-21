@@ -152,12 +152,12 @@ describe("test-only communication activation", () => {
     expect(restored.draft.approvedAt).toBeNull();
   });
 
-  test("approved wording is applied only to candidate-facing and ATS records", () => {
+  test("activation preserves exact approved candidate wording and only finalizes the ATS status line", () => {
     const settings = seededSettings();
     const facility = settings.templates.hiringManager.draftVariants.External;
     expect(finalizeApprovedCommunication(facility, selections[0].selection).body).toBe(facility.body);
-    expect(finalizeApprovedCommunication(settings.templates.candidateConfirmation.draftVariants.External, selections[3].selection).body).toContain("Your profile has been submitted");
-    expect(finalizeApprovedCommunication(settings.communicationTemplateDrafts.textTemplates.Internal, selections[7].selection).body).toContain("has been sent for review");
+    expect(finalizeApprovedCommunication(settings.templates.candidateConfirmation.draftVariants.External, selections[3].selection).body).toBe(settings.templates.candidateConfirmation.draftVariants.External.body);
+    expect(finalizeApprovedCommunication(settings.communicationTemplateDrafts.textTemplates.Internal, selections[7].selection).body).toBe(settings.communicationTemplateDrafts.textTemplates.Internal.body);
     expect(finalizeApprovedCommunication(settings.templates.atsUpdate.draftVariants.Standard, selections[9].selection).body).toContain("Status: Candidate submitted to facility for review.");
   });
 

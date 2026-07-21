@@ -4,6 +4,12 @@ import {
   normalizeOptionalText,
   normalizeWeeklyHours,
 } from "./requisitionCommunicationDetails";
+import {
+  communicationIsOff,
+  communicationIsOptional,
+  communicationIsRequired,
+  normalizeCommunicationWorkflow,
+} from "./communicationWorkflow";
 
 export const LEGACY_TOKEN_ALIASES = Object.freeze({
   candidateName: "candidate_name",
@@ -70,12 +76,6 @@ const OPTIONAL_SECTION_TOKENS = new Set([
   "rehire_section",
   "internal_employee_section",
   "contract_statement",
-]);
-
-const REQUIRED_TEMPLATE_KEYS = Object.freeze([
-  ["facilityEmail", "hiringManager"],
-  ["candidateEmail", "candidateConfirmation"],
-  ["atsUpdate", "atsUpdate"],
 ]);
 
 function blocker(code, message, source, field = "") {
@@ -578,13 +578,22 @@ export function buildCommunicationPreview({
 
   const facilityRecipientResult = facilityResult.value ? resolveFacilitySubmissionRecipients(facilityResult.value) : { recipients: { to: [], cc: [] }, blockers: [] };
   blockers.push(...facilityRecipientResult.blockers);
-  const candidateTo = validEmail(snapshot.intake?.candidateEmail) ? [snapshot.intake.candidateEmail] : [];
-  if (!candidateTo.length) blockers.push(blocker("CANDIDATE_EMAIL_INVALID", "A valid candidate email is required for the candidate confirmation.", "intake", "candidateEmail"));
+  const communicationPlan = normalizeCommunicationWorkflow(settings);
+  const candidateEmailOff = communicationIsOff(communicationPlan, "candidateEmail");
+  const candidateEmailOptional = communicationIsOptional(communicationPlan, "candidateEmail");
+  const candidateTextOff = communicationIsOff(communicationPlan, "candidateText");
+  const candidateTextRequired = textRequired || communicationIsRequired(communicationPlan, "candidateText");
+  const candidateTo = !candidateEmailOff && validEmail(snapshot.intake?.candidateEmail) ? [snapshot.intake.candidateEmail] : [];
+  if (!candidateEmailOff && !candidateTo.length) {
+    const issue = warning("CANDIDATE_EMAIL_INVALID", "A valid candidate email is not available, so the optional candidate email was omitted.", "intake", "candidateEmail");
+    if (candidateEmailOptional) warnings.push(issue);
+    else blockers.push(blocker(issue.code, "A valid candidate email is required for the candidate confirmation.", issue.source, issue.field));
+  }
 
   const tokens = buildCommunicationTokenMap(snapshot);
   const rendered = {
     facilityEmail: { templateKey: "hiringManager", variantKey: "none", subject: "", body: "" },
-    candidateEmail: { templateKey: "candidateConfirmation", variantKey: "none", subject: "", body: "", releaseCondition: "facilitySubmissionSent" },
+    candidateEmail: null,
     candidateText: null,
     atsUpdate: { templateKey: "atsUpdate", variantKey: "none", subject: "", body: "", releaseCondition: "facilitySubmissionSent" },
   };
@@ -603,36 +612,59 @@ export function buildCommunicationPreview({
     unresolvedTokens.push(...result.unresolvedTokens);
   }
 
-  REQUIRED_TEMPLATE_KEYS.filter(([, key]) => key !== "hiringManager").forEach(([outputKey, key]) => {
-    const variantKey = key === "candidateConfirmation" ? candidateType : "Standard";
-    const resolution = resolveActiveVariant(settings, key, variantKey);
-    blockers.push(...resolution.blockers);
-    const result = renderCommunicationTemplate(resolution.record, applyConditionalBlocks(resolution.record, tokens), {
-      restrictedTokens: key === "atsUpdate" ? ATS_RESTRICTED_TOKENS : [],
-    });
-    rendered[outputKey].variantKey = resolution.variantKey;
-    rendered[outputKey].releaseCondition = resolution.record.releaseCondition || "facilitySubmissionSent";
-    rendered[outputKey].subject = result.subject;
-    rendered[outputKey].body = result.body;
-    unresolvedTokens.push(...result.unresolvedTokens);
-    restrictedTokens.push(...result.restrictedTokens);
-  });
+  if (!candidateEmailOff && candidateTo.length) {
+    const resolution = resolveActiveVariant(settings, "candidateConfirmation", candidateType);
+    const candidateTemplateProblems = [...resolution.blockers];
+    const result = renderCommunicationTemplate(resolution.record, applyConditionalBlocks(resolution.record, tokens));
+    candidateTemplateProblems.push(...result.unresolvedTokens.map((token) => blocker("UNRESOLVED_CANDIDATE_EMAIL_TOKEN", `Candidate email contains unresolved token ${token}.`, "template", "candidateConfirmation")));
+    if (candidateEmailOptional && candidateTemplateProblems.length) {
+      warnings.push(warning("OPTIONAL_CANDIDATE_EMAIL_OMITTED", candidateTemplateProblems.map((item) => item.message).join(" "), "template", "candidateConfirmation"));
+    } else {
+      blockers.push(...candidateTemplateProblems);
+      unresolvedTokens.push(...result.unresolvedTokens);
+      rendered.candidateEmail = {
+        templateKey: "candidateConfirmation",
+        variantKey: resolution.variantKey,
+        subject: result.subject,
+        body: result.body,
+        releaseCondition: resolution.record.releaseCondition || "facilitySubmissionSent",
+      };
+    }
+  }
+
+  const atsResolution = resolveActiveVariant(settings, "atsUpdate", "Standard");
+  blockers.push(...atsResolution.blockers);
+  const atsResult = renderCommunicationTemplate(atsResolution.record, applyConditionalBlocks(atsResolution.record, tokens), { restrictedTokens: ATS_RESTRICTED_TOKENS });
+  rendered.atsUpdate.variantKey = atsResolution.variantKey;
+  rendered.atsUpdate.releaseCondition = atsResolution.record.releaseCondition || "facilitySubmissionSent";
+  rendered.atsUpdate.subject = atsResult.subject;
+  rendered.atsUpdate.body = atsResult.body;
+  unresolvedTokens.push(...atsResult.unresolvedTokens);
+  restrictedTokens.push(...atsResult.restrictedTokens);
 
   const textMappingId = settings.communicationTemplateDrafts?.submissionTextTemplateByCandidateType?.[candidateType];
   const candidateTypeText = settings.communicationTemplateDrafts?.textTemplates?.[candidateType];
   const textTemplates = Array.isArray(settings.textTemplates) ? settings.textTemplates : [];
   const selectedRootText = selectedTextTemplateId ? textTemplates.find((item) => clean(item?.id) === clean(selectedTextTemplateId)) : null;
   const selectedText = textMappingId && candidateTypeText?.id === textMappingId ? candidateTypeText : selectedRootText;
-  if (!selectedText) {
+  if (candidateTextOff) {
+    // An intentionally disabled channel is absent from the reviewed package and never blocks progression.
+  } else if (!selectedText) {
     const message = "No explicit candidate submission text template is configured.";
-    if (textRequired) blockers.push(blocker("TEXT_TEMPLATE_REQUIRED", message, "template", "selectedTextTemplateId"));
+    if (candidateTextRequired) blockers.push(blocker("TEXT_TEMPLATE_REQUIRED", message, "template", "selectedTextTemplateId"));
     else warnings.push(warning("TEXT_TEMPLATE_NOT_CONFIGURED", message, "template", "selectedTextTemplateId"));
   } else if (!statusIsActive(selectedText, { root: true })) {
-    blockers.push(blocker("TEXT_TEMPLATE_INACTIVE", "The selected text template is not Active.", "template", "selectedTextTemplateId"));
+    const issue = blocker("TEXT_TEMPLATE_INACTIVE", "The selected text template is not Active.", "template", "selectedTextTemplateId");
+    if (candidateTextRequired) blockers.push(issue);
+    else warnings.push(warning(issue.code, issue.message, issue.source, issue.field));
   } else {
     const textResult = renderCommunicationTemplate(selectedText, tokens);
-    rendered.candidateText = { templateKey: selectedText.id, variantKey: candidateType, body: textResult.body, releaseCondition: selectedText.releaseCondition || "facilitySubmissionSent" };
-    unresolvedTokens.push(...textResult.unresolvedTokens);
+    if (textResult.unresolvedTokens.length && !candidateTextRequired) {
+      warnings.push(warning("OPTIONAL_TEXT_OMITTED", `Optional candidate text contains unresolved tokens: ${textResult.unresolvedTokens.join(", ")}.`, "template", "selectedTextTemplateId"));
+    } else {
+      rendered.candidateText = { templateKey: selectedText.id, variantKey: candidateType, body: textResult.body, releaseCondition: selectedText.releaseCondition || "facilitySubmissionSent" };
+      unresolvedTokens.push(...textResult.unresolvedTokens);
+    }
   }
 
   const uniqueUnresolved = Array.from(new Set(unresolvedTokens));
@@ -650,6 +682,7 @@ export function buildCommunicationPreview({
       candidate: { to: candidateTo },
     },
     rendered,
+    communicationPlan,
     unresolvedTokens: uniqueUnresolved,
     restrictedTokens: uniqueRestricted,
     snapshotHash: Object.keys(snapshot).length ? deterministicHash(snapshot) : "",

@@ -4,9 +4,11 @@ import {
   applyAtsUpdateCompleted,
   applyAtsUpdateCopied,
   applyCandidateConfirmationSent,
+  applyCandidateConfirmationSkipped,
   applyCandidateEmailOpened,
   applyCandidateTextCopied,
   applyCandidateTextSent,
+  applyCandidateTextSkipped,
   applyCommunicationActionToWorkspace,
   applyFacilityEmailOpened,
   applyFacilitySubmissionSent,
@@ -30,7 +32,7 @@ function settings() {
   };
 }
 
-function reviewedPackage({ text = true } = {}) {
+function reviewedPackage({ text = true, plan = null } = {}) {
   return {
     schemaVersion: 1,
     snapshotHash: "fnv1a-test",
@@ -52,6 +54,7 @@ function reviewedPackage({ text = true } = {}) {
     confirmedBy: "Test Owner Confirmation",
     environment: "test",
     projectRef: runtime.projectRef,
+    ...(plan ? { communicationPlan: plan } : {}),
   };
 }
 
@@ -259,5 +262,35 @@ describe("submission communication actions", () => {
     expect(result.workspace.generatedOutputs).toEqual([]);
     expect(result.workspace.tracker[0].communicationActionStates.facilitySubmission).toBe(ACTION_STATES.facilityOpened);
     expect(applyCommunicationActionToWorkspace({ workspace: { ...workspace, tracker: [existing, { ...existing }] }, candidateId: existing.id, transition: applyFacilityEmailOpened, transitionInput: { settings: settings(), runtime, now } }).ok).toBe(false);
+  });
+
+  test("text-only liaison plan skips candidate email and advances through required text", () => {
+    const plan = { candidateCommunicationPlan: "New Hire Liaison Text Only", candidateEmailMode: "Off", candidateTextMode: "Required" };
+    let state = openFacility(record({ plan }));
+    state = sendFacility(state.record, state.history);
+    expect(state.record.communicationActionStates.candidateConfirmation).toBe(ACTION_STATES.notRequired);
+    expect(state.record.nextAction).toBe("Send candidate follow-up text");
+    expect(applyCandidateEmailOpened({ record: state.record, history: state.history, runtime, now }).ok).toBe(false);
+  });
+
+  test("no-candidate-communication plan advances directly to ATS", () => {
+    const plan = { candidateCommunicationPlan: "No Candidate Communication", candidateEmailMode: "Off", candidateTextMode: "Off" };
+    let state = openFacility(record({ plan, text: false }));
+    state = sendFacility(state.record, state.history);
+    expect(state.record.communicationActionStates).toMatchObject({ candidateConfirmation: ACTION_STATES.notRequired, candidateFollowUpText: ACTION_STATES.notRequired });
+    expect(state.record.nextAction).toBe("Complete ATS submission update");
+  });
+
+  test("optional email and text can be explicitly skipped without sent events", () => {
+    const plan = { candidateCommunicationPlan: "Custom", candidateEmailMode: "Optional", candidateTextMode: "Optional" };
+    let state = openFacility(record({ plan }));
+    state = sendFacility(state.record, state.history);
+    state = applyCandidateConfirmationSkipped({ record: state.record, history: state.history, runtime, now });
+    expect(state.record.communicationActionStates.candidateConfirmation).toBe(ACTION_STATES.skipped);
+    expect(state.record.nextAction).toBe("Send or skip optional candidate text");
+    state = applyCandidateTextSkipped({ record: state.record, history: state.history, runtime, now });
+    expect(state.record.communicationActionStates.candidateFollowUpText).toBe(ACTION_STATES.skipped);
+    expect(state.record.nextAction).toBe("Complete ATS submission update");
+    expect(state.record.communicationActionEvents.map((event) => event.action)).not.toEqual(expect.arrayContaining(["Candidate confirmation marked sent", "Candidate text marked sent"]));
   });
 });

@@ -1,4 +1,5 @@
 import { assertCommunicationRuntime } from "./requisitionCommunicationDetails";
+import { COMMUNICATION_MODES, normalizeCommunicationWorkflow } from "./communicationWorkflow";
 
 export const REVIEW_ACKNOWLEDGMENT = "I reviewed the candidate, candidate type, requisition, employment details, facility recipients, and all communication content.";
 export const TEST_ACTION_ACKNOWLEDGMENT = "I understand this will mark the candidate Ready for Facility Submission in WelcomeFlow Test. It will not send or copy any communication.";
@@ -68,11 +69,12 @@ export function buildTemplateReferences(preview = {}) {
   }, {});
 }
 
-export function buildCommunicationReleaseStates() {
+export function buildCommunicationReleaseStates(preview = {}) {
+  const plan = normalizeCommunicationWorkflow(preview.communicationPlan || preview.snapshot?.templateSettings || {});
   return {
     facilitySubmission: "Ready to Send",
-    candidateConfirmation: "Locked — Awaiting Facility Submission Sent",
-    candidateFollowUpText: "Locked — Awaiting Facility Submission Sent",
+    candidateConfirmation: plan.candidateEmailMode === COMMUNICATION_MODES.off ? "Not Required — Workflow Off" : "Locked — Awaiting Facility Submission Sent",
+    candidateFollowUpText: plan.candidateTextMode === COMMUNICATION_MODES.off ? "Not Required — Workflow Off" : "Locked — Awaiting Facility Submission Sent",
     atsSubmissionUpdate: "Locked — Awaiting Facility Submission Sent",
   };
 }
@@ -94,6 +96,7 @@ export function reviewedPreviewSignature(preview = {}) {
     rendered: preview.rendered || {},
     unresolvedTokens: preview.unresolvedTokens || [],
     restrictedTokens: preview.restrictedTokens || [],
+    communicationPlan: normalizeCommunicationWorkflow(preview.communicationPlan || preview.snapshot?.templateSettings || {}),
     templateReferences: buildTemplateReferences(preview),
     releaseConditions: buildReleaseConditions(preview),
   });
@@ -157,9 +160,10 @@ export function buildConfirmedSubmissionPackage(reviewedPreview = {}, { confirme
     rendered: clone(reviewedPreview.rendered || {}),
     unresolvedTokens: clone(reviewedPreview.unresolvedTokens || []),
     restrictedTokens: clone(reviewedPreview.restrictedTokens || []),
+    communicationPlan: normalizeCommunicationWorkflow(reviewedPreview.communicationPlan || reviewedPreview.snapshot?.templateSettings || {}),
     templateReferences: buildTemplateReferences(reviewedPreview),
     releaseConditions: buildReleaseConditions(reviewedPreview),
-    actionStates: buildCommunicationReleaseStates(),
+    actionStates: buildCommunicationReleaseStates(reviewedPreview),
     confirmedAt,
     confirmedBy,
     environment: runtime.environment,

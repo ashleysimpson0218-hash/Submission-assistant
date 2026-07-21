@@ -160,9 +160,9 @@ export const DRAFT_TEMPLATE_SPECS = Object.freeze({
 });
 
 export const DRAFT_TEXT_SPECS = Object.freeze({
-  External: { id: "submission-text-draft-external", candidateType: "External", body: "Hi {candidate_first_name}, your profile has been submitted for the {position} opportunity with {facility}. Please monitor your phone, voicemail, email, and spam folder for possible outreach. I will share updates as they become available. – {recruiter_name}" },
-  Internal: { id: "submission-text-draft-internal", candidateType: "Internal", body: "Hi {candidate_first_name}, your internal submission for the {position} opportunity with {facility} has been sent for review. I will share next steps after facility and eligibility review. – {recruiter_name}" },
-  Rehire: { id: "submission-text-draft-rehire", candidateType: "Rehire", body: "Hi {candidate_first_name}, your information has been submitted for rehire consideration for the {position} opportunity with {facility}. I will share next steps after eligibility and facility review. – {recruiter_name}" },
+  External: { id: "submission-text-draft-external", candidateType: "External", body: "Hi {candidate_first_name}, your recruiting process is moving forward. A New Hire Liaison will be in touch with you directly regarding next steps. – {recruiter_name}" },
+  Internal: { id: "submission-text-draft-internal", candidateType: "Internal", body: "Hi {candidate_first_name}, your internal recruiting process is moving forward. A New Hire Liaison will be in touch with you directly regarding next steps. – {recruiter_name}" },
+  Rehire: { id: "submission-text-draft-rehire", candidateType: "Rehire", body: "Hi {candidate_first_name}, your rehire review is moving forward. A New Hire Liaison will be in touch with you directly regarding next steps. – {recruiter_name}" },
 });
 
 function clone(value) {

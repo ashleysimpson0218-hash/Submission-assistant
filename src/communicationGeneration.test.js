@@ -368,4 +368,32 @@ describe("side-effect-free communication preview resolver", () => {
     expect(language).toContain("Benefits eligibility has not been confirmed.");
     expect(language).not.toContain("This position is benefits eligible.");
   });
+
+  test("New Hire Liaison Text Only omits candidate email and remains confirmable", () => {
+    const settings = baseSettings({ communicationWorkflow: { candidateCommunicationPlan: "New Hire Liaison Text Only", candidateEmailMode: "Off", candidateTextMode: "Required" } });
+    const result = immutablePreview({ settings, intake: baseIntake({ candidateEmail: "" }) });
+    expect(result.canConfirm).toBe(true);
+    expect(result.rendered.candidateEmail).toBeNull();
+    expect(result.rendered.candidateText.body).toContain("submission is under review");
+    expect(result.communicationPlan).toMatchObject({ candidateEmailMode: "Off", candidateTextMode: "Required" });
+    expect(codes(result)).not.toContain("CANDIDATE_EMAIL_INVALID");
+  });
+
+  test("No Candidate Communication omits both candidate channels without blocking facility or ATS", () => {
+    const settings = baseSettings({ communicationWorkflow: { candidateCommunicationPlan: "No Candidate Communication", candidateEmailMode: "Off", candidateTextMode: "Off" } });
+    const result = immutablePreview({ settings, intake: baseIntake({ candidateEmail: "" }), selectedTextTemplateId: "" });
+    expect(result.canConfirm).toBe(true);
+    expect(result.rendered.candidateEmail).toBeNull();
+    expect(result.rendered.candidateText).toBeNull();
+    expect(result.rendered.facilityEmail.body).toBeTruthy();
+    expect(result.rendered.atsUpdate.body).toBeTruthy();
+  });
+
+  test("optional candidate email is omitted with a warning instead of blocking", () => {
+    const settings = baseSettings({ communicationWorkflow: { candidateCommunicationPlan: "Custom", candidateEmailMode: "Optional", candidateTextMode: "Off" } });
+    const result = immutablePreview({ settings, intake: baseIntake({ candidateEmail: "invalid" }) });
+    expect(result.canConfirm).toBe(true);
+    expect(result.rendered.candidateEmail).toBeNull();
+    expect(result.warnings.map((item) => item.code)).toContain("CANDIDATE_EMAIL_INVALID");
+  });
 });

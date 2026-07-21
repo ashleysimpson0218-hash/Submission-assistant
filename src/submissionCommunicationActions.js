@@ -1,5 +1,6 @@
 import { resolveExactFacility, resolveExactRequisition, resolveFacilitySubmissionRecipients } from "./communicationGeneration";
 import { assertTestRuntime } from "./requisitionCommunicationDetails";
+import { COMMUNICATION_MODES, normalizeCommunicationWorkflow } from "./communicationWorkflow";
 
 export const TEST_ACTION_OWNER = "Test Owner Action";
 export const PACKAGE_STALE_MESSAGE = "This submission package no longer matches the current requisition, recipient, or template configuration. Return to Intake and review a new submission package.";
@@ -16,6 +17,9 @@ export const ACTION_STATES = Object.freeze({
   textCopied: "Copied — Awaiting Send Confirmation",
   textSent: "Sent",
   textOptional: "Not Configured — Optional",
+  optionalReady: "Optional — Ready",
+  notRequired: "Not Required — Workflow Off",
+  skipped: "Skipped",
   atsCopied: "Copied — Awaiting Completion",
   atsCompleted: "Completed",
 });
@@ -58,10 +62,31 @@ function textConfigured(record = {}) {
   return Boolean(clean(packageFor(record)?.rendered?.candidateText?.body));
 }
 
+function communicationPlanFor(record = {}) {
+  const reviewedPackage = packageFor(record) || {};
+  const storedPlan = reviewedPackage.communicationPlan || reviewedPackage.snapshot?.templateSettings?.communicationWorkflow;
+  if (!storedPlan) {
+    return {
+      candidateCommunicationPlan: "Legacy Reviewed Package",
+      candidateEmailMode: COMMUNICATION_MODES.required,
+      candidateTextMode: textConfigured(record) ? COMMUNICATION_MODES.required : COMMUNICATION_MODES.optional,
+    };
+  }
+  return normalizeCommunicationWorkflow(reviewedPackage.communicationPlan || reviewedPackage.snapshot?.templateSettings || {});
+}
+
+function channelState(record, channel, facilitySent) {
+  const mode = communicationPlanFor(record)[`${channel}Mode`];
+  if (mode === COMMUNICATION_MODES.off) return ACTION_STATES.notRequired;
+  if (!facilitySent) return ACTION_STATES.locked;
+  if (mode === COMMUNICATION_MODES.optional) return ACTION_STATES.optionalReady;
+  return channel === "candidateEmail" ? ACTION_STATES.candidateReady : ACTION_STATES.copyReady;
+}
+
 export function normalizeReviewedCommunicationRecord(record = {}) {
   if (!packageFor(record)) return record;
   const facilitySent = clean(record.communicationActionStates?.facilitySubmission) === ACTION_STATES.facilitySent || Boolean(record.facilitySubmissionSentAt);
-  const candidateState = facilitySent ? ACTION_STATES.candidateReady : ACTION_STATES.locked;
+  const candidateState = channelState(record, "candidateEmail", facilitySent);
   const copyState = facilitySent ? ACTION_STATES.copyReady : ACTION_STATES.locked;
   return {
     ...record,
@@ -76,7 +101,7 @@ export function normalizeReviewedCommunicationRecord(record = {}) {
     communicationActionStates: {
       facilitySubmission: record.communicationActionStates?.facilitySubmission || (facilitySent ? ACTION_STATES.facilitySent : ACTION_STATES.facilityReady),
       candidateConfirmation: record.communicationActionStates?.candidateConfirmation || candidateState,
-      candidateFollowUpText: record.communicationActionStates?.candidateFollowUpText || (textConfigured(record) ? copyState : ACTION_STATES.textOptional),
+      candidateFollowUpText: record.communicationActionStates?.candidateFollowUpText || (textConfigured(record) ? channelState(record, "candidateText", facilitySent) : communicationPlanFor(record).candidateTextMode === COMMUNICATION_MODES.off ? ACTION_STATES.notRequired : ACTION_STATES.textOptional),
       atsSubmissionUpdate: record.communicationActionStates?.atsSubmissionUpdate || copyState,
     },
   };
@@ -277,9 +302,10 @@ function result(record, history, idempotent = false, extra = {}) {
 
 export function calculateSubmissionNextAction(record = {}) {
   const states = normalizeReviewedCommunicationRecord(record).communicationActionStates;
+  const completeOrSkipped = (state, completed) => [completed, ACTION_STATES.notRequired, ACTION_STATES.skipped, ACTION_STATES.textOptional].includes(state);
   if (states.facilitySubmission !== ACTION_STATES.facilitySent) return { nextAction: "Send facility submission", waitingOn: "Recruiter" };
-  if (states.candidateConfirmation !== ACTION_STATES.candidateSent) return { nextAction: "Send candidate confirmation", waitingOn: "Recruiter" };
-  if (states.candidateFollowUpText !== ACTION_STATES.textSent && states.candidateFollowUpText !== ACTION_STATES.textOptional) return { nextAction: "Send candidate follow-up text", waitingOn: "Recruiter" };
+  if (!completeOrSkipped(states.candidateConfirmation, ACTION_STATES.candidateSent)) return { nextAction: states.candidateConfirmation === ACTION_STATES.optionalReady ? "Send or skip optional candidate email" : "Send candidate confirmation", waitingOn: "Recruiter" };
+  if (!completeOrSkipped(states.candidateFollowUpText, ACTION_STATES.textSent)) return { nextAction: states.candidateFollowUpText === ACTION_STATES.optionalReady ? "Send or skip optional candidate text" : "Send candidate follow-up text", waitingOn: "Recruiter" };
   if (states.atsSubmissionUpdate !== ACTION_STATES.atsCompleted) return { nextAction: "Complete ATS submission update", waitingOn: "Recruiter" };
   return { nextAction: "Awaiting facility feedback", waitingOn: "Facility" };
 }
@@ -331,8 +357,8 @@ export function applyFacilitySubmissionSent({ record = {}, history = [], runtime
     communicationActionStates: {
       ...base.record.communicationActionStates,
       facilitySubmission: ACTION_STATES.facilitySent,
-      candidateConfirmation: ACTION_STATES.candidateReady,
-      candidateFollowUpText: textConfigured(base.record) ? ACTION_STATES.copyReady : ACTION_STATES.textOptional,
+      candidateConfirmation: channelState(base.record, "candidateEmail", true),
+      candidateFollowUpText: textConfigured(base.record) ? channelState(base.record, "candidateText", true) : communicationPlanFor(base.record).candidateTextMode === COMMUNICATION_MODES.off ? ACTION_STATES.notRequired : ACTION_STATES.textOptional,
       atsSubmissionUpdate: ACTION_STATES.copyReady,
     },
     updatedAt: now,
@@ -345,6 +371,7 @@ export function applyFacilitySubmissionSent({ record = {}, history = [], runtime
 export function applyCandidateEmailOpened({ record = {}, history = [], runtime = {}, now = new Date().toISOString() } = {}) {
   const base = baseTransition({ record, history, runtime });
   if (!base.ok) return base;
+  if (base.record.communicationActionStates.candidateConfirmation === ACTION_STATES.notRequired) return { ...base, ok: false, error: "Candidate email is turned off for this reviewed communication plan." };
   if (base.record.communicationActionStates.facilitySubmission !== ACTION_STATES.facilitySent) return { ...base, ok: false, error: "Candidate confirmation remains locked until the facility submission is marked sent." };
   if (base.record.communicationActionStates.candidateConfirmation === ACTION_STATES.candidateSent || communicationActionIsIdempotent(base.record, "Candidate email draft opened", "opened")) return result(base.record, base.history, true);
   const email = candidateEmail(base.record);
@@ -371,6 +398,7 @@ export function applyCandidateConfirmationSent({ record = {}, history = [], runt
 export function applyCandidateTextCopied({ record = {}, history = [], runtime = {}, copied = false, now = new Date().toISOString() } = {}) {
   const base = baseTransition({ record, history, runtime });
   if (!base.ok) return base;
+  if (base.record.communicationActionStates.candidateFollowUpText === ACTION_STATES.notRequired) return { ...base, ok: false, error: "Candidate text is turned off for this reviewed communication plan." };
   if (base.record.communicationActionStates.facilitySubmission !== ACTION_STATES.facilitySent) return { ...base, ok: false, error: "Candidate text remains locked until the facility submission is marked sent." };
   if (!textConfigured(base.record)) return result({ ...base.record, communicationActionStates: { ...base.record.communicationActionStates, candidateFollowUpText: ACTION_STATES.textOptional } }, base.history, true);
   if (!copied) return { ...base, ok: false, error: "The candidate text was not copied. No action state was changed." };
@@ -392,6 +420,28 @@ export function applyCandidateTextSent({ record = {}, history = [], runtime = {}
   next = appendActionEvent(next, "Candidate text marked sent", "sent", now);
   Object.assign(next, calculateSubmissionNextAction(next));
   return result(next, appendHistory(base.history, next, "Candidate follow-up text sent", now), false, { now });
+}
+
+function skipOptionalCommunication({ record = {}, history = [], runtime = {}, channel = "", now = new Date().toISOString() } = {}) {
+  const base = baseTransition({ record, history, runtime });
+  if (!base.ok) return base;
+  const stateKey = channel === "candidateEmail" ? "candidateConfirmation" : "candidateFollowUpText";
+  if (communicationPlanFor(base.record)[`${channel}Mode`] !== COMMUNICATION_MODES.optional) return { ...base, ok: false, error: "Only an optional communication may be skipped." };
+  if (base.record.communicationActionStates.facilitySubmission !== ACTION_STATES.facilitySent) return { ...base, ok: false, error: "Optional candidate communication remains locked until the facility submission is marked sent." };
+  if (base.record.communicationActionStates[stateKey] === ACTION_STATES.skipped) return result(base.record, base.history, true);
+  let next = { ...base.record, communicationActionStates: { ...base.record.communicationActionStates, [stateKey]: ACTION_STATES.skipped }, updatedAt: now };
+  const label = channel === "candidateEmail" ? "Optional candidate email skipped" : "Optional candidate text skipped";
+  next = appendActionEvent(next, label, "skipped", now);
+  Object.assign(next, calculateSubmissionNextAction(next));
+  return result(next, appendHistory(base.history, next, label, now), false, { now });
+}
+
+export function applyCandidateConfirmationSkipped(input = {}) {
+  return skipOptionalCommunication({ ...input, channel: "candidateEmail" });
+}
+
+export function applyCandidateTextSkipped(input = {}) {
+  return skipOptionalCommunication({ ...input, channel: "candidateText" });
 }
 
 export function applyAtsUpdateCopied({ record = {}, history = [], runtime = {}, copied = false, now = new Date().toISOString() } = {}) {
