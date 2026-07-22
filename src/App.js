@@ -4912,27 +4912,19 @@ function SelectInput({ value, onChange, options, placeholder }) {
 }
 
 export const CANDIDATE_SECTION_OPTIONS = Object.freeze([
-  { value: "home", label: "Candidate Management Home" },
   { value: "queue", label: "Candidate Queue" },
   { value: "intake", label: "Candidate Intake" },
-  { value: "active", label: "Active Candidate Profiles" },
+  { value: "profiles", label: "Candidate Profile Movement Board" },
   { value: "archived", label: "Archived Candidates" },
+  { value: "screening", label: "Screening Queue" },
 ]);
 
-export function candidateSectionValueFor(activePage = "", candidateTab = "") {
-  if (["hot", "hotLegacy", "hotMockup"].includes(activePage)) return "queue";
-  if (activePage === "submission") return "intake";
-  if (["workspace", "tracker"].includes(activePage)) return "active";
-  if (activePage === "candidates" && candidateTab === "archived") return "archived";
-  return "home";
-}
-
-function CandidateSectionNavigator({ value, onChange }) {
+function CandidateSectionNavigator({ onChange }) {
   const narrow = useWindowWidth() < 720;
   return (
     <nav aria-label="Candidate section navigation" style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 12, background: THEME.panel, boxShadow: THEME.shadow, display: "grid", gridTemplateColumns: narrow ? "1fr" : "minmax(180px, 1fr) minmax(240px, 360px)", gap: 14, alignItems: "center" }}>
-      <div><strong style={{ color: THEME.text }}>Go to Candidate Section</strong><div style={{ color: THEME.muted, fontSize: 12, marginTop: 3 }}>Move directly between the candidate queue, intake, active profiles, and archive.</div></div>
-      <label style={{ display: "grid", gap: 5, color: THEME.muted, fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>Candidate Page<SelectInput value={value} onChange={(event) => onChange(event.target.value)} options={CANDIDATE_SECTION_OPTIONS} /></label>
+      <div><strong style={{ color: THEME.text }}>Go to Candidate Section</strong><div style={{ color: THEME.muted, fontSize: 12, marginTop: 3 }}>Open the working page for the queue, intake, profile movement, archive, or screening section.</div></div>
+      <label style={{ display: "grid", gap: 5, color: THEME.muted, fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>Candidate Page<SelectInput value="" onChange={(event) => onChange(event.target.value)} options={CANDIDATE_SECTION_OPTIONS} placeholder="Choose a Candidate section" /></label>
     </nav>
   );
 }
@@ -14261,11 +14253,6 @@ function rowifyCandidate(item = {}) {
     }
   }
   function navigateToCandidateSection(section) {
-    if (section === "home") {
-      setCandidateManagementTab("active");
-      setActivePage("candidates");
-      return;
-    }
     if (section === "queue") {
       setHotLeadDetailOpen(false);
       setSelectedHotLeadId("");
@@ -14276,7 +14263,7 @@ function rowifyCandidate(item = {}) {
       startBlankActiveCandidateIntake();
       return;
     }
-    if (section === "active") {
+    if (section === "profiles") {
       setTrackerListView("active");
       setTrackerPanelOpen(true);
       setActivePage("workspace");
@@ -14284,6 +14271,11 @@ function rowifyCandidate(item = {}) {
     }
     if (section === "archived") {
       setCandidateManagementTab("archived");
+      setActivePage("candidates");
+      return;
+    }
+    if (section === "screening") {
+      setCandidateManagementTab("screening");
       setActivePage("candidates");
     }
   }
@@ -14858,7 +14850,7 @@ function rowifyCandidate(item = {}) {
             </div>
           </div>
 
-        {candidateRouteKeys.includes(activePage) ? <CandidateSectionNavigator value={candidateSectionValueFor(activePage, candidateManagementTab)} onChange={navigateToCandidateSection} /> : null}
+        {candidateRouteKeys.includes(activePage) ? <CandidateSectionNavigator onChange={navigateToCandidateSection} /> : null}
 
         {activePage === "home" ? (
           <div style={{ display: "grid", gap: 16 }}>

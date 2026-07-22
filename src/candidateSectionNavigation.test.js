@@ -1,23 +1,25 @@
 import fs from "fs";
 import path from "path";
-import { CANDIDATE_SECTION_OPTIONS, candidateSectionValueFor } from "./App";
+import { CANDIDATE_SECTION_OPTIONS } from "./App";
 
 describe("candidate section navigation", () => {
   test("offers every primary candidate destination in one dropdown", () => {
-    expect(CANDIDATE_SECTION_OPTIONS.map((option) => option.value)).toEqual(["home", "queue", "intake", "active", "archived"]);
+    expect(CANDIDATE_SECTION_OPTIONS.map((option) => option.value)).toEqual(["queue", "intake", "profiles", "archived", "screening"]);
   });
 
-  test.each([
-    ["candidates", "active", "home"],
-    ["candidates", "archived", "archived"],
-    ["hot", "", "queue"],
-    ["hotLegacy", "", "queue"],
-    ["hotMockup", "", "queue"],
-    ["submission", "", "intake"],
-    ["workspace", "", "active"],
-    ["tracker", "", "active"],
-  ])("maps %s to the correct current dropdown value", (page, tab, expected) => {
-    expect(candidateSectionValueFor(page, tab)).toBe(expected);
+  test("uses an action placeholder so the current section can be reopened", () => {
+    const source = fs.readFileSync(path.join(__dirname, "App.js"), "utf8");
+    expect(source).toContain('value="" onChange={(event) => onChange(event.target.value)}');
+    expect(source).toContain('placeholder="Choose a Candidate section"');
+  });
+
+  test("routes every section to its working page", () => {
+    const source = fs.readFileSync(path.join(__dirname, "App.js"), "utf8");
+    expect(source).toMatch(/section === "queue"[\s\S]*?setActivePage\("hot"\)/);
+    expect(source).toMatch(/section === "intake"[\s\S]*?startBlankActiveCandidateIntake\(\)/);
+    expect(source).toMatch(/section === "profiles"[\s\S]*?setTrackerPanelOpen\(true\)[\s\S]*?setActivePage\("workspace"\)/);
+    expect(source).toMatch(/section === "archived"[\s\S]*?setCandidateManagementTab\("archived"\)/);
+    expect(source).toMatch(/section === "screening"[\s\S]*?setCandidateManagementTab\("screening"\)/);
   });
 
   test("renders the shared navigation above all candidate routes", () => {
