@@ -5,13 +5,13 @@ const appSource = fs.readFileSync(path.join(__dirname, "App.js"), "utf8");
 const queueSource = appSource.slice(appSource.indexOf("const renderConnectQueueCards"), appSource.indexOf("function publicBookingLeadId"));
 const roleMatchSource = appSource.slice(appSource.indexOf(">2. Role Match<"), appSource.indexOf(">3. Facility Submission Summary<"));
 const submissionSource = appSource.slice(appSource.indexOf(">3. Facility Submission Summary<"), appSource.indexOf(">4. Submission Readiness<"));
-const managementSource = appSource.slice(appSource.indexOf("function CandidateManagementPage"), appSource.indexOf("function FacilityPositionSetupPage"));
 
-test("candidate section selector opens the primary working pages", () => {
-  expect(managementSource).toContain('if (value === "connect") onOpenConnect()');
-  expect(managementSource).toContain('if (value === "add") onOpenAdd()');
-  expect(managementSource).toContain('if (value === "active") onOpenCandidateProfiles()');
-  expect(managementSource).toContain('onChange={(event) => goToCandidateSection(event.target.value)}');
+test("shared candidate section selector opens the primary working pages", () => {
+  expect(appSource).toContain('if (section === "queue")');
+  expect(appSource).toContain('if (section === "intake")');
+  expect(appSource).toContain('if (section === "active")');
+  expect(appSource).toContain('if (section === "archived")');
+  expect(appSource).toContain('onChange={navigateToCandidateSection}');
 });
 
 test("Candidate Queue keeps Add Lead with New Leads and uses compact cards", () => {

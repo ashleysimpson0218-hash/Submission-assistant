@@ -4911,6 +4911,32 @@ function SelectInput({ value, onChange, options, placeholder }) {
   );
 }
 
+export const CANDIDATE_SECTION_OPTIONS = Object.freeze([
+  { value: "home", label: "Candidate Management Home" },
+  { value: "queue", label: "Candidate Queue" },
+  { value: "intake", label: "Candidate Intake" },
+  { value: "active", label: "Active Candidate Profiles" },
+  { value: "archived", label: "Archived Candidates" },
+]);
+
+export function candidateSectionValueFor(activePage = "", candidateTab = "") {
+  if (["hot", "hotLegacy", "hotMockup"].includes(activePage)) return "queue";
+  if (activePage === "submission") return "intake";
+  if (["workspace", "tracker"].includes(activePage)) return "active";
+  if (activePage === "candidates" && candidateTab === "archived") return "archived";
+  return "home";
+}
+
+function CandidateSectionNavigator({ value, onChange }) {
+  const narrow = useWindowWidth() < 720;
+  return (
+    <nav aria-label="Candidate section navigation" style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 12, background: THEME.panel, boxShadow: THEME.shadow, display: "grid", gridTemplateColumns: narrow ? "1fr" : "minmax(180px, 1fr) minmax(240px, 360px)", gap: 14, alignItems: "center" }}>
+      <div><strong style={{ color: THEME.text }}>Go to Candidate Section</strong><div style={{ color: THEME.muted, fontSize: 12, marginTop: 3 }}>Move directly between the candidate queue, intake, active profiles, and archive.</div></div>
+      <label style={{ display: "grid", gap: 5, color: THEME.muted, fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>Candidate Page<SelectInput value={value} onChange={(event) => onChange(event.target.value)} options={CANDIDATE_SECTION_OPTIONS} /></label>
+    </nav>
+  );
+}
+
 function CandidateTypeahead({ value, onChange, candidates }) {
   const listId = "candidate-queue-options";
   return (
@@ -14207,7 +14233,7 @@ function rowifyCandidate(item = {}) {
   const sidebarStyle = { background: "linear-gradient(180deg, #120b2f 0%, #1b1242 62%, #0d0824 100%)", color: "#ffffff", padding: "26px 18px", minHeight: "100vh", position: "sticky", top: 0, boxSizing: "border-box", boxShadow: "10px 0 26px rgba(23,20,58,0.16)" };
   const shellStyle = { maxWidth: 1480, width: "100%", margin: "0 auto", padding: isNarrow ? 14 : 20, height: "100vh", overflowY: "auto", overflowX: "hidden", boxSizing: "border-box" };
   const controlStyle = { padding: "10px 12px", borderRadius: 6, border: `1px solid ${THEME.border}`, background: THEME.panel, color: THEME.text, fontWeight: 700, fontSize: 13, fontFamily: "Inter, Arial, sans-serif" };
-  const candidateRouteKeys = ["candidates", "hot", "submission", "workspace"];
+  const candidateRouteKeys = ["candidates", "hot", "hotLegacy", "hotMockup", "submission", "tracker", "workspace"];
   const navButtonStyle = (key) => {
     const active = activePage === key || (key === "candidates" && candidateRouteKeys.includes(activePage));
     return { width: "100%", display: "flex", alignItems: "center", gap: 12, border: "1px solid", borderColor: active ? "rgba(255,255,255,0.18)" : "transparent", borderRadius: 6, padding: "11px 12px", background: active ? "linear-gradient(135deg, #6d28d9 0%, #7c3aed 100%)" : "transparent", color: active ? "#ffffff" : "#c9c2ef", fontWeight: 700, fontSize: 13, cursor: "pointer", textAlign: "left", marginBottom: 8, boxShadow: active ? "0 12px 24px rgba(109,40,217,0.26)" : "none", transition: "transform 150ms ease, background 150ms ease, box-shadow 150ms ease" };
@@ -14232,6 +14258,33 @@ function rowifyCandidate(item = {}) {
     }
     if (key === "workspace" || activePage === "workspace") {
       setTrackerPanelOpen(true);
+    }
+  }
+  function navigateToCandidateSection(section) {
+    if (section === "home") {
+      setCandidateManagementTab("active");
+      setActivePage("candidates");
+      return;
+    }
+    if (section === "queue") {
+      setHotLeadDetailOpen(false);
+      setSelectedHotLeadId("");
+      setActivePage("hot");
+      return;
+    }
+    if (section === "intake") {
+      startBlankActiveCandidateIntake();
+      return;
+    }
+    if (section === "active") {
+      setTrackerListView("active");
+      setTrackerPanelOpen(true);
+      setActivePage("workspace");
+      return;
+    }
+    if (section === "archived") {
+      setCandidateManagementTab("archived");
+      setActivePage("candidates");
     }
   }
   const intakeSteps = [
@@ -14804,6 +14857,8 @@ function rowifyCandidate(item = {}) {
               </button>
             </div>
           </div>
+
+        {candidateRouteKeys.includes(activePage) ? <CandidateSectionNavigator value={candidateSectionValueFor(activePage, candidateManagementTab)} onChange={navigateToCandidateSection} /> : null}
 
         {activePage === "home" ? (
           <div style={{ display: "grid", gap: 16 }}>
@@ -20415,20 +20470,6 @@ function CandidateManagementPage({ activeTab, setActiveTab, search, setSearch, h
     ["archived", "Archived Candidates", "\uD83D\uDCC1"],
     ["screening", "Screening Queue", "\uD83D\uDEE1"],
   ];
-  const candidateSectionOptions = [
-    { value: "connect", label: "Candidate Queue" },
-    { value: "add", label: "Candidate Intake" },
-    { value: "active", label: "Active Candidate Profiles" },
-    { value: "archived", label: "Archived Candidates" },
-  ];
-  function goToCandidateSection(value) {
-    setActiveTab(value);
-    if (value === "connect") onOpenConnect();
-    if (value === "add") onOpenAdd();
-    if (value === "active") onOpenCandidateProfiles();
-    if (value === "archived") onOpenArchivedProfiles();
-  }
-
   const detailRows = selectedRow ? [
     ["Phone", selectedRow.phone || "No phone listed"],
     ["Email", selectedRow.email || "No email listed"],
@@ -20498,11 +20539,6 @@ function CandidateManagementPage({ activeTab, setActiveTab, search, setSearch, h
         <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
           <span style={{ width: 46, height: 46, borderRadius: 14, display: "grid", placeItems: "center", background: THEME.blueBg, color: THEME.primary2, fontWeight: 950, fontSize: 22 }}>{"\uD83D\uDC65"}</span>
           <span><h1 style={{ margin: 0, fontSize: 28, lineHeight: 1.1 }}>Candidate Management</h1><p style={{ margin: "6px 0 0", color: THEME.muted, fontWeight: 700 }}>Manage candidate connect, intake drafts, active candidate profiles, and archived records in one place.</p></span>
-        </div>
-        <div style={{ minWidth: isNarrow ? "100%" : 260 }}>
-          <Field label="Go To Candidate Section">
-            <SelectInput value="" onChange={(event) => goToCandidateSection(event.target.value)} options={candidateSectionOptions} placeholder="Choose a working page" />
-          </Field>
         </div>
       </div>
 
