@@ -14374,18 +14374,19 @@ function rowifyCandidate(item = {}) {
   ];
   const snapshotSelectedTypeKey = form.candidateSource === "Referral" ? "Referral" : form.candidateSource === "Quick Lead" ? "Quick Lead" : form.candidateType || "External";
   const snapshotReadinessItems = [
-    { key: "contactConfirmed", label: "Contact confirmed", ready: Boolean(form.fullName && (form.phoneNumber || form.emailAddress)), detail: form.fullName && (form.phoneNumber || form.emailAddress) ? "Name and contact found" : "Add candidate name plus phone or email" },
-    { key: "resumeReceived", label: "Resume received", ready: Boolean(form.resumeImportName || form.resumeImportedAt || form.sourceHotLeadId || form.experienceNotes || form.educationLevel), detail: form.resumeImportName || form.resumeImportedAt ? "Resume imported" : form.sourceHotLeadId ? "Hot lead details carried forward" : form.experienceNotes || form.educationLevel ? "Candidate background entered" : "Import resume or add background details" },
-    { key: "licenseVerified", label: "License / credential verified", ready: !requiresLicenseReverification || Boolean(form.licenseStatus || form.licenseType || form.additionalLicenseInfo), detail: requiresLicenseReverification ? (form.licenseStatus || form.licenseType || form.additionalLicenseInfo ? "Credential details entered" : "Add license or credential status") : "Not required for this role" },
-    { key: "positionInterestConfirmed", label: "Position interest confirmed", ready: Boolean(form.position || selectedRequisition), detail: form.position || selectedRequisition ? "Role selected" : "Select position or requisition" },
-    { key: "scheduleFitConfirmed", label: "Schedule fit confirmed", ready: Boolean(form.interviewAvailability || form.scheduleNotes || form.shiftPreference || selectedRequisition?.shift), detail: form.interviewAvailability || form.scheduleNotes || form.shiftPreference || selectedRequisition?.shift ? "Schedule details entered" : "Add shift, availability, or schedule notes" },
-    { key: "payReviewed", label: "Pay expectation reviewed", ready: Boolean(form.compensationRequested || form.estimatedCompensation || estimatedComp), detail: form.compensationRequested || form.estimatedCompensation || estimatedComp ? "Rate reviewed" : "Add expected or calculated rate" },
-    { key: "facilityReviewed", label: "Facility location reviewed", ready: Boolean(form.siteName || selectedRequisition?.siteName), detail: form.siteName || selectedRequisition?.siteName ? "Location selected" : "Select facility/location" },
-    { key: "permissionToSubmit", label: "Permission to submit", ready: Boolean(form.permissionToSubmit || form.recruiterRecommendation === "Recommend to Submit"), detail: form.permissionToSubmit || form.recruiterRecommendation === "Recommend to Submit" ? "Ready-to-submit recommendation selected" : "Select Recommend to Submit when ready" },
-    { key: "backgroundEligibility", label: "Background / eligibility status", ready: !rehireNeedsReview || Boolean(form.rehireEligibility && form.rehireEligibility !== "Not verified"), detail: rehireNeedsReview ? (form.rehireEligibility && form.rehireEligibility !== "Not verified" ? "Eligibility reviewed" : "Complete HR eligibility review") : "No hold" },
-    { key: "notesReviewed", label: "Notes / concerns reviewed", ready: Boolean(form.candidateNotes || form.confirmationNotes || form.concernsFollowUp || form.whyFit || form.additionalLicenseInfo || form.interviewAvailability), detail: form.candidateNotes || form.confirmationNotes || form.concernsFollowUp || form.whyFit || form.additionalLicenseInfo || form.interviewAvailability ? "Submission notes entered" : "Add fit, availability, or follow-up notes" },
+    { key: "contactConfirmed", label: "Contact information", ready: Boolean(form.fullName && (form.phoneNumber || form.emailAddress)), detail: form.fullName && (form.phoneNumber || form.emailAddress) ? "Name and contact found" : "Add the candidate name plus a phone number or email.", sectionId: "candidate-basics", fixLabel: "Candidate Basics" },
+    { key: "resumeReceived", label: "Candidate background", ready: Boolean(form.resumeImportName || form.resumeImportedAt || form.sourceHotLeadId || form.experienceNotes || form.educationLevel), detail: form.resumeImportName || form.resumeImportedAt ? "Resume imported" : form.sourceHotLeadId ? "Hot lead details carried forward" : form.experienceNotes || form.educationLevel ? "Candidate background entered" : "Import the resume or add an experience summary.", sectionId: "facility-submission-summary", fixLabel: "Facility Submission Summary" },
+    { key: "licenseVerified", label: "License / credential verification", ready: !requiresLicenseReverification || form.licenseVerificationComplete === true, detail: !requiresLicenseReverification ? "Not required for this role" : form.licenseVerificationComplete === true ? "Verification confirmed" : "Complete the license or credential verification and select Yes.", sectionId: "facility-submission-summary", fixLabel: "License / Certification" },
+    { key: "positionInterestConfirmed", label: "Position interest", ready: Boolean(form.position || selectedRequisition), detail: form.position || selectedRequisition ? "Role selected" : "Select the requisition the candidate wants.", sectionId: "role-match", fixLabel: "Role Match" },
+    { key: "scheduleFitConfirmed", label: "Working schedule", ready: form.scheduleConfirmed === true || (form.scheduleConfirmed === false && Boolean(form.scheduleNotes)), detail: form.scheduleConfirmed === true ? "Working schedule confirmed" : form.scheduleConfirmed === false && form.scheduleNotes ? "Schedule conflict documented" : form.scheduleConfirmed === false ? "Describe the schedule conflict." : "Confirm whether the candidate can work the posted schedule.", sectionId: "facility-submission-summary", fixLabel: "Availability" },
+    { key: "payReviewed", label: "Pay rate", ready: Boolean(form.compensationRequested || form.estimatedCompensation || estimatedComp), detail: form.compensationRequested || form.estimatedCompensation || estimatedComp ? "Rate reviewed" : "Add the expected or calculated pay rate.", sectionId: "facility-submission-summary", fixLabel: "Pay Rate" },
+    { key: "facilityReviewed", label: "Facility", ready: Boolean(form.siteName || selectedRequisition?.siteName), detail: form.siteName || selectedRequisition?.siteName ? "Location selected" : "Select the facility through a requisition or manual role match.", sectionId: "role-match", fixLabel: "Role Match" },
+    { key: "permissionToSubmit", label: "Recruiter recommendation", ready: Boolean(form.permissionToSubmit || form.recruiterRecommendation === "Recommend to Submit"), detail: form.permissionToSubmit || form.recruiterRecommendation === "Recommend to Submit" ? "Ready-to-submit recommendation selected" : "Select Recommend to Submit when the package is ready.", sectionId: "facility-submission-summary", fixLabel: "Recruiter Recommendation" },
+    { key: "backgroundEligibility", label: "Eligibility review", ready: !rehireNeedsReview || Boolean(form.rehireEligibility && form.rehireEligibility !== "Not verified"), detail: rehireNeedsReview ? (form.rehireEligibility && form.rehireEligibility !== "Not verified" ? "Eligibility reviewed" : "Complete the required HR eligibility review.") : "No hold", sectionId: "candidate-type-questions", fixLabel: "Candidate Type Questions" },
+    { key: "notesReviewed", label: "Recruiter notes", ready: Boolean(form.candidateNotes || form.confirmationNotes || form.concernsFollowUp || form.whyFit || form.licenseCertificationNotes || form.additionalLicenseInfo || form.interviewAvailability), detail: form.candidateNotes || form.confirmationNotes || form.concernsFollowUp || form.whyFit || form.licenseCertificationNotes || form.additionalLicenseInfo || form.interviewAvailability ? "Submission notes entered" : "Add fit, availability, or recruiter observations.", sectionId: "facility-submission-summary", fixLabel: "Recruiter Notes" },
   ];
   const snapshotReadyCount = snapshotReadinessItems.filter((item) => item.ready).length;
+  const snapshotMissingReadinessItems = snapshotReadinessItems.filter((item) => !item.ready);
   const snapshotReadinessPercent = Math.round((snapshotReadyCount / Math.max(snapshotReadinessItems.length, 1)) * 100);
   const snapshotNextReadinessStep = snapshotReadinessItems.find((item) => !item.ready);
   const snapshotNextAction = snapshotNextReadinessStep?.detail || (intakeOutputBlockers.length ? intakeOutputBlockers[0] : "Mark ready to submit.");
@@ -15753,7 +15754,7 @@ function rowifyCandidate(item = {}) {
                     <span><strong>I confirm this candidate is {form.candidateType || "not classified"}.</strong><span style={{ display: "block", color: THEME.muted, fontSize: 12, marginTop: 3 }}>Candidate type must be explicitly verified before WelcomeFlow can build the submission preview.</span></span>
                   </label> : null}
 
-                  <section style={{ background: THEME.panel, border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, boxShadow: THEME.shadow, overflow: "hidden" }}>
+                  <section id="candidate-basics" style={{ background: THEME.panel, border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, boxShadow: THEME.shadow, overflow: "hidden", scrollMarginTop: 18 }}>
                     <div style={{ padding: 16, borderBottom: `1px solid ${THEME.borderSoft}` }}>
                       <h2 style={{ margin: 0, fontSize: 17, color: THEME.text }}>1. Candidate Basics</h2>
                     </div>
@@ -15769,7 +15770,7 @@ function rowifyCandidate(item = {}) {
                     </div>
                   </section>
 
-                  <section style={{ background: THEME.panel, border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, boxShadow: THEME.shadow, overflow: "hidden" }}>
+                  <section id="candidate-type-questions" style={{ background: THEME.panel, border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, boxShadow: THEME.shadow, overflow: "hidden", scrollMarginTop: 18 }}>
                     <div style={{ padding: 16, borderBottom: `1px solid ${THEME.borderSoft}` }}>
                       <h2 style={{ margin: 0, fontSize: 17, color: THEME.text }}>Candidate Type Questions</h2>
                       <div style={{ color: THEME.muted, fontSize: 12, marginTop: 4 }}>
@@ -15834,20 +15835,13 @@ function rowifyCandidate(item = {}) {
                     </div>
                   </section>
 
-                  <section style={{ background: THEME.panel, border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, boxShadow: THEME.shadow, overflow: "hidden" }}>
+                  <section id="role-match" style={{ background: THEME.panel, border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, boxShadow: THEME.shadow, overflow: "hidden", scrollMarginTop: 18 }}>
                     <div style={{ padding: 16, borderBottom: `1px solid ${THEME.borderSoft}` }}>
                       <h2 style={{ margin: 0, fontSize: 17, color: THEME.text }}>2. Role Match</h2>
                     </div>
                     <div style={{ padding: 16, display: "grid", gap: 14 }}>
                       <Field label="Req # / Opening*"><RequisitionSearchInput value={form.selectedRequisitionId} requisitions={activeRequisitions} onSelect={applyRequisitionToForm} placeholder="Search req, facility, or position" /></Field>
-                      {selectedRequisition ? (
-                        <div style={{ border: `1px solid ${THEME.primary2}`, borderRadius: 8, padding: 12, background: THEME.blueBg, display: "grid", gap: 10 }}>
-                          <div><strong>Matched opening</strong><div style={{ color: THEME.muted, fontSize: 12, marginTop: 3 }}>Facility, position, shift, and FTE come from the selected requisition and are shown here without a second editable copy.</div></div>
-                          <div style={{ display: "grid", gap: 10, gridTemplateColumns: formCompact ? "1fr 1fr" : "repeat(5, minmax(0, 1fr))" }}>
-                            {[['Req #', form.reqNumber || selectedRequisition.reqNumber], ['Facility', form.siteName || selectedRequisition.siteName], ['Position', form.position || selectedRequisition.positionTitle], ['Shift', form.shiftPreference || selectedRequisition.shiftPreference || 'Not listed'], ['FTE', form.fte || selectedRequisition.fte || form.employmentType || 'Not listed']].map(([label, value]) => <div key={label} style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 6, padding: 9, background: THEME.panel }}><div style={{ color: THEME.muted, fontSize: 10, fontWeight: 950, textTransform: "uppercase" }}>{label}</div><div style={{ marginTop: 4, fontWeight: 900 }}>{value || 'Not listed'}</div></div>)}
-                          </div>
-                        </div>
-                      ) : (
+                      {!selectedRequisition ? (
                         <div style={{ display: "grid", gap: 10 }}>
                           <Button subtle onClick={() => setManualRoleMatchOpen((open) => !open)} style={{ justifySelf: "start" }}>{manualRoleMatchOpen ? "Hide Manual Opening Fields" : "Can't find a matching requisition? Enter opening details"}</Button>
                           {manualRoleMatchOpen ? <div style={{ border: `1px dashed ${THEME.border}`, borderRadius: 8, padding: 12, background: THEME.panelAlt, display: "grid", gap: 12 }}>
@@ -15860,27 +15854,24 @@ function rowifyCandidate(item = {}) {
                             </div>
                           </div> : null}
                         </div>
-                      )}
+                      ) : null}
                     </div>
                   </section>
 
-                  <section style={{ background: THEME.panel, border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, boxShadow: THEME.shadow, overflow: "hidden" }}>
+                  <section id="facility-submission-summary" style={{ background: THEME.panel, border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, boxShadow: THEME.shadow, overflow: "hidden", scrollMarginTop: 18 }}>
                     <div style={{ padding: 16, borderBottom: `1px solid ${THEME.borderSoft}` }}>
                       <h2 style={{ margin: 0, fontSize: 17, color: THEME.text }}>3. Facility Submission Summary</h2>
                       <div style={{ color: THEME.muted, fontSize: 12, marginTop: 4 }}>Build the facility-facing story, fit notes, strengths, watchouts, and any site-specific screening answers.</div>
                     </div>
                     <div style={{ padding: 16, display: "grid", gap: 12 }}>
                       <div style={{ color: THEME.primary2, fontSize: 12, fontWeight: 950, textTransform: "uppercase" }}>License / Certification</div>
-                      <div style={{ display: "grid", gap: 12, gridTemplateColumns: formCompact ? "1fr" : "repeat(3, minmax(0, 1fr))" }}>
+                      <div style={{ display: "grid", gap: 12, gridTemplateColumns: formCompact ? "1fr 1fr" : "repeat(4, minmax(0, 1fr))" }}>
                         <Field label="License / Certification Year"><TextInput value={form.licensedYear || ""} onChange={(event) => updateForm("licensedYear", event.target.value)} placeholder="Example: 2022" /></Field>
                         <Field label="Experience Years*"><TextInput value={form.yearsExperience} onChange={(event) => { updateForm("yearsExperience", event.target.value); if (event.target.value) updateForm("newlyLicensed", false); }} placeholder="Example: 2.5 or 4 years" /></Field>
                         <Field label="Pay Rate"><TextInput value={form.estimatedCompensation || (hasRateExperienceInput(form) ? estimatedComp : "")} onChange={(event) => updateForm("estimatedCompensation", event.target.value)} placeholder={hasRateExperienceInput(form) ? "$32 - $36 / hr" : "Enter experience to calculate"} /></Field>
-                      </div>
-                      <div style={{ display: "grid", gap: 12, gridTemplateColumns: formCompact ? "1fr" : "2fr 1fr" }}>
-                        <Field label="License / Certification Note"><TextArea value={form.licenseCertificationNotes || ""} onChange={(event) => updateForm("licenseCertificationNotes", event.target.value)} minHeight={72} placeholder="Verification notes, standing, expiration, or follow-up." /></Field>
                         <Field label="Verification Complete"><SelectInput value={form.licenseVerificationComplete === true ? "Yes" : form.licenseVerificationComplete === false ? "No" : ""} onChange={(event) => updateForm("licenseVerificationComplete", event.target.value === "Yes" ? true : event.target.value === "No" ? false : null)} options={["Yes", "No"]} placeholder="Select Yes or No" /></Field>
                       </div>
-                      <Field label="Additional License / Certification"><TextArea value={form.additionalLicenseInfo || ""} onChange={(event) => updateForm("additionalLicenseInfo", event.target.value)} minHeight={68} placeholder="List any additional licenses, certifications, or credentials." /></Field>
+                      <Field label="License / Certification Note"><TextArea value={form.licenseCertificationNotes || form.additionalLicenseInfo || ""} onChange={(event) => updateForm("licenseCertificationNotes", event.target.value)} minHeight={62} placeholder="License, certification, verification, standing, expiration, and follow-up notes." /></Field>
 
                       <div style={{ color: THEME.primary2, fontSize: 12, fontWeight: 950, textTransform: "uppercase", marginTop: 4 }}>Experience</div>
                       <Field label="Experience Summary*"><TextArea value={form.experienceNotes} onChange={(event) => updateForm("experienceNotes", event.target.value)} minHeight={78} placeholder="Years, setting, patient type, and relevant experience." /></Field>
@@ -15910,16 +15901,11 @@ function rowifyCandidate(item = {}) {
                       ) : null}
 
                       <div style={{ color: THEME.primary2, fontSize: 12, fontWeight: 950, textTransform: "uppercase", marginTop: 4 }}>Availability</div>
-                      <div style={{ display: "grid", gap: 12, gridTemplateColumns: formCompact ? "1fr" : "1fr 2fr" }}>
-                        <Field label="Confirmed Available for Posted Schedule?"><SelectInput value={form.scheduleConfirmed === true ? "Yes" : form.scheduleConfirmed === false ? "No" : ""} onChange={(event) => updateForm("scheduleConfirmed", event.target.value === "Yes" ? true : event.target.value === "No" ? false : null)} options={["Yes", "No"]} placeholder="Select Yes or No" /></Field>
-                        <Field label="Schedule Availability Notes"><TextInput value={form.scheduleNotes || ""} onChange={(event) => updateForm("scheduleNotes", event.target.value)} placeholder="Add schedule exceptions, limitations, or confirmation details." /></Field>
-                      </div>
-                      <div style={{ display: "grid", gap: 12, gridTemplateColumns: formCompact ? "1fr" : "1fr 1fr" }}>
-                        <Field label="Interview Availability Notes*"><TextArea value={form.interviewAvailability || ""} onChange={(event) => updateForm("interviewAvailability", event.target.value)} minHeight={78} placeholder="Days, times, notice needed, and preferred interview format." /></Field>
-                        <div style={{ display: "grid", gap: 10 }}>
-                          <Field label="Start Date Availability"><TextInput value={form.startAvailability || ""} onChange={(event) => updateForm("startAvailability", event.target.value)} placeholder="Example: July 29 or two weeks after offer" /></Field>
-                          <Field label="Start Date Availability Notes"><TextArea value={form.startNotes || ""} onChange={(event) => updateForm("startNotes", event.target.value)} minHeight={58} placeholder="Notice period, planned time off, or onboarding timing." /></Field>
-                        </div>
+                      <div style={{ display: "grid", gap: 12, gridTemplateColumns: formCompact ? "1fr" : "repeat(2, minmax(0, 1fr))" }}>
+                        <Field label="Confirmed Working Schedule?"><SelectInput value={form.scheduleConfirmed === true ? "Yes" : form.scheduleConfirmed === false ? "No" : ""} onChange={(event) => updateForm("scheduleConfirmed", event.target.value === "Yes" ? true : event.target.value === "No" ? false : null)} options={["Yes", "No"]} placeholder="Select Yes or No" /></Field>
+                        <Field label="Schedule Conflicts?"><TextInput value={form.scheduleNotes || ""} onChange={(event) => updateForm("scheduleNotes", event.target.value)} placeholder="List conflicts or enter None" /></Field>
+                        <Field label="Interview Availability"><TextInput value={form.interviewAvailability || ""} onChange={(event) => updateForm("interviewAvailability", event.target.value)} placeholder="Days, times, notice, or preferred format" /></Field>
+                        <Field label="Start Date Availability"><TextInput value={form.startAvailability || form.startNotes || ""} onChange={(event) => updateForm("startAvailability", event.target.value)} placeholder="Date, notice period, or onboarding timing" /></Field>
                       </div>
 
                       <div style={{ color: THEME.primary2, fontSize: 12, fontWeight: 950, textTransform: "uppercase", marginTop: 4 }}>Recruiter Notes and Observation</div>
@@ -15956,20 +15942,26 @@ function rowifyCandidate(item = {}) {
                       <div style={{ color: THEME.muted, fontSize: 12, marginTop: 4 }}>WelcomeFlow checks the key items needed before submitting to facility.</div>
                     </div>
                     <div style={{ padding: 16, display: "grid", gap: 12 }}>
-                      <div style={{ display: "grid", gridTemplateColumns: formCompact ? "1fr" : "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-                        {snapshotReadinessItems.map((item) => (
-                          <div key={item.key} style={{ display: "grid", gridTemplateColumns: "22px 1fr auto", gap: 9, alignItems: "center", padding: 9, border: `1px solid ${item.ready ? THEME.greenBorder : THEME.borderSoft}`, borderRadius: 6, background: item.ready ? THEME.greenBg : THEME.panelAlt }}>
-                            <span aria-hidden="true" style={{ width: 18, height: 18, borderRadius: 999, display: "grid", placeItems: "center", background: item.ready ? THEME.green : THEME.amberBg, color: item.ready ? "#fff" : THEME.amber, fontSize: 11, fontWeight: 950 }}>{item.ready ? "OK" : "!"}</span>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                        <strong style={{ color: THEME.text }}>{snapshotReadyCount} of {snapshotReadinessItems.length} complete</strong>
+                        <span style={{ color: snapshotMissingReadinessItems.length ? THEME.amber : THEME.green, fontSize: 12, fontWeight: 850 }}>{snapshotMissingReadinessItems.length ? `${snapshotMissingReadinessItems.length} item${snapshotMissingReadinessItems.length === 1 ? "" : "s"} to finish` : "Submission information complete"}</span>
+                      </div>
+                      {snapshotMissingReadinessItems.length ? (
+                        <div style={{ display: "grid", gridTemplateColumns: formCompact ? "1fr" : "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+                        {snapshotMissingReadinessItems.map((item) => (
+                          <div key={item.key} style={{ display: "grid", gridTemplateColumns: "22px 1fr auto", gap: 9, alignItems: "center", padding: 10, border: `1px solid ${THEME.amber}`, borderRadius: 6, background: THEME.amberBg }}>
+                            <span aria-hidden="true" style={{ width: 18, height: 18, borderRadius: 999, display: "grid", placeItems: "center", background: THEME.panel, color: THEME.amber, fontSize: 11, fontWeight: 950 }}>!</span>
                             <span>
                               <span style={{ display: "block", color: THEME.text, fontWeight: 800 }}>{item.label}</span>
                               <span style={{ display: "block", color: THEME.muted, fontSize: 11, marginTop: 2 }}>{item.detail}</span>
                             </span>
-                            <span style={{ color: item.ready ? THEME.green : THEME.amber, fontSize: 11, fontWeight: 850 }}>{item.ready ? "Auto complete" : "Needs data"}</span>
+                            <button type="button" onClick={() => document.getElementById(item.sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" })} style={{ border: `1px solid ${THEME.amber}`, borderRadius: 6, background: THEME.panel, color: THEME.text, padding: "6px 8px", fontSize: 10.5, fontWeight: 850, cursor: "pointer" }}>Fix in {item.fixLabel}</button>
                           </div>
                         ))}
-                      </div>
+                        </div>
+                      ) : <div style={{ border: `1px solid ${THEME.greenBorder}`, borderRadius: 6, background: THEME.greenBg, color: THEME.green, padding: 11, fontWeight: 850 }}>Nothing is missing. Review the {snapshotReadyCount} completed items, then continue when ready.</div>}
                       <div style={{ display: "grid", gap: 8, gridTemplateColumns: isNarrow ? "1fr" : "180px 1fr 1.1fr", alignItems: "center", background: THEME.panelAlt, borderRadius: 6, padding: 10 }}>
-                        <strong style={{ color: THEME.text, fontSize: 12 }}>Submission Readiness: {snapshotReadyCount} of {snapshotReadinessItems.length} complete</strong>
+                        <strong style={{ color: THEME.text, fontSize: 12 }}>Readiness: {snapshotReadyCount} / {snapshotReadinessItems.length}</strong>
                         <div style={{ height: 9, borderRadius: 999, background: THEME.borderSoft, overflow: "hidden" }}><div style={{ height: "100%", width: `${snapshotReadinessPercent}%`, background: THEME.green, borderRadius: 999 }} /></div>
                         <div style={{ color: THEME.text, fontSize: 12 }}><strong>Next Best Action:</strong> <span style={{ color: THEME.muted }}>{snapshotNextAction}</span></div>
                       </div>
@@ -15990,7 +15982,7 @@ function rowifyCandidate(item = {}) {
                       <div style={{ width: 150, height: 86, borderTopLeftRadius: 150, borderTopRightRadius: 150, border: `15px solid ${THEME.borderSoft}`, borderBottom: 0, position: "relative", overflow: "hidden" }}>
                         <div style={{ position: "absolute", inset: -15, borderTopLeftRadius: 150, borderTopRightRadius: 150, border: `15px solid ${THEME.green}`, borderBottom: 0, transformOrigin: "50% 100%", transform: `rotate(${Math.min(snapshotReadinessPercent, 100) * 1.8 - 180}deg)`, clipPath: "polygon(0 0, 50% 0, 50% 100%, 0 100%)" }} />
                       </div>
-                      <div style={{ marginTop: -35, textAlign: "center" }}><div style={{ fontSize: 33, fontWeight: 950, color: THEME.text }}>{snapshotReadinessPercent}%</div><div style={{ color: THEME.muted, fontSize: 12 }}>{snapshotReadyCount} of {snapshotReadinessItems.length} complete</div></div>
+                      <div style={{ marginTop: -35, textAlign: "center" }}><div style={{ fontSize: 33, fontWeight: 950, color: THEME.text }}>{snapshotReadyCount}/{snapshotReadinessItems.length}</div><div style={{ color: THEME.muted, fontSize: 12 }}>{snapshotMissingReadinessItems.length ? `${snapshotMissingReadinessItems.length} missing` : "Complete"}</div></div>
                     </div>
                     <div style={{ marginTop: 16, borderTop: `1px solid ${THEME.borderSoft}`, paddingTop: 12, display: "grid", gridTemplateColumns: "22px 1fr", gap: 8 }}>
                       <span style={{ color: THEME.primary2 }}>*</span>
