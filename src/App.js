@@ -66,6 +66,15 @@ import {
   updateExistingRequisition,
 } from "./requisitionCommunicationDetails";
 import WeeklyCleanupReportBuilder from "./WeeklyCleanupReportBuilder";
+import { RecruiterWorkspacePage } from "./RecruiterWorkspacePage";
+import { applyWorkspaceTaskAction } from "./recruiterWorkspaceActions";
+import { InternalCalendarPage } from "./InternalCalendarPage";
+import {
+  buildInternalCalendarInvitation,
+  createInternalCalendarEvent,
+  normalizeInternalCalendarEvent,
+  updateInternalCalendarEvent,
+} from "./internalCalendar";
 import {
   REGIONAL_CONTACT_ROLES,
   applyCanonicalFacilityUpdate,
@@ -88,6 +97,7 @@ const NOTES_KEY = "welcomeflow-notes-v2";
 const INTAKE_DRAFT_KEY = "welcomeflow-intake-draft-v1";
 const INTAKE_DRAFTS_KEY = "welcomeflow-intake-drafts-v1";
 const MANUAL_QUEUE_KEY = "welcomeflow-manual-queue-v2";
+const CALENDAR_EVENTS_KEY = "welcomeflow-calendar-events-v1";
 const HOT_LEADS_KEY = "welcomeflow-hot-leads-v1";
 const HOT_LEAD_BULK_DRAFTS_KEY = "welcomeflow-hot-lead-bulk-drafts-v1";
 const HOT_LEAD_WORKING_REQ_KEY = "welcomeflow-hot-lead-working-req-v1";
@@ -1224,8 +1234,8 @@ async function saveCloudWorkspaceState(data) {
   return { error: result.ok ? null : result.error };
 }
 
-function buildWorkspaceState(settings, tracker, history, notesText, manualQueueItems, hotLeads, reportHistory, reportInclusions, intakeDraft, intakeDrafts, hotLeadBulkDrafts) {
-  return { settings, tracker, history, notesText, manualQueueItems, hotLeads, reportHistory, reportInclusions, intakeDraft, intakeDrafts, hotLeadBulkDrafts, savedAt: new Date().toISOString() };
+function buildWorkspaceState(settings, tracker, history, notesText, manualQueueItems, hotLeads, reportHistory, reportInclusions, intakeDraft, intakeDrafts, hotLeadBulkDrafts, calendarEvents) {
+  return { settings, tracker, history, notesText, manualQueueItems, hotLeads, reportHistory, reportInclusions, intakeDraft, intakeDrafts, hotLeadBulkDrafts, calendarEvents, savedAt: new Date().toISOString() };
 }
 
 function normalizeCommonSpelling(value = "") {
@@ -1657,6 +1667,13 @@ const DEFAULT_SETTINGS = {
       highRiskDays: 6,
       archiveReviewDays: 10,
       hrNudgeHours: 12,
+      workspaceRiskInactivityDays: 7,
+      workspaceFacilityReviewDelayHours: 72,
+      workspaceInterviewDecisionDelayHours: 24,
+      workspaceSourcingCoverageDays: 7,
+      workspaceCriticalSourcingDays: 14,
+      workspaceFocusMinutes: 60,
+      workspaceStandardFocusMinutes: 30,
     },
     hotCandidateStatuses: HOT_LEAD_STATUSES,
     hotCandidateArchiveReasons: HOT_LEAD_ARCHIVE_REASONS,
@@ -5972,6 +5989,10 @@ function RecruiterApp() {
   const [queueCandidateDraft, setQueueCandidateDraft] = useState("");
   const [queueDueDateDraft, setQueueDueDateDraft] = useState(todayIso());
   const [manualQueueItems, setManualQueueItems] = useState([]);
+  const [calendarEvents, setCalendarEvents] = useState([]);
+  const [calendarRequestedEventId, setCalendarRequestedEventId] = useState("");
+  const [calendarCreateRequestToken, setCalendarCreateRequestToken] = useState(0);
+  const [calendarCreatePrefill, setCalendarCreatePrefill] = useState({});
   const [hotLeadWorkspaceTab, setHotLeadWorkspaceTab] = useState("initial");
   const [hotLeads, setHotLeads] = useState([]);
   const [hotLeadBulkDrafts, setHotLeadBulkDrafts] = useState([]);
@@ -6119,6 +6140,7 @@ function RecruiterApp() {
     setNotesPreview(snapshot.notesPreview || null);
     setCandidateTalkingPoints(snapshot.candidateTalkingPoints || "");
     setManualQueueItems(Array.isArray(snapshot.manualQueueItems) ? snapshot.manualQueueItems : []);
+    setCalendarEvents((Array.isArray(snapshot.calendarEvents) ? snapshot.calendarEvents : []).map(normalizeInternalCalendarEvent));
     setHotLeads(migrateHotLeadRecords(Array.isArray(snapshot.hotLeads) ? snapshot.hotLeads : []));
     setHotLeadBulkDrafts(Array.isArray(snapshot.hotLeadBulkDrafts) ? snapshot.hotLeadBulkDrafts : []);
     setHotLeadDraft(snapshot.hotLeadDraft || { ...DEFAULT_HOT_LEAD_DRAFT });
@@ -6243,6 +6265,7 @@ function RecruiterApp() {
       const localIntakeDraft = loadStoredValue(INTAKE_DRAFT_KEY, null);
       const localIntakeDrafts = loadStoredValue(INTAKE_DRAFTS_KEY, []);
       const localManualQueueItems = loadStoredValue(MANUAL_QUEUE_KEY, []);
+      const localCalendarEvents = loadStoredValue(CALENDAR_EVENTS_KEY, []);
       const localHotLeads = migrateHotLeadRecords(loadStoredValue(HOT_LEADS_KEY, []));
       const localHotLeadBulkDrafts = loadStoredValue(HOT_LEAD_BULK_DRAFTS_KEY, []);
       const localHotLeadWorkingReqId = loadStoredValue(HOT_LEAD_WORKING_REQ_KEY, "");
@@ -6262,6 +6285,7 @@ function RecruiterApp() {
         restoreIntakeDraft(intakeDraftToRestore, intakeDraftToRestore?.activeIntakeDraftId || "");
         setIntakeDrafts(Array.isArray(cloud.data.intakeDrafts) ? cloud.data.intakeDrafts : Array.isArray(localIntakeDrafts) ? localIntakeDrafts : []);
         setManualQueueItems(Array.isArray(cloud.data.manualQueueItems) ? cloud.data.manualQueueItems : []);
+        setCalendarEvents((Array.isArray(cloud.data.calendarEvents) ? cloud.data.calendarEvents : localCalendarEvents).map(normalizeInternalCalendarEvent));
         setHotLeads(migrateHotLeadRecords(Array.isArray(cloud.data.hotLeads) ? cloud.data.hotLeads : []));
         setHotLeadBulkDrafts(Array.isArray(cloud.data.hotLeadBulkDrafts) ? cloud.data.hotLeadBulkDrafts : Array.isArray(localHotLeadBulkDrafts) ? localHotLeadBulkDrafts : []);
         setHotLeadWorkingReqId(cloud.data.hotLeadWorkingReqId || localHotLeadWorkingReqId || "");
@@ -6280,6 +6304,7 @@ function RecruiterApp() {
         restoreIntakeDraft(localIntakeDraft, localIntakeDraft?.activeIntakeDraftId || "");
         setIntakeDrafts(Array.isArray(localIntakeDrafts) ? localIntakeDrafts : []);
         setManualQueueItems(Array.isArray(localManualQueueItems) ? localManualQueueItems : []);
+        setCalendarEvents((Array.isArray(localCalendarEvents) ? localCalendarEvents : []).map(normalizeInternalCalendarEvent));
         setHotLeads(Array.isArray(localHotLeads) ? localHotLeads : []);
         setHotLeadBulkDrafts(Array.isArray(localHotLeadBulkDrafts) ? localHotLeadBulkDrafts : []);
         setHotLeadWorkingReqId(localHotLeadWorkingReqId || "");
@@ -6337,6 +6362,7 @@ function RecruiterApp() {
       notesPreview,
       candidateTalkingPoints,
       manualQueueItems,
+      calendarEvents,
       hotLeads,
       hotLeadBulkDrafts,
       hotLeadDraft,
@@ -6384,7 +6410,7 @@ function RecruiterApp() {
       undoSnapshotRef.current = serialized;
     }, 650);
     return () => window.clearTimeout(undoTimerRef.current);
-  }, [settings, form, submissionDate, tracker, history, selectedId, output, outputWizardOpen, outputWizardStep, attachmentReminderEnabled, activeIntakeStep, intakeHandoffOpen, completedIntakeSteps, intakeDrafts, activeIntakeDraftId, notesText, notesPreview, candidateTalkingPoints, manualQueueItems, hotLeads, hotLeadBulkDrafts, hotLeadDraft, hotLeadWorkingReqId, hotLeadSearch, hotLeadStatusFilter, hotLeadArchiveDraft, manualTrackerDraft, weeklyReport, weeklySubject, reportStartDate, reportEndDate, activeReportSection, excludedReportIds, selectedFacility, selectedReportType, selectedRecipientGroup, selectedStatusFilter, selectedFacilityReports, completedFacilityReports, generatedReportPreview, reportHistory, reportInclusions, hasLoaded]);
+  }, [settings, form, submissionDate, tracker, history, selectedId, output, outputWizardOpen, outputWizardStep, attachmentReminderEnabled, activeIntakeStep, intakeHandoffOpen, completedIntakeSteps, intakeDrafts, activeIntakeDraftId, notesText, notesPreview, candidateTalkingPoints, manualQueueItems, calendarEvents, hotLeads, hotLeadBulkDrafts, hotLeadDraft, hotLeadWorkingReqId, hotLeadSearch, hotLeadStatusFilter, hotLeadArchiveDraft, manualTrackerDraft, weeklyReport, weeklySubject, reportStartDate, reportEndDate, activeReportSection, excludedReportIds, selectedFacility, selectedReportType, selectedRecipientGroup, selectedStatusFilter, selectedFacilityReports, completedFacilityReports, generatedReportPreview, reportHistory, reportInclusions, hasLoaded]);
 
   useEffect(() => {
     function onSound(event) {
@@ -6401,6 +6427,7 @@ function RecruiterApp() {
   useEffect(() => { if (hasLoaded) saveStoredValue(INTAKE_DRAFT_KEY, currentIntakeDraftSnapshot()); }, [currentIntakeDraftSnapshot, hasLoaded]);
   useEffect(() => { if (hasLoaded) saveStoredValue(INTAKE_DRAFTS_KEY, intakeDrafts); }, [intakeDrafts, hasLoaded]);
   useEffect(() => { if (hasLoaded) saveStoredValue(MANUAL_QUEUE_KEY, manualQueueItems); }, [manualQueueItems, hasLoaded]);
+  useEffect(() => { if (hasLoaded) saveStoredValue(CALENDAR_EVENTS_KEY, calendarEvents); }, [calendarEvents, hasLoaded]);
   useEffect(() => { if (hasLoaded) saveStoredValue(HOT_LEADS_KEY, hotLeads); }, [hotLeads, hasLoaded]);
   useEffect(() => { if (hasLoaded) saveStoredValue(HOT_LEAD_BULK_DRAFTS_KEY, hotLeadBulkDrafts); }, [hotLeadBulkDrafts, hasLoaded]);
   useEffect(() => { if (hasLoaded) saveStoredValue(HOT_LEAD_WORKING_REQ_KEY, hotLeadWorkingReqId); }, [hotLeadWorkingReqId, hasLoaded]);
@@ -6545,12 +6572,12 @@ function RecruiterApp() {
     const timeoutId = window.setTimeout(async () => {
       if (draftCloudSavePauseRef.current) return;
       setCloudStatus("Saving to cloud...");
-      const workspaceState = { ...buildWorkspaceState(settings, tracker, history, notesText, manualQueueItems, hotLeads, reportHistory, reportInclusions, currentIntakeDraftSnapshot(), intakeDrafts, hotLeadBulkDrafts), hotLeadWorkingReqId };
+      const workspaceState = { ...buildWorkspaceState(settings, tracker, history, notesText, manualQueueItems, hotLeads, reportHistory, reportInclusions, currentIntakeDraftSnapshot(), intakeDrafts, hotLeadBulkDrafts, calendarEvents), hotLeadWorkingReqId };
       const result = await saveCloudWorkspaceState(workspaceState);
       setCloudStatus(result.error ? (ownerUatMode ? result.error : "Cloud save paused - using this browser backup") : (ownerUatMode ? "Saved securely to Owner UAT" : "Saved to cloud"));
     }, 900);
     return () => window.clearTimeout(timeoutId);
-  }, [settings, tracker, history, notesText, manualQueueItems, hotLeads, hotLeadBulkDrafts, hotLeadWorkingReqId, reportHistory, reportInclusions, currentIntakeDraftSnapshot, intakeDrafts, hasLoaded]);
+  }, [settings, tracker, history, notesText, manualQueueItems, calendarEvents, hotLeads, hotLeadBulkDrafts, hotLeadWorkingReqId, reportHistory, reportInclusions, currentIntakeDraftSnapshot, intakeDrafts, hasLoaded]);
 
   const activeRoles = useMemo(() => (settings.roles || []).filter((role) => role.status === "Active"), [settings.roles]);
   const activeSites = useMemo(() => (settings.sites || []).filter((site) => site.status === "Active"), [settings.sites]);
@@ -10640,6 +10667,7 @@ function RecruiterApp() {
       history,
       notes: notesText,
       manualQueueItems,
+      calendarEvents,
     };
     downloadTextFile(`welcomeflow-backup-${todayIso()}.json`, JSON.stringify(backup, null, 2), "application/json");
   }
@@ -10662,6 +10690,7 @@ function RecruiterApp() {
       setSettings(nextSettings);
       setTracker(migrateTrackerRecords(data.tracker || [], nextSettings));
       setHistory(Array.isArray(data.history) ? data.history : []);
+      setCalendarEvents((Array.isArray(data.calendarEvents) ? data.calendarEvents : []).map(normalizeInternalCalendarEvent));
       setNotesText(typeof data.notes === "string" ? data.notes : "");
       setManualQueueItems(Array.isArray(data.manualQueueItems) ? data.manualQueueItems : []);
       setCopyNotice("Full backup imported");
@@ -13933,6 +13962,110 @@ function rowifyCandidate(item = {}) {
     };
   }
 
+  function applyRecruiterWorkspaceAction(task, action, options = {}) {
+    if (task?.sourceType !== "candidate" || !task.sourceId) {
+      setCopyNotice("Open the requisition to update recruiting coverage.");
+      return false;
+    }
+    const current = safeTrackerRows.find((item) => item.id === task.sourceId);
+    const result = applyWorkspaceTaskAction(current, action, {
+      ...options,
+      actor: settings.general?.recruiterName || "Recruiter",
+      followUpDays: settings.options?.workflowRules?.managerSecondFollowUpBusinessDays || 2,
+    });
+    if (!result.ok) {
+      setCopyNotice(result.error);
+      return false;
+    }
+    setTracker((prev) => prev.map((item) => item.id === task.sourceId ? result.record : item));
+    addHistory(result.history.type, result.history.subject, result.history.body, result.history.trackerId, result.history.meta);
+    setCopyNotice(`${result.history.type}. Weekly reporting will use the updated activity.`);
+    return true;
+  }
+
+  function syncCalendarEventToCandidate(event, action = "update") {
+    if (!event?.candidateId) return;
+    const isInterview = /interview|phone screen/i.test(event.eventType || "");
+    setTracker((prev) => prev.map((candidate) => {
+      if (candidate.id !== event.candidateId) return candidate;
+      const calendarEventIds = Array.from(new Set([...(candidate.calendarEventIds || []), event.id]));
+      const patch = { calendarEventIds, lastActivityDate: new Date().toISOString() };
+      if (isInterview && action !== "cancel") {
+        patch.interviewDate = event.startDateTime.slice(0, 10);
+        patch.interviewTime = new Date(event.startDateTime).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+        patch.bookingStatus = event.eventStatus === "Completed" ? "Completed" : "Scheduled";
+      }
+      if (action === "cancel") patch.nextAction = `Reschedule ${event.eventType}`;
+      else if (action === "outcome") patch.nextAction = /interview/i.test(event.eventType) ? "Record or request hiring-manager feedback" : "Complete the next workflow action";
+      else if (/interview|screen|orientation|offer call/i.test(event.eventType || "")) patch.nextAction = `Confirm ${event.eventType.toLowerCase()}`;
+      return {
+        ...candidate,
+        ...patch,
+        audit: [
+          ...(candidate.audit || []),
+          {
+            at: new Date().toISOString(),
+            type: action === "reschedule" ? "Calendar Event Rescheduled" : action === "cancel" ? "Calendar Event Canceled" : action === "outcome" ? "Calendar Event Outcome" : "Calendar Event Scheduled",
+            note: `${event.eventType}: ${event.title}`,
+            calendarEventId: event.id,
+          },
+        ],
+      };
+    }));
+  }
+
+  function createCalendarEvent(input) {
+    const result = createInternalCalendarEvent(calendarEvents, {
+      ...input,
+      connectedTaskIds: input.connectedTaskIds || [],
+    });
+    if (!result.ok) {
+      setCopyNotice(result.error);
+      return result;
+    }
+    setCalendarEvents(result.events);
+    syncCalendarEventToCandidate(result.event, "create");
+    addHistory("Calendar Event Scheduled", result.event.title, `${result.event.eventType} scheduled for ${new Date(result.event.startDateTime).toLocaleString()}.`, result.event.candidateId, {
+      candidate: result.event.candidateName,
+      facility: result.event.facilityName,
+      calendarEventId: result.event.id,
+      requisitionId: result.event.requisitionId,
+    });
+    setCopyNotice("Event saved to the WelcomeFlow internal calendar.");
+    return result;
+  }
+
+  function updateCalendarEvent(eventId, changes, action = "update") {
+    const result = updateInternalCalendarEvent(calendarEvents, eventId, changes, action);
+    if (!result.ok) {
+      setCopyNotice(result.error);
+      return result;
+    }
+    setCalendarEvents(result.events);
+    syncCalendarEventToCandidate(result.event, action);
+    const historyType = action === "reschedule" ? "Calendar Event Rescheduled" : action === "cancel" ? "Calendar Event Canceled" : action === "outcome" ? "Calendar Event Outcome Recorded" : "Calendar Event Updated";
+    addHistory(historyType, result.event.title, `${result.event.eventType} · ${result.event.eventStatus} · ${result.event.outcomeStatus}.`, result.event.candidateId, {
+      candidate: result.event.candidateName,
+      facility: result.event.facilityName,
+      calendarEventId: result.event.id,
+      requisitionId: result.event.requisitionId,
+    });
+    setCopyNotice(`${historyType}. Connected queue and reporting data refreshed.`);
+    return result;
+  }
+
+  function openCalendarCreate(prefill = {}) {
+    setCalendarRequestedEventId("");
+    setCalendarCreatePrefill(prefill);
+    setCalendarCreateRequestToken((current) => current + 1);
+    setActivePage("calendar");
+  }
+
+  function openCalendarEvent(eventId) {
+    setCalendarRequestedEventId(eventId || "");
+    setActivePage("calendar");
+  }
+
   function facilityEmailContent(model, reportType = selectedReportType) {
     const reqLines = model.openReqs.length ? model.openReqs.map((req) => `${req.positionTitle || "No Position"} | ${req.reqNumber || "No Req"} | ${fteLabel(req.fte) || "N/A"} | ${req.shiftPreference || req.shift || "N/A"} | ${openingsForReq(req)}`) : ["No current openings this week."];
     const candidateLines = model.activeCandidates.length ? model.activeCandidates.map((item) => {
@@ -14252,7 +14385,12 @@ function rowifyCandidate(item = {}) {
   const controlStyle = { padding: "10px 12px", borderRadius: 6, border: `1px solid ${THEME.border}`, background: THEME.panel, color: THEME.text, fontWeight: 700, fontSize: 13, fontFamily: "Inter, Arial, sans-serif" };
   const candidateRouteKeys = ["candidates", "hot", "hotLegacy", "hotMockup", "submission", "tracker", "workspace"];
   const navButtonStyle = (key) => {
-    const active = activePage === key || (key === "candidates" && candidateRouteKeys.includes(activePage));
+    const reportingTabs = ["exports", "hub"];
+    const active = (key === "reports"
+      ? activePage === "reports" && !reportingTabs.includes(reportsTab)
+      : key === "reporting"
+        ? activePage === "reports" && reportingTabs.includes(reportsTab)
+        : activePage === key) || (key === "candidates" && candidateRouteKeys.includes(activePage));
     return { width: "100%", display: "flex", alignItems: "center", gap: 12, border: "1px solid", borderColor: active ? "rgba(255,255,255,0.18)" : "transparent", borderRadius: 6, padding: "11px 12px", background: active ? "linear-gradient(135deg, #6d28d9 0%, #7c3aed 100%)" : "transparent", color: active ? "#ffffff" : "#c9c2ef", fontWeight: 700, fontSize: 13, cursor: "pointer", textAlign: "left", marginBottom: 8, boxShadow: active ? "0 12px 24px rgba(109,40,217,0.26)" : "none", transition: "transform 150ms ease, background 150ms ease, box-shadow 150ms ease" };
   };
   const formCompact = viewportWidth < 560;
@@ -14261,13 +14399,24 @@ function rowifyCandidate(item = {}) {
   const nav = [
     ["home", "Home", "\u2302"],
     ["candidates", "Candidates", "\uD83D\uDC65"],
-    ["actions", "Workspace", "\u26A1"],
+    ["calendar", "Calendar", "\uD83D\uDCC5"],
     ["positions", "Facility & Position Setup", "\uD83C\uDFE2"],
     ["reports", "Weekly Cleanup", "\uD83E\uDDF9"],
+    ["reporting", "Reports", "\uD83D\uDCCA"],
     ["settings", "Settings", "\u2699\uFE0F"],
     ["account", "Profile & Account", "\uD83D\uDC64"],
   ];
   function navigateToPage(key) {
+    if (key === "actions") {
+      setActivePage("home");
+      return;
+    }
+    if (key === "reporting") {
+      setReportsTab("hub");
+      setActivePage("reports");
+      return;
+    }
+    if (key === "reports") setReportsTab("metrics");
     setActivePage(key);
     if (key === "hot") {
       setHotLeadDetailOpen(false);
@@ -14879,6 +15028,71 @@ function rowifyCandidate(item = {}) {
         {candidateRouteKeys.includes(activePage) ? <CandidateSectionNavigator onChange={navigateToCandidateSection} /> : null}
 
         {activePage === "home" ? (
+          <RecruiterWorkspacePage
+            tracker={safeTrackerRows}
+            requisitions={activeRequisitions}
+            sites={settings.sites || []}
+            history={history}
+            workflowRules={settings.options?.workflowRules || {}}
+            theme={THEME}
+            isNarrow={isNarrow}
+            isMedium={isMedium}
+            recruiterName={settings.general?.recruiterName || "Recruiter"}
+            calendarEvents={calendarEvents}
+            onOpenCandidate={(candidateId) => {
+              setSelectedId(candidateId);
+              setTrackerPanelOpen(false);
+              setActivePage("workspace");
+            }}
+            onOpenRequisition={() => setActivePage("positions")}
+            onOpenWeeklyCleanup={() => {
+              setReportsTab("metrics");
+              setActivePage("reports");
+            }}
+            onOpenReports={() => {
+              setReportsTab("hub");
+              setActivePage("reports");
+            }}
+            onOpenCalendar={() => setActivePage("calendar")}
+            onOpenCalendarEvent={openCalendarEvent}
+            onAddCalendarEvent={() => openCalendarCreate()}
+            onScheduleCalendar={(task) => openCalendarCreate({
+              eventType: "Recruiter Follow-Up",
+              candidateId: task.candidateId || task.sourceId || "",
+              requisitionId: task.requisitionId || "",
+              facilityId: task.calendarEvent?.facilityId || "",
+              title: `Follow-Up: ${task.candidateName || task.position || "Recruiting activity"}`,
+            })}
+            onTaskAction={applyRecruiterWorkspaceAction}
+            onWorkspaceEvent={(event) => addHistory(event.type, event.subject, event.body, "", event.meta || {})}
+          />
+        ) : null}
+
+        {activePage === "calendar" ? (
+          <InternalCalendarPage
+            events={calendarEvents}
+            candidates={safeTrackerRows}
+            requisitions={activeRequisitions}
+            sites={settings.sites || []}
+            recruiterName={settings.general?.recruiterName || "Recruiter"}
+            theme={THEME}
+            isNarrow={isNarrow}
+            createRequestToken={calendarCreateRequestToken}
+            createPrefill={calendarCreatePrefill}
+            selectedEventId={calendarRequestedEventId}
+            onCreateEvent={createCalendarEvent}
+            onUpdateEvent={updateCalendarEvent}
+            onOpenCandidate={(candidateId) => {
+              setSelectedId(candidateId);
+              setTrackerPanelOpen(false);
+              setActivePage("workspace");
+            }}
+            onOpenRequisition={() => setActivePage("positions")}
+            onDownloadInvitation={(event) => downloadTextFile(`welcomeflow-${event.eventType.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.ics`, buildInternalCalendarInvitation(event), "text/calendar")}
+          />
+        ) : null}
+
+        {activePage === "homeLegacy" ? (
           <div style={{ display: "grid", gap: 16 }}>
             <Card compact>
               <div style={{ display: "grid", gridTemplateColumns: isMedium ? "1fr" : "minmax(0, 1fr) 230px", gap: 16, alignItems: "center" }}>
@@ -17184,7 +17398,10 @@ function rowifyCandidate(item = {}) {
                         <ProfileSummaryBlock title="Interview Date">{selectedSubmission.rescheduledInterviewDate ? `Rescheduled: ${displayDate(selectedSubmission.rescheduledInterviewDate)}` : selectedSubmission.interviewDate ? displayDate(selectedSubmission.interviewDate) : "Not scheduled"}</ProfileSummaryBlock>
                         <ProfileSummaryBlock title="Interview Time">{selectedSubmission.interviewTime || selectedSubmission.facilityInterviewTime || "Not set"}</ProfileSummaryBlock>
                       </div>
-                      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}><Button primary onClick={() => setInterviewDrawerOpen(true)}>Open Scheduling Drawer</Button></div>
+                      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+                        <Button subtle onClick={() => openCalendarCreate({ eventType: "Facility Interview", candidateId: selectedSubmission.id, requisitionId: selectedSubmission.requisitionId || selectedSubmission.formSnapshot?.selectedRequisitionId || "", facilityId: selectedSubmission.facilityId || "" })}>Schedule in Calendar</Button>
+                        <Button primary onClick={() => setInterviewDrawerOpen(true)}>Open Scheduling Drawer</Button>
+                      </div>
                     </div>
                     </div>
                   </div>
@@ -17575,7 +17792,10 @@ function rowifyCandidate(item = {}) {
                                 {interviewDateTimeTextFor(selectedSubmission) || "No interview date saved"} | {bookingStatusFor(selectedSubmission)}
                               </span>
                             </div>
-                            <Button primary onClick={() => setInterviewDrawerOpen(true)}>Open Scheduling Drawer</Button>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              <Button subtle onClick={() => openCalendarCreate({ eventType: "Facility Interview", candidateId: selectedSubmission.id, requisitionId: selectedSubmission.requisitionId || selectedSubmission.formSnapshot?.selectedRequisitionId || "", facilityId: selectedSubmission.facilityId || "" })}>Schedule in Calendar</Button>
+                              <Button primary onClick={() => setInterviewDrawerOpen(true)}>Open Scheduling Drawer</Button>
+                            </div>
                           </div>
                           {selectedSubmission.pendingAtsUpdate?.status === "Pending" ? (
                             <div style={{ border: `1px solid ${THEME.primary2}`, borderRadius: 8, padding: 12, background: THEME.blueBg, display: "grid", gap: 10 }}>
@@ -18877,6 +19097,7 @@ function rowifyCandidate(item = {}) {
             setActiveSettingsTab={setActiveSettingsTab}
             onRequisitionReferenceChange={syncRequisitionReferences}
             exportFullDataWorkbook={exportFullDataWorkbook}
+            onScheduleCalendar={openCalendarCreate}
           />
         ) : null}
         {activePage === "settings" ? (
@@ -20670,7 +20891,7 @@ function CandidateManagementPage({ activeTab, setActiveTab, search, setSearch, h
   );
 }
 
-function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], activeSites = [], tracker = [], setActivePage = () => {}, setActiveSettingsTab = () => {}, onRequisitionReferenceChange = () => {}, exportFullDataWorkbook = () => {} }) {
+function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], activeSites = [], tracker = [], setActivePage = () => {}, setActiveSettingsTab = () => {}, onRequisitionReferenceChange = () => {}, exportFullDataWorkbook = () => {}, onScheduleCalendar = () => {} }) {
   const width = useWindowWidth();
   const compact = width < 960;
   const [activeTab, setActiveTab] = useState("facilities");
@@ -21531,6 +21752,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
           <p style={{ margin: "6px 0 0", color: THEME.muted, fontWeight: 700 }}>Manage your facilities, positions, requirements, and rate rules in one place.</p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Button subtle onClick={() => onScheduleCalendar({ eventType: "Recruiting Focus Block", facilityId: selectedSite?.id || "" })}>Schedule Recruiting Time</Button>
           <Button subtle onClick={() => setActivePage("automation")}>✨ Automation Center</Button>
           <Button subtle onClick={() => setActiveTab("import")}>Import Center</Button>
           <Button primary onClick={() => openFacilityDrawer({}, "add")}>+ Add Facility</Button>
@@ -23956,6 +24178,17 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
               <Field label="High Risk Days"><TextInput type="number" value={rules.highRiskDays} onChange={(event) => updateSettings(["options", "workflowRules", "highRiskDays"], event.target.value)} /></Field>
               <Field label="Archive Review Days"><TextInput type="number" value={rules.archiveReviewDays} onChange={(event) => updateSettings(["options", "workflowRules", "archiveReviewDays"], event.target.value)} /></Field>
               <Field label="HR Rehire Nudge Hours"><TextInput type="number" value={rules.hrNudgeHours || 12} onChange={(event) => updateSettings(["options", "workflowRules", "hrNudgeHours"], event.target.value)} /></Field>
+            </div>
+          </Accordion> : null}
+          {workflowMatches("Recruiter Workspace Prioritization risk inactivity facility review interview decision sourcing coverage focus minutes", rules) ? <Accordion title="Recruiter Workspace Prioritization" subtitle="Adjust the shared thresholds used by Today’s Plan, Candidate Rescue, and Recruiting Focus.">
+            <div style={fieldGrid}>
+              <Field label="Risk Inactivity Days"><TextInput type="number" value={rules.workspaceRiskInactivityDays ?? 7} onChange={(event) => updateSettings(["options", "workflowRules", "workspaceRiskInactivityDays"], event.target.value)} /></Field>
+              <Field label="Facility Review Delay Hours"><TextInput type="number" value={rules.workspaceFacilityReviewDelayHours ?? 72} onChange={(event) => updateSettings(["options", "workflowRules", "workspaceFacilityReviewDelayHours"], event.target.value)} /></Field>
+              <Field label="Interview Decision Delay Hours"><TextInput type="number" value={rules.workspaceInterviewDecisionDelayHours ?? 24} onChange={(event) => updateSettings(["options", "workflowRules", "workspaceInterviewDecisionDelayHours"], event.target.value)} /></Field>
+              <Field label="Sourcing Coverage Days"><TextInput type="number" value={rules.workspaceSourcingCoverageDays ?? 7} onChange={(event) => updateSettings(["options", "workflowRules", "workspaceSourcingCoverageDays"], event.target.value)} /></Field>
+              <Field label="Critical Sourcing Days"><TextInput type="number" value={rules.workspaceCriticalSourcingDays ?? 14} onChange={(event) => updateSettings(["options", "workflowRules", "workspaceCriticalSourcingDays"], event.target.value)} /></Field>
+              <Field label="Priority Focus Minutes"><TextInput type="number" value={rules.workspaceFocusMinutes ?? 60} onChange={(event) => updateSettings(["options", "workflowRules", "workspaceFocusMinutes"], event.target.value)} /></Field>
+              <Field label="Standard Focus Minutes"><TextInput type="number" value={rules.workspaceStandardFocusMinutes ?? 30} onChange={(event) => updateSettings(["options", "workflowRules", "workspaceStandardFocusMinutes"], event.target.value)} /></Field>
             </div>
           </Accordion> : null}
           {showHotRules ? <Accordion title="Hot Candidate Outreach Rules" subtitle="Controls pre-intake outreach timing and archive review.">

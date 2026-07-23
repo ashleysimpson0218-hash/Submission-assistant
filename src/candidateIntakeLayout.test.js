@@ -11,7 +11,7 @@ test("shared candidate section selector opens the primary working pages", () => 
   expect(appSource).toContain('if (section === "queue")');
   expect(appSource).toContain('if (section === "intake")');
   expect(appSource).toContain('if (section === "profiles")');
-  expect(appSource).toContain('if (section === "archived")');
+  expect(appSource).toContain('if (section === "management")');
   expect(appSource).toContain('if (section === "screening")');
   expect(appSource).toContain('onChange={navigateToCandidateSection}');
 });
