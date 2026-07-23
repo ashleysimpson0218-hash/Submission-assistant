@@ -72,6 +72,12 @@ import {
   createDefaultReportPresets,
   normalizeReportingSettings,
 } from "./weeklyCleanupReporting";
+import {
+  DEFAULT_WEEKLY_REPORT_TEMPLATES,
+  WEEKLY_REPORT_TEMPLATE_KEYS,
+  WEEKLY_REPORT_TEMPLATE_TOKENS,
+  renderWeeklyReportContent,
+} from "./weeklyCleanupReportTemplates";
 
 const NL = String.fromCharCode(10);
 
@@ -1701,6 +1707,7 @@ const DEFAULT_SETTINGS = {
     ],
   },
   templates: {
+    ...DEFAULT_WEEKLY_REPORT_TEMPLATES,
     hiringManager: { useCustom: false, subject: "Submission: {candidate_name} | {position} | {facility}", body: "Hello {facility},\n\nPlease review the candidate submission below.\n\nCandidate: {candidate_name}\nPosition: {position}\nFacility: {facility}\nReq Number: {req_number}\nEmployment Type: {employment_type}\nShift: {shift}\nExperience: {experience}\nExpected / Final Rate: {final_compensation}\nInterview Availability: {interview_availability}\nCandidate Phone: {candidate_phone}\nCandidate Email: {candidate_email}\n\nRecruiter Notes:\n{candidate_notes}\n\nPlease review and advise next steps within 24-48 hours.\n\nThank you,\n{recruiter_name}" },
     candidateConfirmation: { useCustom: false, subject: "Submission Confirmation: {{positionTitle}} | {{facilityName}}", body: "Hello {{candidateName}},\n\nThank you for taking the time to speak with me today. Your profile has been submitted for the {{positionTitle}} position with {{facilityName}}.\n\nPOSITION DETAILS\n- Facility: {{facilityName}}\n- Position: {{positionTitle}}\n- Req Number: {{reqNumber}}\n- Shift: {{shift}}\n- Employment Type: {{employmentType}}\n- Rate: {{rate}}\n- Pay Type: {{payType}}\n- Rate Method: {{rateMethod}}\n- Differential / Premium Summary: {{differentialSummary}}\n\n{{employmentLanguage}}\n{{specialMissionLanguage}}\n{{credentialingLanguage}}\n{{backgroundLanguage}}\n{{drugScreenLanguage}}\n{{facilityClearanceLanguage}}\n\nNEXT STEPS\n- Your information is currently being reviewed by the hiring team.\n- If selected, the facility may reach out directly regarding interview coordination.\n- I will continue to monitor your submission and share updates as they become available.\n- Onboarding timeline: {{onboardingTimeline}}\n\nWHO MAY REACH OUT\n{{facility_contacts}}\n\nHiring Manager: {{hiringManagerName}} | {{hiringManagerEmail}}\n\nIf you have blockers on your phone, this can prevent the facility from being able to contact you; I recommend temporarily disabling them. Please also check your spam folder for potential missed outreach.\n\nThank you,\n{{recruiter_name}}", conditionalBlocks: { ...DEFAULT_TEMPLATE_CONDITIONAL_BLOCKS } },    atsUpdate: { useCustom: false, channel: "ATS Note", subject: "Submitted: {facility}", body: "ATS UPDATE / COMMUNICATION LOG\n\nCandidate submitted to facility for review.\n\nCandidate: {candidate_name}\nPosition: {position}\nFacility: {facility}\nReq Number: {req_number}\nUnique ID Number: {unique_id_number}\nEmployment Type: {employment_type}\nShift: {shift}\nFTE: {fte}\nExpected / Final Rate: {final_compensation}\nInterview Availability: {interview_availability}\nCandidate Phone: {candidate_phone}\nCandidate Email: {candidate_email}\nSubmission Date: {submission_date}\nStatus: {status}\nNext Action: {next_action}\n\nRecruiter Notes:\n{candidate_notes}\n\n{rehire_details}" },    candidate48HourFollowUp: { useCustom: false, subject: "Checking in on {position} submission", body: "Hello {candidate_name},\n\nI wanted to share a quick update that your profile remains under review for the {position} role with {facility}. I will continue monitoring this and will send updates as soon as they are available.\n\nThank you,\n{recruiter_name}" },
     candidateWarmth: { useCustom: false, subject: "Quick check-in | {position} | {facility}", body: "Hello {candidate_name},\n\nI wanted to quickly check in and let you know I am still monitoring your profile for the {position} opportunity with {facility}.\n\nI will continue watching for updates and will reach out as soon as there is movement. Please let me know if anything changes with your availability, interest, or contact information.\n\nThank you,\n{recruiter_name}" },
@@ -13913,8 +13920,20 @@ function rowifyCandidate(item = {}) {
     };
   }
 
-  function facilityEmailBody(model) {
+  function baseWeeklyReportTokens() {
     const dateRange = `${displayDate(reportStartDate)} to ${displayDate(reportEndDate)}`;
+    return {
+      report_type: selectedReportType,
+      report_start_date: displayDate(reportStartDate),
+      report_end_date: displayDate(reportEndDate),
+      reporting_week: dateRange,
+      recruiter_name: settings.general?.recruiterName || "Recruiter",
+      recruiter_email: settings.general?.recruiterEmail || "",
+      company_name: settings.general?.companyName || "",
+    };
+  }
+
+  function facilityEmailContent(model, reportType = selectedReportType) {
     const reqLines = model.openReqs.length ? model.openReqs.map((req) => `${req.positionTitle || "No Position"} | ${req.reqNumber || "No Req"} | ${fteLabel(req.fte) || "N/A"} | ${req.shiftPreference || req.shift || "N/A"} | ${openingsForReq(req)}`) : ["No current openings this week."];
     const candidateLines = model.activeCandidates.length ? model.activeCandidates.map((item) => {
       const interview = interviewDateTimeFor(item);
@@ -13923,87 +13942,93 @@ function rowifyCandidate(item = {}) {
     }) : ["No active candidate movement this week."];
     const hireLines = model.hiresTentativeStarts.length ? model.hiresTentativeStarts.map((item) => `${item.candidate || "Unnamed Candidate"} | ${item.position || "No position"} | ${tentativeStartDateFor(item) || "Pending start date"}`) : ["No hires or tentative starts listed this week."];
     const leadershipLines = model.leadershipReqs.length ? model.leadershipReqs.map((req) => `${req.positionTitle || "No Position"} | ${req.reqNumber || "No Req"} | ${fteLabel(req.fte) || "N/A"} | ${req.shiftPreference || req.shift || "N/A"} | ${openingsForReq(req)} | ${model.rows.filter((item) => candidateMatchesRequisition(item, req)).map((item) => item.status).filter(Boolean).join(", ") || "No candidate activity"}`) : ["No active leadership roles open."];
-    return [
-      `Facility: ${model.facility}`,
-      `Reporting Week: ${dateRange}`,
-      "",
-      "Open Requisitions:",
-      "Position Name | Req Number | FTE | Shift | Number of Openings",
-      ...reqLines,
-      "",
-      "Candidate Details:",
-      "Candidate Name | Position of Interest | Submitted Date | Current Status | Awaiting Feedback | Pending Offer | Interview Scheduled",
-      ...candidateLines,
-      "",
-      "Hires and Tentative Starts:",
-      "Name | Position | Tentative Start Date",
-      ...hireLines,
-      "",
-      "Leadership Openings:",
-      ...leadershipLines,
-      "",
-      "Attached is the detailed facility recruiting report with requisition, candidate, risk, hire, and status details.",
-    ].join(NL);
+    const key = reportType === "No Openings Update" || !model.openReqs.length ? WEEKLY_REPORT_TEMPLATE_KEYS.noOpenings : WEEKLY_REPORT_TEMPLATE_KEYS.facility;
+    return renderWeeklyReportContent(settings, key, {
+      ...baseWeeklyReportTokens(),
+      report_type: reportType,
+      facility: model.facility,
+      facilities_included: model.facility,
+      open_requisitions: ["Position Name | Req Number | FTE | Shift | Number of Openings", ...reqLines].join(NL),
+      candidate_details: ["Candidate Name | Position of Interest | Submitted Date | Current Status | Awaiting Feedback | Pending Offer | Interview Scheduled", ...candidateLines].join(NL),
+      hires_and_starts: ["Name | Position | Tentative Start Date", ...hireLines].join(NL),
+      leadership_openings: leadershipLines.join(NL),
+      total_open_requisitions: model.openReqs.length,
+      total_active_candidates: model.activeCandidates.length,
+      pending_offers: model.pendingOffers.length,
+      tentative_starts: model.hiresTentativeStarts.length,
+      leadership_opening_count: model.leadershipReqs.length,
+      attachment_note: "Attached is the detailed facility recruiting report with requisition, candidate, risk, hire, and status details.",
+    });
   }
 
-  function regionalEmailBody(rows = facilityReportQueueFiltered) {
+  function regionalEmailContent(rows = facilityReportQueueFiltered) {
     const models = rows.map((row) => facilityReportModel(row.facility));
     const openReqCount = models.reduce((total, model) => total + model.openReqs.length, 0);
     const noOpeningFacilities = models.filter((model) => !model.openReqs.length).map((model) => model.facility);
     const highRiskFacilities = models.filter((model) => model.riskCandidates.length).map((model) => `${model.facility} (${model.riskCandidates.length})`);
     const awaitingOverFive = models.flatMap((model) => model.awaitingFeedback.filter((item) => daysBetween(item.submissionDate) > 5).map((item) => `${item.candidate || "Unnamed Candidate"} | ${model.facility} | ${daysBetween(item.submissionDate)} days`));
-    return [
-      `Region: ${selectedRecipientGroup === "Regional Manager" ? "Regional Manager Summary" : "Selected Facilities"}`,
-      `Reporting Week: ${displayDate(reportStartDate)} to ${displayDate(reportEndDate)}`,
-      "",
-      `Facilities included: ${models.map((model) => model.facility).join(", ") || "None selected"}`,
-      `Total open requisitions: ${openReqCount}`,
-      `Facilities with no openings: ${noOpeningFacilities.length ? noOpeningFacilities.join(", ") : "None"}`,
-      `Facilities with high-risk candidates: ${highRiskFacilities.length ? highRiskFacilities.join(", ") : "None"}`,
-      "",
-      "Candidates awaiting feedback over 5 days:",
-      ...(awaitingOverFive.length ? awaitingOverFive : ["None"]),
-      "",
-      `Pending offers: ${models.reduce((total, model) => total + model.pendingOffers.length, 0)}`,
-      `Tentative starts: ${models.reduce((total, model) => total + model.hiresTentativeStarts.length, 0)}`,
-      `Leadership openings: ${models.reduce((total, model) => total + model.leadershipReqs.length, 0)}`,
-      "",
-      "Attached is the detailed regional recruiting workbook with facility, requisition, candidate, risk, hire, and status details.",
-    ].join(NL);
+    return renderWeeklyReportContent(settings, WEEKLY_REPORT_TEMPLATE_KEYS.regional, {
+      ...baseWeeklyReportTokens(),
+      facilities_included: models.map((model) => model.facility).join(", ") || "None selected",
+      total_open_requisitions: openReqCount,
+      facilities_with_no_openings: noOpeningFacilities.length ? noOpeningFacilities.join(", ") : "None",
+      high_risk_facilities: highRiskFacilities.length ? highRiskFacilities.join(", ") : "None",
+      aging_feedback: awaitingOverFive.length ? awaitingOverFive.join(NL) : "None",
+      aging_feedback_count: awaitingOverFive.length,
+      pending_offers: models.reduce((total, model) => total + model.pendingOffers.length, 0),
+      tentative_starts: models.reduce((total, model) => total + model.hiresTentativeStarts.length, 0),
+      leadership_opening_count: models.reduce((total, model) => total + model.leadershipReqs.length, 0),
+      attachment_note: "Attached is the detailed regional recruiting workbook with facility, requisition, candidate, risk, hire, and status details.",
+    });
   }
 
-  function cSuiteEmailBody(rows = facilityReportQueueFiltered) {
+  function regionalEmailBody(rows = facilityReportQueueFiltered) {
+    return regionalEmailContent(rows).body;
+  }
+
+  function cSuiteEmailContent(rows = facilityReportQueueFiltered) {
     const models = rows.map((row) => facilityReportModel(row.facility));
     const leadershipReqs = models.flatMap((model) => model.leadershipReqs);
     const riskFacilities = models.filter((model) => model.riskCandidates.length).map((model) => `${model.facility} (${model.riskCandidates.length})`);
     const activeCandidates = models.flatMap((model) => model.activeCandidates);
-    return [
-      `C-Suite Leadership Report`,
-      `Reporting Week: ${displayDate(reportStartDate)} to ${displayDate(reportEndDate)}`,
-      "",
-      `Total open requisitions: ${models.reduce((total, model) => total + model.openReqs.length, 0)}`,
-      `Total active candidates: ${activeCandidates.length}`,
-      `Total pending offers: ${models.reduce((total, model) => total + model.pendingOffers.length, 0)}`,
-      `Total hires / tentative starts: ${models.reduce((total, model) => total + model.hiresTentativeStarts.length, 0)}`,
-      `Total leadership openings: ${leadershipReqs.length}`,
-      "",
-      `Aging feedback concerns: ${models.flatMap((model) => model.awaitingFeedback.filter((item) => daysBetween(item.submissionDate) > 5)).length}`,
-      `High-risk facilities: ${riskFacilities.length ? riskFacilities.join(", ") : "None"}`,
-      "",
-      "Leadership role activity:",
-      ...(leadershipReqs.length ? leadershipReqs.map((req) => `${normalizeFacilityName(req.siteName)} | ${req.positionTitle || "Leadership role"} | Req ${req.reqNumber || "N/A"} | ${openingsForReq(req)} opening${openingsForReq(req) === 1 ? "" : "s"}`) : ["No active leadership roles open."]),
-      "",
-      `No-opening facility summary: ${models.filter((model) => !model.openReqs.length).length} facilit${models.filter((model) => !model.openReqs.length).length === 1 ? "y" : "ies"} with no current openings.`,
-      "",
-      "Attached is the detailed leadership workbook. Candidate-level detail is limited to leadership roles, urgent risk, pending offers, and tentative starts.",
-    ].join(NL);
+    const agingFeedbackCount = models.flatMap((model) => model.awaitingFeedback.filter((item) => daysBetween(item.submissionDate) > 5)).length;
+    const noOpeningCount = models.filter((model) => !model.openReqs.length).length;
+    return renderWeeklyReportContent(settings, WEEKLY_REPORT_TEMPLATE_KEYS.leadership, {
+      ...baseWeeklyReportTokens(),
+      facilities_included: models.map((model) => model.facility).join(", ") || "None selected",
+      total_open_requisitions: models.reduce((total, model) => total + model.openReqs.length, 0),
+      total_active_candidates: activeCandidates.length,
+      pending_offers: models.reduce((total, model) => total + model.pendingOffers.length, 0),
+      tentative_starts: models.reduce((total, model) => total + model.hiresTentativeStarts.length, 0),
+      leadership_opening_count: leadershipReqs.length,
+      aging_feedback_count: agingFeedbackCount,
+      high_risk_facilities: riskFacilities.length ? riskFacilities.join(", ") : "None",
+      leadership_openings: leadershipReqs.length ? leadershipReqs.map((req) => `${normalizeFacilityName(req.siteName)} | ${req.positionTitle || "Leadership role"} | Req ${req.reqNumber || "N/A"} | ${openingsForReq(req)} opening${openingsForReq(req) === 1 ? "" : "s"}`).join(NL) : "No active leadership roles open.",
+      no_opening_summary: `${noOpeningCount} facilit${noOpeningCount === 1 ? "y" : "ies"} with no current openings.`,
+      attachment_note: "Attached is the detailed leadership workbook. Candidate-level detail is limited to leadership roles, urgent risk, pending offers, and tentative starts.",
+    });
+  }
+
+  function cSuiteEmailBody(rows = facilityReportQueueFiltered) {
+    return cSuiteEmailContent(rows).body;
+  }
+
+  function selectedAudienceEmailContent(rows = selectedFacilityReportRows) {
+    const sourceRows = rows.length ? rows : facilityReportQueueFiltered;
+    if (selectedReportType === "Regional Manager Summary") return regionalEmailContent(sourceRows);
+    if (selectedReportType === "C-Suite Leadership Report") return cSuiteEmailContent(sourceRows);
+    if (sourceRows.length === 1) return facilityEmailContent(facilityReportModel(sourceRows[0].facility), selectedReportType);
+    const contents = sourceRows.map((row) => facilityEmailContent(facilityReportModel(row.facility), selectedReportType));
+    const subjectTemplate = contents[0] || facilityEmailContent(facilityReportModel(""), selectedReportType);
+    return {
+      ...subjectTemplate,
+      subject: `${selectedReportType}: ${displayDate(reportStartDate)} - ${displayDate(reportEndDate)}`,
+      body: contents.map((content) => content.body).join(`${NL}${NL}---${NL}${NL}`),
+    };
   }
 
   function selectedAudienceEmailBody(rows = selectedFacilityReportRows) {
-    const sourceRows = rows.length ? rows : facilityReportQueueFiltered;
-    if (selectedReportType === "Regional Manager Summary") return regionalEmailBody(sourceRows);
-    if (selectedReportType === "C-Suite Leadership Report") return cSuiteEmailBody(sourceRows);
-    return sourceRows.map((row) => facilityEmailBody(facilityReportModel(row.facility))).join(`${NL}${NL}---${NL}${NL}`);
+    return selectedAudienceEmailContent(rows).body;
   }
 
   function facilityWorkbookSheets(model) {
@@ -14103,11 +14128,11 @@ function rowifyCandidate(item = {}) {
 
   function previewSelectedFacilityReports(rows = selectedFacilityReportRows) {
     const sourceRows = rows.length ? rows : selectedFacilityReportRows;
-    const body = selectedAudienceEmailBody(sourceRows);
-    setGeneratedReportPreview(body);
-    setWeeklyReport(body);
-    setWeeklySubject(selectedReportType === "Facility Weekly Report" && sourceRows.length === 1 ? `Weekly Recruiting Update, ${sourceRows[0].facility}, Week of ${displayDate(reportStartDate)}` : `${selectedReportType}: ${displayDate(reportStartDate)} - ${displayDate(reportEndDate)}`);
-    addHistory("Facility Report Preview", selectedReportType, body, "");
+    const content = selectedAudienceEmailContent(sourceRows);
+    setGeneratedReportPreview(content.body);
+    setWeeklyReport(content.body);
+    setWeeklySubject(content.subject);
+    addHistory("Facility Report Preview", selectedReportType, content.body, "");
     setCopyNotice("Facility report preview generated.");
   }
 
@@ -14167,8 +14192,8 @@ function rowifyCandidate(item = {}) {
         lastUpdated: now,
         safetyGateStatus: missingContact ? "Missing contact" : row.status || "Ready",
         missingContactWarning: missingContact ? "Missing facility contact" : "",
-        emailSubject: `Weekly Recruiting Update, ${model.facility}, Week of ${displayDate(reportStartDate)}`,
-        emailBody: facilityEmailBody(model),
+        emailSubject: facilityEmailContent(model, row.reportType || selectedReportType).subject,
+        emailBody: facilityEmailContent(model, row.reportType || selectedReportType).body,
         attachmentTabs: facilityWorkbookSheets(model).map((sheet) => sheet.name).join(", "),
       };
     });
@@ -18785,8 +18810,9 @@ function rowifyCandidate(item = {}) {
                 <div style={{ display: "grid", gap: 10 }}>
                   {selectedFacilityReportRows.map((row) => {
                     const model = facilityReportModel(row.facility);
-                    const subject = `Weekly Recruiting Update, ${model.facility}, Week of ${displayDate(reportStartDate)}`;
-                    return <div key={row.id} style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "1.3fr 1fr 1fr auto", gap: 10, alignItems: "center", border: `1px solid ${model.missingContact ? THEME.red : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panel }}><div><strong>{model.facility}</strong><div style={{ color: THEME.muted, fontSize: 12 }}>{subject}</div></div><Badge tone={model.missingContact ? "High" : row.status === "Needs Review" ? "Medium" : "Low"}>{model.missingContact ? "Blocked, Missing Contact" : row.status}</Badge><span style={{ color: THEME.muted }}>{facilityWorkbookSheets(model).length} attachment tabs</span><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button subtle onClick={() => { setWeeklySubject(subject); setWeeklyReport(facilityEmailBody(model)); }}>Preview</Button><Button subtle onClick={() => downloadExcelWorkbook(`welcomeflow-${safeExcelSheetName(model.facility).replace(/\s+/g, "-").toLowerCase()}-${reportStartDate}.xls`, facilityWorkbookSheets(model))}>Download</Button></div></div>;
+                    const content = facilityEmailContent(model, row.reportType || selectedReportType);
+                    const subject = content.subject;
+                    return <div key={row.id} style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "1.3fr 1fr 1fr auto", gap: 10, alignItems: "center", border: `1px solid ${model.missingContact ? THEME.red : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panel }}><div><strong>{model.facility}</strong><div style={{ color: THEME.muted, fontSize: 12 }}>{subject}</div></div><Badge tone={model.missingContact ? "High" : row.status === "Needs Review" ? "Medium" : "Low"}>{model.missingContact ? "Blocked, Missing Contact" : row.status}</Badge><span style={{ color: THEME.muted }}>{facilityWorkbookSheets(model).length} attachment tabs</span><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button subtle onClick={() => { setWeeklySubject(subject); setWeeklyReport(content.body); }}>Preview</Button><Button subtle onClick={() => downloadExcelWorkbook(`welcomeflow-${safeExcelSheetName(model.facility).replace(/\s+/g, "-").toLowerCase()}-${reportStartDate}.xls`, facilityWorkbookSheets(model))}>Download</Button></div></div>;
                   })}
                   {selectedReportType === "Regional Manager Summary" ? <Card compact title="Regional Manager Email" subtitle="Grouped by selected facilities."><div style={{ whiteSpace: "pre-wrap", lineHeight: 1.65 }}>{regionalEmailBody(selectedFacilityReportRows)}</div></Card> : null}
                   {selectedReportType === "C-Suite Leadership Report" ? <Card compact title="C-Suite Leadership Email" subtitle="High-level leadership visibility."><div style={{ whiteSpace: "pre-wrap", lineHeight: 1.65 }}>{cSuiteEmailBody(selectedFacilityReportRows)}</div></Card> : null}
@@ -24065,9 +24091,12 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
     },
     {
       title: "Reports + ATS",
-      subtitle: "Leadership report wording and ATS update blocks.",
+      subtitle: "Adjustable Weekly Cleanup email wording for each report audience.",
       items: [
-        ["weeklyReport", "Weekly Report Email", "Weekly report subject/body if you send the report by email."],
+        ["facilityWeeklyReport", "Facility Weekly Report Email", "Facility-level Weekly Cleanup subject, headings, explanation, and closing wording."],
+        ["noOpeningsWeeklyReport", "No Openings Update Email", "Editable wording for a facility with no current openings."],
+        ["regionalWeeklyReport", "Regional Summary Email", "Regional manager or director report wording across assigned facilities."],
+        ["leadershipWeeklyReport", "Leadership Summary Email", "High-level C-Suite and leadership report wording."],
       ],
     },
   ];
@@ -24151,6 +24180,7 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
     "{final_compensation}", "{candidate_source}", "{candidate_notes}", "{application_link}", "{status}", "{next_action}", "{rehire_details}", "{matched_requisitions}",
     "{{candidateName}}", "{{facilityName}}", "{{positionTitle}}", "{{shift}}", "{{employmentType}}", "{{rate}}", "{{payType}}", "{{rateMethod}}", "{{differentialSummary}}", "{{benefitsEligible}}", "{{credentialingRequired}}", "{{backgroundRequired}}", "{{drugScreenRequired}}", "{{facilityClearanceRequired}}", "{{onboardingTimeline}}", "{{hiringManagerName}}", "{{hiringManagerEmail}}",
     "{{employmentLanguage}}", "{{fullTimeBenefitsLanguage}}", "{{partTimeLanguage}}", "{{prnLanguage}}", "{{contractLanguage}}", "{{specialMissionLanguage}}", "{{credentialingLanguage}}", "{{backgroundLanguage}}", "{{drugScreenLanguage}}", "{{facilityClearanceLanguage}}", "{{rateMissingWarning}}",
+    ...WEEKLY_REPORT_TEMPLATE_TOKENS,
     ...contactTokenOptions(settings),
   ];
   const makeEmailTemplateItem = (tuple, group, index) => {
@@ -24245,7 +24275,29 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
     updateSettings(["templates", item.key], { ...(DEFAULT_SETTINGS.templates[item.key] || { useCustom: false, subject: "", body: "" }), useCustom: false });
     window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: `${item.title} custom wording deleted. Default template restored.` }));
   };
-  const templatePreviewValues = tokenMap(DEMO_FORM, settings, { status: "Submitted", nextAction: "Awaiting manager review", submissionDate: todayIso(), phoneScreenDate: todayIso(), phoneScreenTime: "10:00 AM", totalSubmitted: 4, active: 3, awaiting: 2, interview: 1, placed: 1, rejected: 0, highRisk: 1, finalComp: "$42.25/hr", matched_requisitions: "- Registered Nurse | Demo Facility | Full-time | Day | Req: 1001 | 86% match" });
+  const templatePreviewValues = {
+    ...tokenMap(DEMO_FORM, settings, { status: "Submitted", nextAction: "Awaiting manager review", submissionDate: todayIso(), phoneScreenDate: todayIso(), phoneScreenTime: "10:00 AM", totalSubmitted: 4, active: 3, awaiting: 2, interview: 1, placed: 1, rejected: 0, highRisk: 1, finalComp: "$42.25/hr", matched_requisitions: "- Registered Nurse | Demo Facility | Full-time | Day | Req: 1001 | 86% match" }),
+    report_type: "Facility Weekly Report",
+    report_start_date: "7/20/2026",
+    report_end_date: "7/24/2026",
+    reporting_week: "7/20/2026 to 7/24/2026",
+    facilities_included: "Demo Facility, Sample Facility",
+    open_requisitions: "Registered Nurse | Req 1001 | 1 opening",
+    candidate_details: "Demo Candidate | Registered Nurse | Submitted",
+    hires_and_starts: "Demo Hire | Registered Nurse | 8/3/2026",
+    leadership_openings: "Director of Nursing | Req 2001 | 1 opening",
+    total_open_requisitions: 4,
+    total_active_candidates: 6,
+    facilities_with_no_openings: "Sample Facility",
+    high_risk_facilities: "Demo Facility (1)",
+    aging_feedback: "Demo Candidate | Demo Facility | 6 days",
+    aging_feedback_count: 1,
+    pending_offers: 1,
+    tentative_starts: 1,
+    leadership_opening_count: 1,
+    no_opening_summary: "1 facility with no current openings.",
+    attachment_note: "The detailed recruiting workbook is attached.",
+  };
   const templateField = (item, field, fallback = "") => {
     const record = templateRecordFor(item);
     if (field === "to") return record.to || templateRecipientDefault(item, record);
@@ -24512,6 +24564,7 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
           {searchBox("templates", "Search workflow, email, text, recipient, subject, body, ATS, onboarding")}
           <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 6, padding: 12, background: THEME.panelAlt, color: THEME.muted, lineHeight: 1.55, fontSize: 13 }}>
             <strong style={{ color: THEME.text }}>Available tokens:</strong> {`{candidate_name}, {candidate_first_name}, {position}, {facility}, {req_number}, {unique_id_number}, {employment_type}, {shift}, {experience}, {start_date}, {tentative_start_date}, {tentative_transfer_date}, {interview_availability}, {interview_date}, {rescheduled_date}, {final_compensation}, {candidate_source}, {candidate_notes}, {recruiter_name}, {candidate_email}, {candidate_phone}, {application_link}, {status}, {next_action}, {rehire_details}, {matched_requisitions}, {facility_contacts}, {facility_leadership}, {facility_contact_names}, {facility_contact_email}, {facility_leadership_emails}`}
+            <div style={{ marginTop: 6 }}><strong style={{ color: THEME.text }}>Weekly Cleanup report tokens:</strong> {WEEKLY_REPORT_TEMPLATE_TOKENS.join(", ")}</div>
             <div style={{ marginTop: 6 }}>People & Contacts tokens from Settings, including department contacts like Background, HR, Credentialing, and Onboarding, are available inside each Insert token dropdown.</div>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 10, background: THEME.panelAlt }}>
