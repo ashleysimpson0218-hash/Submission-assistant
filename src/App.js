@@ -4922,7 +4922,7 @@ export const CANDIDATE_SECTION_OPTIONS = Object.freeze([
   { value: "queue", label: "Candidate Queue" },
   { value: "intake", label: "Candidate Intake" },
   { value: "profiles", label: "Candidate Profile Movement Board" },
-  { value: "archived", label: "Archived Candidates" },
+  { value: "management", label: "Candidate Management" },
   { value: "screening", label: "Screening Queue" },
 ]);
 
@@ -4930,7 +4930,7 @@ function CandidateSectionNavigator({ onChange }) {
   const narrow = useWindowWidth() < 720;
   return (
     <nav aria-label="Candidate section navigation" style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 12, background: THEME.panel, boxShadow: THEME.shadow, display: "grid", gridTemplateColumns: narrow ? "1fr" : "minmax(180px, 1fr) minmax(240px, 360px)", gap: 14, alignItems: "center" }}>
-      <div><strong style={{ color: THEME.text }}>Go to Candidate Section</strong><div style={{ color: THEME.muted, fontSize: 12, marginTop: 3 }}>Open the working page for the queue, intake, profile movement, archive, or screening section.</div></div>
+      <div><strong style={{ color: THEME.text }}>Go to Candidate Section</strong><div style={{ color: THEME.muted, fontSize: 12, marginTop: 3 }}>Open the working page for the queue, intake, profile movement, candidate management, or screening section.</div></div>
       <label style={{ display: "grid", gap: 5, color: THEME.muted, fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>Candidate Page<SelectInput value="" onChange={(event) => onChange(event.target.value)} options={CANDIDATE_SECTION_OPTIONS} placeholder="Choose a Candidate section" /></label>
     </nav>
   );
@@ -14294,8 +14294,8 @@ function rowifyCandidate(item = {}) {
       setActivePage("workspace");
       return;
     }
-    if (section === "archived") {
-      setCandidateManagementTab("archived");
+    if (section === "management") {
+      setCandidateManagementTab("connect");
       setActivePage("candidates");
       return;
     }

@@ -4,7 +4,13 @@ import { CANDIDATE_SECTION_OPTIONS } from "./App";
 
 describe("candidate section navigation", () => {
   test("offers every primary candidate destination in one dropdown", () => {
-    expect(CANDIDATE_SECTION_OPTIONS.map((option) => option.value)).toEqual(["queue", "intake", "profiles", "archived", "screening"]);
+    expect(CANDIDATE_SECTION_OPTIONS).toEqual([
+      { value: "queue", label: "Candidate Queue" },
+      { value: "intake", label: "Candidate Intake" },
+      { value: "profiles", label: "Candidate Profile Movement Board" },
+      { value: "management", label: "Candidate Management" },
+      { value: "screening", label: "Screening Queue" },
+    ]);
   });
 
   test("uses an action placeholder so the current section can be reopened", () => {
@@ -18,7 +24,7 @@ describe("candidate section navigation", () => {
     expect(source).toMatch(/section === "queue"[\s\S]*?setActivePage\("hot"\)/);
     expect(source).toMatch(/section === "intake"[\s\S]*?startBlankActiveCandidateIntake\(\)/);
     expect(source).toMatch(/section === "profiles"[\s\S]*?setTrackerPanelOpen\(true\)[\s\S]*?setActivePage\("workspace"\)/);
-    expect(source).toMatch(/section === "archived"[\s\S]*?setCandidateManagementTab\("archived"\)/);
+    expect(source).toMatch(/section === "management"[\s\S]*?setCandidateManagementTab\("connect"\)[\s\S]*?setActivePage\("candidates"\)/);
     expect(source).toMatch(/section === "screening"[\s\S]*?setCandidateManagementTab\("screening"\)/);
   });
 
