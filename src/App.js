@@ -22,6 +22,8 @@ import {
 import { isFeatureFlagEnabled } from "./featureFlags";
 import { readRuntimeConfig } from "./runtimeConfig";
 import { getRuntimeSupabaseClient } from "./supabaseRuntimeClient";
+import { workspaceCounts, workspaceFingerprint, verifyAcceptanceWorkspace } from "./acceptanceWorkspace";
+import { AcceptanceWorkspaceGate } from "./AcceptanceWorkspaceGate";
 import { buildCommunicationPreview } from "./communicationGeneration";
 import {
   REVIEW_ACKNOWLEDGMENT,
@@ -104,9 +106,11 @@ const HOT_LEADS_KEY = "welcomeflow-hot-leads-v1";
 const HOT_LEAD_BULK_DRAFTS_KEY = "welcomeflow-hot-lead-bulk-drafts-v1";
 const HOT_LEAD_WORKING_REQ_KEY = "welcomeflow-hot-lead-working-req-v1";
 const REPORT_HISTORY_KEY = "welcomeflow-report-history-v1";
-const CLOUD_WORKSPACE_ID = "default";
 const CLOUD_TABLE = "welcomeflow_workspace_state";
 const runtimeConfig = readRuntimeConfig();
+const CLOUD_WORKSPACE_ID = runtimeConfig.workspaceId || "default";
+const acceptanceMode = Boolean(runtimeConfig.acceptanceMode);
+const workspacePersistenceEnabled = runtimeConfig.autosaveEnabled !== false;
 const testRuntime = assertTestRuntime(runtimeConfig);
 const ownerUatMode = Boolean(runtimeConfig.ok && runtimeConfig.isUat);
 if (runtimeConfig.ok) console.info("WelcomeFlow runtime", { environment: runtimeConfig.environment, projectRef: runtimeConfig.projectRef });
@@ -1189,16 +1193,17 @@ function loadStoredValue(key, fallback) {
 function saveStoredValue(key, value) {
   try {
     if (ownerUatMode) return;
+    if (!workspacePersistenceEnabled) return;
     if (typeof window !== "undefined") window.localStorage.setItem(key, JSON.stringify(value));
   } catch {}
 }
 
 async function loadCloudWorkspaceState() {
   if (!supabase) return { data: null, error: "Supabase not configured" };
-  const fields = ownerUatMode ? "data,updated_at,version" : "data";
+  const fields = ownerUatMode ? "data,updated_at,version" : "data,updated_at";
   const { data, error } = await supabase.from(CLOUD_TABLE).select(fields).eq("workspace_id", CLOUD_WORKSPACE_ID).maybeSingle();
   if (ownerUatMode && data?.version) ownerUatWorkspaceVersion = Number(data.version);
-  return { data: data?.data || null, error };
+  return { data: data?.data || null, updatedAt: data?.updated_at || "", error };
 }
 
 function safeOpenExternalUrl(url, target = "_blank") {
@@ -1210,6 +1215,7 @@ function safeOpenExternalUrl(url, target = "_blank") {
 }
 
 async function saveCloudWorkspaceState(data) {
+  if (!workspacePersistenceEnabled) return { error: "Autosave is disabled for this workspace." };
   if (!supabase) return { error: "Supabase not configured" };
   if (ownerUatMode) {
     const save = async () => {
@@ -6027,6 +6033,19 @@ function RecruiterApp() {
   const [selectedCandidateOutreachCategory, setSelectedCandidateOutreachCategory] = useState("Candidate Email");
   const [hasLoaded, setHasLoaded] = useState(false);
   const [cloudStatus, setCloudStatus] = useState("Connecting to cloud storage...");
+  const [acceptanceVerified, setAcceptanceVerified] = useState(false);
+  const [acceptanceVerifying, setAcceptanceVerifying] = useState(false);
+  const [acceptanceError, setAcceptanceError] = useState("");
+  const [acceptanceDiagnostics, setAcceptanceDiagnostics] = useState({
+    status: acceptanceMode ? "loading" : "inactive",
+    workspaceId: CLOUD_WORKSPACE_ID,
+    environment: runtimeConfig.environment,
+    source: "",
+    updatedAt: "",
+    fingerprint: "",
+    counts: {},
+    autosaveEnabled: workspacePersistenceEnabled,
+  });
   const [undoDepth, setUndoDepth] = useState(0);
   const intakeSectionRef = useRef(null);
   const attentionSectionRef = useRef(null);
@@ -6183,6 +6202,7 @@ function RecruiterApp() {
   const normalizeCloudDraftSettings = useCallback((value) => normalizeSettings(mergeDefaults(DEFAULT_SETTINGS, value || {})), []);
 
   const saveCommunicationDraft = useCallback(async ({ baseline, operation }) => {
+    if (!workspacePersistenceEnabled) return { ok: false, error: "Autosave is disabled for this workspace." };
     draftCloudSavePauseRef.current = true;
     window.clearTimeout(draftCloudSaveTimerRef.current);
     setCloudStatus("Saving protected draft...");
@@ -6221,6 +6241,7 @@ function RecruiterApp() {
   }, [normalizeCloudDraftSettings]);
 
   const activateCommunicationTemplate = useCallback(async ({ baseline, selection, confirmations }) => {
+    if (!workspacePersistenceEnabled) return { ok: false, error: "Autosave is disabled for this workspace." };
     draftCloudSavePauseRef.current = true;
     window.clearTimeout(draftCloudSaveTimerRef.current);
     setCloudStatus("Activating protected test variant...");
@@ -6241,6 +6262,7 @@ function RecruiterApp() {
   }, [normalizeCloudDraftSettings]);
 
   const deactivateCommunicationTemplate = useCallback(async ({ baseline, selection }) => {
+    if (!workspacePersistenceEnabled) return { ok: false, error: "Autosave is disabled for this workspace." };
     draftCloudSavePauseRef.current = true;
     window.clearTimeout(draftCloudSaveTimerRef.current);
     const result = await deactivateCommunicationVariantToCloud({
@@ -6277,6 +6299,26 @@ function RecruiterApp() {
       if (cancelled) return;
 
       if (cloud.data) {
+        if (acceptanceMode) {
+          try {
+            const fingerprint = await workspaceFingerprint(cloud.data);
+            if (cancelled) return;
+            setAcceptanceDiagnostics({
+              status: "loaded",
+              workspaceId: CLOUD_WORKSPACE_ID,
+              environment: runtimeConfig.environment,
+              source: "Cloud",
+              updatedAt: cloud.updatedAt,
+              fingerprint,
+              counts: workspaceCounts(cloud.data),
+              autosaveEnabled: workspacePersistenceEnabled,
+            });
+          } catch (error) {
+            setAcceptanceError(error?.message || "WelcomeFlow could not fingerprint the requested workspace.");
+            setAcceptanceDiagnostics((previous) => ({ ...previous, status: "failed", updatedAt: cloud.updatedAt, source: "Cloud" }));
+            return;
+          }
+        }
         const loadedSettings = normalizeSettings(mergeDefaults(DEFAULT_SETTINGS, cloud.data.settings || {}));
         setSettings(loadedSettings);
         setTracker(migrateTrackerRecords(cloud.data.tracker || [], loadedSettings));
@@ -6293,8 +6335,13 @@ function RecruiterApp() {
         setHotLeadWorkingReqId(cloud.data.hotLeadWorkingReqId || localHotLeadWorkingReqId || "");
         setReportHistory(Array.isArray(cloud.data.reportHistory) ? cloud.data.reportHistory : []);
         setReportInclusions({ ...DEFAULT_REPORT_INCLUSIONS, ...(cloud.data.reportInclusions || {}) });
-        setCloudStatus(ownerUatMode ? "Owner UAT authenticated workspace connected" : "Cloud storage connected");
+        setCloudStatus(workspacePersistenceEnabled ? (ownerUatMode ? "Owner UAT authenticated workspace connected" : "Cloud storage connected") : "Autosave Disabled");
       } else {
+        if (acceptanceMode) {
+          setAcceptanceError(cloud.error ? "The requested acceptance workspace could not be loaded from cloud storage." : `Workspace ${CLOUD_WORKSPACE_ID} is missing or inaccessible to this browser role. No fallback was used.`);
+          setAcceptanceDiagnostics((previous) => ({ ...previous, status: "failed", source: "Cloud", updatedAt: cloud.updatedAt || "" }));
+          return;
+        }
         if (ownerUatMode) {
           setCloudStatus("Owner UAT load blocked - reload or sign in again");
           return;
@@ -6435,7 +6482,7 @@ function RecruiterApp() {
   useEffect(() => { if (hasLoaded) saveStoredValue(HOT_LEAD_WORKING_REQ_KEY, hotLeadWorkingReqId); }, [hotLeadWorkingReqId, hasLoaded]);
   useEffect(() => { if (hasLoaded) saveStoredValue(REPORT_HISTORY_KEY, reportHistory); }, [reportHistory, hasLoaded]);
   useEffect(() => {
-    if (!hasLoaded) return;
+    if (!hasLoaded || !workspacePersistenceEnabled) return;
     setTracker((prev) => {
       let changed = false;
       const next = prev.map((item) => {
@@ -6455,7 +6502,7 @@ function RecruiterApp() {
     });
   }, [hasLoaded, settings.options, tracker]);
   useEffect(() => {
-    if (!hasLoaded) return;
+    if (!hasLoaded || !workspacePersistenceEnabled) return;
     if (settings.options?.workflowRules?.autoQueueCandidateInterviewFollowUp === false) return;
     const now = new Date();
     const followUpHours = Number(settings.options?.workflowRules?.candidateInterviewFollowUpHours || 3);
@@ -6509,7 +6556,7 @@ function RecruiterApp() {
   }, [hasLoaded, settings.options?.workflowRules?.autoQueueCandidateInterviewFollowUp, settings.options?.workflowRules?.candidateInterviewFollowUpHours, tracker]);
 
   useEffect(() => {
-    if (!hasLoaded) return;
+    if (!hasLoaded || !workspacePersistenceEnabled) return;
     setTracker((prev) => {
       let changed = false;
       const next = prev.map((item) => {
@@ -6533,7 +6580,7 @@ function RecruiterApp() {
   }, [hasLoaded, tracker, settings.options.workflowRules]);
 
   useEffect(() => {
-    if (!hasLoaded) return;
+    if (!hasLoaded || !workspacePersistenceEnabled) return;
     setSettings((prev) => {
       let changed = false;
       const nextRequisitions = (prev.requisitions || []).map((req) => {
@@ -6570,7 +6617,7 @@ function RecruiterApp() {
   }, [hasLoaded, settings.requisitions, settings.sites]);
 
   useEffect(() => {
-    if (!hasLoaded || draftCloudSavePauseRef.current) return undefined;
+    if (!hasLoaded || !workspacePersistenceEnabled || draftCloudSavePauseRef.current) return undefined;
     const timeoutId = window.setTimeout(async () => {
       if (draftCloudSavePauseRef.current) return;
       setCloudStatus("Saving to cloud...");
@@ -14984,6 +15031,20 @@ function rowifyCandidate(item = {}) {
     onConfirmWithdraw: archiveWithdrawnIntake,
   };
 
+  function verifyAcceptanceWorkspaceLoad() {
+    setAcceptanceVerifying(true);
+    const result = verifyAcceptanceWorkspace({
+      workspaceId: acceptanceDiagnostics.workspaceId,
+      expectedCounts: runtimeConfig.expectedCounts,
+      expectedFingerprint: runtimeConfig.expectedFingerprint,
+      actualCounts: acceptanceDiagnostics.counts,
+      actualFingerprint: acceptanceDiagnostics.fingerprint,
+    });
+    setAcceptanceError(result.ok ? "" : result.message);
+    setAcceptanceVerified(result.ok);
+    setAcceptanceVerifying(false);
+  }
+
   return (
     <div style={pageStyle}>
       {showLogoIntro ? (
@@ -15017,7 +15078,15 @@ function rowifyCandidate(item = {}) {
         @keyframes wf-slide-in { from { transform: translateX(18px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         input:focus, select:focus, textarea:focus { border-color: #7c3aed !important; box-shadow: 0 0 0 3px rgba(124,58,237,0.12) !important; }
       `}</style>
-      {!isAuthenticated ? (
+      {acceptanceMode && !acceptanceVerified ? (
+        <AcceptanceWorkspaceGate
+          diagnostics={acceptanceDiagnostics}
+          expectedCounts={runtimeConfig.expectedCounts}
+          loadError={acceptanceError}
+          verifying={acceptanceVerifying}
+          onVerify={verifyAcceptanceWorkspaceLoad}
+        />
+      ) : !isAuthenticated ? (
         loginMode === "pricing" ? (
           <PricingPage
             plans={settings.pricingPlans || DEFAULT_PRICING_PLANS}

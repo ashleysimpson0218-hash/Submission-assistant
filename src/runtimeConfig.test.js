@@ -1,4 +1,4 @@
-import { OWNER_UAT_SUPABASE_PROJECT_REF, PRODUCTION_SUPABASE_PROJECT_REF, SYNTHETIC_TEST_SUPABASE_PROJECT_REF, readRuntimeConfig } from "./runtimeConfig";
+import { OWNER_UAT_SUPABASE_PROJECT_REF, PRODUCTION_SUPABASE_PROJECT_REF, SYNTHETIC_TEST_SUPABASE_PROJECT_REF, readRuntimeConfig, readWorkspaceRuntimeConfig } from "./runtimeConfig";
 
 const validTestEnv = {
   REACT_APP_ENVIRONMENT: "test",
@@ -58,4 +58,43 @@ test("Owner UAT rejects an unapproved third project", () => {
 
 test("Owner UAT rejects missing environment configuration", () => {
   expect(readRuntimeConfig({ REACT_APP_ENVIRONMENT: "uat" }).ok).toBe(false);
+});
+
+const acceptanceEnv = {
+  ...validTestEnv,
+  REACT_APP_WELCOMEFLOW_ACCEPTANCE_MODE: "true",
+  REACT_APP_WELCOMEFLOW_WORKSPACE_ID: "phase1-acceptance-synthetic",
+  REACT_APP_WELCOMEFLOW_AUTOSAVE: "false",
+  REACT_APP_WELCOMEFLOW_EXPECTED_CANDIDATES: "100",
+  REACT_APP_WELCOMEFLOW_EXPECTED_FACILITIES: "32",
+  REACT_APP_WELCOMEFLOW_EXPECTED_REQUISITIONS: "114",
+  REACT_APP_WELCOMEFLOW_EXPECTED_HISTORY: "200",
+  REACT_APP_WELCOMEFLOW_EXPECTED_REPORT_HISTORY: "53",
+  REACT_APP_WELCOMEFLOW_EXPECTED_WORKSPACE_FINGERPRINT: "abc123",
+};
+
+test("acceptance mode requires and preserves an explicit non-default workspace with autosave disabled", () => {
+  expect(readRuntimeConfig(acceptanceEnv)).toMatchObject({
+    ok: true,
+    acceptanceMode: true,
+    workspaceId: "phase1-acceptance-synthetic",
+    autosaveEnabled: false,
+    expectedCounts: { candidates: 100, facilities: 32, requisitions: 114, history: 200, reportHistory: 53 },
+  });
+});
+
+test.each([
+  [{ ...acceptanceEnv, REACT_APP_WELCOMEFLOW_WORKSPACE_ID: "" }, /explicit/],
+  [{ ...acceptanceEnv, REACT_APP_WELCOMEFLOW_WORKSPACE_ID: "default" }, /refuses/],
+  [{ ...acceptanceEnv, REACT_APP_WELCOMEFLOW_EXPECTED_HISTORY: "" }, /requires expected/],
+])("acceptance workspace configuration fails closed", (env, message) => {
+  const result = readWorkspaceRuntimeConfig(env);
+  expect(result.ok).toBe(false);
+  expect(result.error).toMatch(message);
+});
+
+test("acceptance mode is rejected outside test", () => {
+  const result = readRuntimeConfig({ ...acceptanceEnv, REACT_APP_ENVIRONMENT: "production" });
+  expect(result.ok).toBe(false);
+  expect(result.error).toMatch(/only in the synthetic test/);
 });
