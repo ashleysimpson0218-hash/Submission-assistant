@@ -78,7 +78,9 @@ import {
 import {
   REGIONAL_CONTACT_ROLES,
   applyCanonicalFacilityUpdate,
+  buildCanonicalReportingModel,
   createDefaultReportPresets,
+  normalizeFacilityKey,
   normalizeReportingSettings,
 } from "./weeklyCleanupReporting";
 import {
@@ -6857,12 +6859,24 @@ function RecruiterApp() {
     };
   }, [safeTrackerRows]);
 
+  const canonicalReportingModel = useMemo(() => buildCanonicalReportingModel({
+    tracker: safeTrackerRows,
+    requisitions: safeObjectRecords(settings.requisitions),
+    sites: settings.sites || [],
+    contacts: settings.contacts || [],
+    reporting: settings.reporting || {},
+  }), [safeTrackerRows, settings.requisitions, settings.sites, settings.contacts, settings.reporting]);
+  const canonicalCandidateRecordById = useMemo(
+    () => new Map(canonicalReportingModel.candidates.map((record) => [record.candidateId, record])),
+    [canonicalReportingModel.candidates],
+  );
+
   const reportRows = useMemo(() => {
-    return safeTrackerRows.filter((item) => {
+    return canonicalReportingModel.candidates.map((record) => record.reportingItem).filter((item) => {
       const date = reportDateForItem(item);
       return dateInRange(date, reportStartDate, reportEndDate);
     });
-  }, [safeTrackerRows, reportStartDate, reportEndDate]);
+  }, [canonicalReportingModel.candidates, reportStartDate, reportEndDate]);
 
   const includedReportRows = useMemo(() => {
     return reportRows.filter((item) => !excludedReportIds.includes(item.id));
@@ -6962,8 +6976,12 @@ function RecruiterApp() {
     return {
       candidateId: item.id,
       candidateName: item.candidate || "",
-      facility: item.site || item.formSnapshot?.siteName || "",
-      reqNumber: item.reqNumber || item.formSnapshot?.reqNumber || "",
+      facility: item.canonicalFacilityName || item.site || item.formSnapshot?.siteName || "",
+      facilityId: item.facilityId || item.canonicalFacilityId || "",
+      originalFacilityLabel: item.originalFacilityLabel || item.formSnapshot?.siteName || "",
+      regionId: item.regionId || "",
+      reqNumber: item.requisitionNumber || item.reqNumber || item.formSnapshot?.reqNumber || "",
+      requisitionId: item.requisitionId || "",
       position: item.position || item.formSnapshot?.position || "",
       recruiter: item.recruiterOwner || item.formSnapshot?.recruiterOwner || settings.general.recruiterName || "Recruiter",
       mainStage: movementStageForItem(item),
@@ -7075,32 +7093,29 @@ function RecruiterApp() {
   }, [includedReportRows]);
 
   const reportRequisitionMetrics = useMemo(() => {
-    const activeReqs = safeObjectRecords(settings.requisitions).filter((req) => isLiveRequisition(req));
-    return activeReqs.map((req) => {
-      const rows = includedReportRows.filter((item) => {
-        const itemReqId = item.requisitionId || item.formSnapshot?.selectedRequisitionId;
-        const itemReq = item.reqNumber || item.formSnapshot?.reqNumber;
-        const itemPosition = item.position || item.formSnapshot?.position;
-        const itemSite = item.site || item.formSnapshot?.siteName;
-        return (itemReqId && itemReqId === req.id)
-          || (String(itemReq || "").toLowerCase() === String(req.reqNumber || "").toLowerCase()
-            && String(itemPosition || "").toLowerCase() === String(req.positionTitle || "").toLowerCase()
-            && String(itemSite || "").toLowerCase() === String(req.siteName || "").toLowerCase());
-      });
+    const activeReqs = canonicalReportingModel.requisitions.filter((record) => isLiveRequisition(record.source));
+    return activeReqs.map((record) => {
+      const req = record.source;
+      const rows = includedReportRows.filter((item) => record.requisitionId && item.requisitionId === record.requisitionId);
       return {
-        id: req.id,
-        label: `${req.siteName || "No Facility"} | ${req.positionTitle || "No Title"}`,
-        facility: req.siteName || "No Facility",
+        id: record.requisitionId || record.id,
+        facilityId: record.facilityId,
+        requisitionId: record.requisitionId,
+        requisitionNumber: record.requisitionNumber,
+        originalFacilityLabel: record.originalFacilityLabel,
+        regionId: record.regionId,
+        label: `${record.facilityName || "Unmapped Facility"} | ${req.positionTitle || "No Title"}`,
+        facility: record.facilityName || "Unmapped Facility",
         title: req.positionTitle || "No Title",
         openings: openingsForReq(req),
-        reqNumber: req.reqNumber || "No Req",
+        reqNumber: record.requisitionNumber || "No Req",
         fte: req.fte || "",
         shift: req.shiftPreference || "",
         count: rows.length,
         rows,
       };
     }).sort((a, b) => a.facility.localeCompare(b.facility) || a.title.localeCompare(b.title));
-  }, [settings.requisitions, includedReportRows]);
+  }, [canonicalReportingModel.requisitions, includedReportRows]);
 
   const reportRequisitionGroups = useMemo(() => {
     const groups = {};
@@ -10539,17 +10554,22 @@ function RecruiterApp() {
   function atsCleanupRows() {
     const weeklyIds = new Set(safeTrackerRows.filter((item) => isThisWeek(item.submissionDate)).map((item) => item.id));
     const relatedHistory = history.filter((item) => weeklyIds.has(item.trackerId) || isThisWeek(String(item.timestamp || "").slice(0, 10)));
-    return tracker
+    return safeTrackerRows
       .filter((item) => isThisWeek(item.submissionDate) || relatedHistory.some((event) => event.trackerId === item.id))
       .map((item) => {
+        const canonical = canonicalCandidateRecordById.get(item.id);
         const itemHistory = history.filter((event) => event.trackerId === item.id);
         const lastTouch = itemHistory[0]?.timestamp || item.audit?.[item.audit.length - 1]?.timestamp || item.submissionDate;
         return {
           id: item.id,
           candidate: item.candidate,
-          reqNumber: item.reqNumber || item.formSnapshot?.reqNumber || "",
-          position: item.position,
-          facility: item.site,
+          requisitionId: canonical?.requisitionId || item.requisitionId || "",
+          reqNumber: canonical?.requisitionNumber || item.reqNumber || item.formSnapshot?.reqNumber || "",
+          position: canonical?.position || item.position,
+          facilityId: canonical?.facilityId || "",
+          facility: canonical?.facilityName || "Unmapped Facility",
+          originalFacilityLabel: canonical?.originalFacilityLabel || item.site || item.formSnapshot?.siteName || "",
+          regionId: canonical?.regionId || "",
           status: item.status,
           nextAction: item.nextAction,
           submitted: item.submissionDate,
@@ -10563,7 +10583,7 @@ function RecruiterApp() {
 
   function exportAtsCleanupCsv() {
     const rows = atsCleanupRows().map((row) => {
-      const matchingTracker = tracker.find((item) => item.candidate === row.candidate && item.position === row.position && item.site === row.facility);
+      const matchingTracker = safeTrackerRows.find((item) => item.id === row.id);
       const relatedHistory = matchingTracker ? history.filter((event) => event.trackerId === matchingTracker.id) : [];
       const relatedAudit = matchingTracker?.audit || [];
       const fullHistoryLog = [
@@ -10585,7 +10605,7 @@ function RecruiterApp() {
 
   function exportAtsUpdatePacketExcel() {
     const rows = atsCleanupRows().map((row) => {
-      const matchingTracker = tracker.find((item) => item.candidate === row.candidate && item.position === row.position && item.site === row.facility);
+      const matchingTracker = safeTrackerRows.find((item) => item.id === row.id);
       const relatedHistory = matchingTracker ? history.filter((event) => event.trackerId === matchingTracker.id) : [];
       return {
         Candidate: row.candidate,
@@ -13670,23 +13690,25 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
   const reportTypeOptions = ["Facility Weekly Report", "No Openings Update", "Candidate Movement Report", "Interview Status Report", "Regional Manager Summary", "C-Suite Leadership Report"];
   const recipientGroupOptions = ["Facility Contacts", "Regional Manager", "Facility + Regional", "C-Suite", "Custom Recipient"];
 
-  const reportFacilityNames = useMemo(() => {
-    const names = new Set();
-    (settings.sites || []).forEach((site) => { if (site.siteName) names.add(site.siteName); });
-    safeObjectRecords(settings.requisitions).forEach((req) => { if (req.siteName) names.add(req.siteName); });
-    safeTrackerRows.forEach((item) => {
-      const facility = item.site || item.formSnapshot?.siteName;
-      if (facility) names.add(facility);
-    });
-    return Array.from(names).sort((a, b) => a.localeCompare(b));
-  }, [settings.sites, settings.requisitions, safeTrackerRows]);
+  const reportFacilityRecords = useMemo(
+    () => canonicalReportingModel.facilities.slice().sort((a, b) => a.facilityName.localeCompare(b.facilityName)),
+    [canonicalReportingModel.facilities],
+  );
+  const reportFacilityNames = useMemo(
+    () => reportFacilityRecords.map((facility) => facility.facilityName),
+    [reportFacilityRecords],
+  );
 
   const facilityReportQueue = useMemo(() => {
     const completedStatuses = new Set(["Sent", "Copied", "Exported", "Scheduled", "Manually Completed"]);
-    return reportFacilityNames.map((facility) => {
-      const facilityReqs = safeObjectRecords(settings.requisitions).filter((req) => String(req.siteName || "") === facility && isLiveRequisition(req));
-      const facilityRows = includedReportRows.filter((item) => String(item.site || item.formSnapshot?.siteName || "") === facility);
-      const site = (settings.sites || []).find((item) => String(item.siteName || "") === facility);
+    return reportFacilityRecords.map((facilityRecord) => {
+      const facilityId = facilityRecord.facilityId;
+      const facility = facilityRecord.facilityName;
+      const facilityReqs = canonicalReportingModel.requisitions
+        .filter((record) => record.facilityId === facilityId && isLiveRequisition(record.source))
+        .map((record) => record.reportingItem);
+      const facilityRows = includedReportRows.filter((item) => item.facilityId === facilityId);
+      const site = canonicalReportingModel.facilityIndex.byId.get(facilityId);
       const contactEmails = [
         site?.hiringManagerEmail,
         site?.adminContactEmail,
@@ -13694,7 +13716,7 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
       ].filter(Boolean);
       const missingContact = contactEmails.length === 0;
       const highRisk = facilityRows.some((item) => riskFor(item) === "High" || Boolean(stuckReasonFor(item)));
-      const stored = completedFacilityReports[facility] || null;
+      const stored = completedFacilityReports[facilityId] || completedFacilityReports[facility] || null;
       let status = stored?.status || "";
       if (!status) {
         if (missingContact && preventMissingContactSend) status = "Missing Contact";
@@ -13705,8 +13727,12 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
       const reportType = facilityReqs.length ? "Facility Weekly Report" : "No Openings Update";
       const lastAction = stored?.timestamp ? `${status} ${new Date(stored.timestamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : status === "Scheduled" ? `${reportAutomationDay} ${reportAutomationTime}` : highRisk ? "High risk" : missingContact ? "Missing contact" : "Pending";
       return {
-        id: facility,
+        id: facilityId,
+        facilityId,
         facility,
+        originalFacilityLabel: facilityRecord.siteName,
+        regionId: facilityRecord.regionId || "",
+        regionName: facilityRecord.regionName || "",
         report: facilityReqs.length ? "Weekly" : "No Openings",
         reportType,
         recipientGroup: stored?.recipientGroup || "Facility Contacts",
@@ -13720,7 +13746,7 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
         complete: completedStatuses.has(status),
       };
     });
-  }, [reportFacilityNames, settings.requisitions, settings.sites, includedReportRows, completedFacilityReports, preventMissingContactSend, flagHighRiskForReview, reportAutomationEnabled, reportAutomationDay, reportAutomationTime]);
+  }, [reportFacilityRecords, canonicalReportingModel.requisitions, canonicalReportingModel.facilityIndex, includedReportRows, completedFacilityReports, preventMissingContactSend, flagHighRiskForReview, reportAutomationEnabled, reportAutomationDay, reportAutomationTime]);
 
   const facilityReportQueueFiltered = useMemo(() => {
     return facilityReportQueue.filter((row) => {
@@ -13739,7 +13765,7 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
 
   const selectedFacilityReportRows = useMemo(() => {
     const selected = new Set(selectedFacilityReports);
-    const rows = selected.size ? facilityReportQueueFiltered.filter((row) => selected.has(row.id)) : facilityReportQueueFiltered;
+    const rows = selected.size ? facilityReportQueueFiltered.filter((row) => selected.has(row.id) || selected.has(row.facility)) : facilityReportQueueFiltered;
     return rows.length ? rows : facilityReportQueueFiltered;
   }, [selectedFacilityReports, facilityReportQueueFiltered]);
 
@@ -13769,24 +13795,36 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
   }, [reportHistory, reportHistoryFilters]);
 
   const reportValidationIssues = useMemo(() => {
-    const issues = [];
+    const issues = canonicalReportingModel.dataQuality.map((issue) => ({
+      type: issue.issue,
+      detail: [issue.originalFacilityLabel, issue.identifier].filter(Boolean).join(" | "),
+      recordType: issue.recordType,
+      facilityId: "",
+      requisitionId: issue.recordType === "Requisition" ? issue.identifier : "",
+      source: "Canonical reporting data quality",
+      blocking: ["Ambiguous Facility", "Unmapped Facility", "Missing Facility ID", "Missing Requisition ID", "Ambiguous Requisition"].includes(issue.issue),
+    }));
     facilityReportQueue.forEach((row) => {
-      if (row.missingContact) issues.push({ type: "Missing facility contact", detail: row.facility });
+      if (row.missingContact) issues.push({ type: "Missing facility contact", detail: row.facility, facilityId: row.facilityId, source: "Facility", blocking: true });
     });
-    safeObjectRecords(settings.requisitions).forEach((req) => {
+    canonicalReportingModel.requisitions.forEach((record) => {
+      const req = record.source;
       if (!isLiveRequisition(req)) return;
-      if (!req.reqNumber && isLiveRequisition(req)) issues.push({ type: "Missing requisition number", detail: `${req.siteName || "No facility"} | ${req.positionTitle || "No position"}` });
-      if (!req.siteName) issues.push({ type: "Missing facility name", detail: req.positionTitle || req.reqNumber || "Requisition" });
-      if (!req.fte) issues.push({ type: "Missing FTE", detail: `${req.reqNumber || "No req"} | ${req.positionTitle || "No position"}` });
-      if (!req.shiftPreference && !req.shift) issues.push({ type: "Missing shift", detail: `${req.reqNumber || "No req"} | ${req.positionTitle || "No position"}` });
+      const detail = `${record.facilityName || "Unmapped Facility"} | ${record.requisitionNumber || "No req"} | ${req.positionTitle || "No position"}`;
+      if (!req.reqNumber) issues.push({ type: "Missing requisition number", detail, facilityId: record.facilityId, requisitionId: record.requisitionId, source: "Requisition", blocking: true });
+      if (!record.facilityId) issues.push({ type: "Missing facility", detail, facilityId: "", requisitionId: record.requisitionId, source: "Requisition", blocking: true });
+      if (!req.fte) issues.push({ type: "Missing FTE", detail, facilityId: record.facilityId, requisitionId: record.requisitionId, source: "Requisition", blocking: true });
+      if (!req.shiftPreference && !req.shift) issues.push({ type: "Missing shift", detail, facilityId: record.facilityId, requisitionId: record.requisitionId, source: "Requisition", blocking: true });
     });
-    safeTrackerRows.forEach((item) => {
-      if (!item.status) issues.push({ type: "Missing candidate status", detail: item.candidate || "Unnamed candidate" });
-      if ((item.status === "Hired" || item.archiveOutcome === "Hired") && !tentativeStartDateFor(item)) issues.push({ type: "Missing tentative start date", detail: item.candidate || "Unnamed candidate" });
-      if ((item.archived || item.status === "Archived") && !archivedOutcomeApplies(item)) issues.push({ type: "Archived candidate missing outcome", detail: item.candidate || "Unnamed candidate" });
+    canonicalReportingModel.candidates.forEach((record) => {
+      const item = record.reportingItem;
+      const detail = `${record.facilityName} | ${record.requisitionNumber || "No req"} | ${item.candidate || "Unnamed candidate"}`;
+      if (!item.status) issues.push({ type: "Missing candidate status", detail, facilityId: record.facilityId, requisitionId: record.requisitionId, candidateId: record.candidateId, source: "Candidate", blocking: true });
+      if ((item.status === "Hired" || item.archiveOutcome === "Hired") && !tentativeStartDateFor(item)) issues.push({ type: "Missing tentative start date", detail, facilityId: record.facilityId, requisitionId: record.requisitionId, candidateId: record.candidateId, source: "Candidate", blocking: true });
+      if ((item.archived || item.status === "Archived") && !archivedOutcomeApplies(item)) issues.push({ type: "Archived candidate missing outcome", detail, facilityId: record.facilityId, requisitionId: record.requisitionId, candidateId: record.candidateId, source: "Candidate", blocking: true });
     });
     return issues;
-  }, [facilityReportQueue, settings.requisitions, safeTrackerRows]);
+  }, [canonicalReportingModel, facilityReportQueue]);
 
   const routingPreviewSummary = useMemo(() => ({
     facilityReports: facilityReportQueue.length,
@@ -13841,13 +13879,27 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
     return `${header}${sourceRows.map(facilityReportBody).join(`${NL}${NL}---${NL}${NL}`)}`;
   }
 
-  function siteForFacility(facility) {
-    const normalized = normalizeFacilityName(facility);
-    return (settings.sites || []).find((site) => normalizeFacilityName(site.siteName) === normalized) || null;
+  function reportFacilityRecord(facilityReference) {
+    const reference = String(facilityReference || "").trim();
+    if (!reference) return null;
+    const byId = canonicalReportingModel.facilityIndex.byId.get(reference);
+    if (byId) return reportFacilityRecords.find((facility) => facility.facilityId === byId.id) || null;
+    const key = normalizeFacilityKey(reference);
+    const matches = [
+      ...(canonicalReportingModel.facilityIndex.byName.get(key) || []),
+      ...(canonicalReportingModel.facilityIndex.byAlias.get(key) || []),
+    ];
+    const unique = Array.from(new Map(matches.map((facility) => [facility.id, facility])).values());
+    return unique.length === 1 ? reportFacilityRecords.find((facility) => facility.facilityId === unique[0].id) || null : null;
   }
 
-  function reportContactsForFacility(facility) {
-    const site = siteForFacility(facility);
+  function siteForFacility(facilityReference) {
+    const facility = reportFacilityRecord(facilityReference);
+    return facility ? canonicalReportingModel.facilityIndex.byId.get(facility.facilityId) || null : null;
+  }
+
+  function reportContactsForFacility(facilityReference) {
+    const site = siteForFacility(facilityReference);
     return [
       site?.hiringManagerEmail,
       site?.adminContactEmail,
@@ -13855,18 +13907,17 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
     ].filter(Boolean);
   }
 
-  function rowsForReportFacility(facility) {
-    const normalized = normalizeFacilityName(facility);
-    return includedReportRows.filter((item) => normalizeFacilityName(item.site || item.formSnapshot?.siteName || "") === normalized);
+  function rowsForReportFacility(facilityReference) {
+    const facility = reportFacilityRecord(facilityReference);
+    return facility ? includedReportRows.filter((item) => item.facilityId === facility.facilityId) : [];
   }
 
-  function reqsForReportFacility(facility, includeClosed = false) {
-    const normalized = normalizeFacilityName(facility);
-    return safeObjectRecords(settings.requisitions).filter((req) => {
-      if (normalizeFacilityName(req.siteName || "") !== normalized) return false;
-      if (includeClosed) return true;
-      return isLiveRequisition(req);
-    });
+  function reqsForReportFacility(facilityReference, includeClosed = false) {
+    const facility = reportFacilityRecord(facilityReference);
+    if (!facility) return [];
+    return canonicalReportingModel.requisitions
+      .filter((record) => record.facilityId === facility.facilityId && (includeClosed || isLiveRequisition(record.source)))
+      .map((record) => record.reportingItem);
   }
 
   function reportRowsByGroup(rows = []) {
@@ -13880,17 +13931,23 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
     };
   }
 
-  function facilityReportModel(facility) {
-    const normalized = normalizeFacilityName(facility);
-    const rows = rowsForReportFacility(normalized);
+  function facilityReportModel(facilityReference) {
+    const facilityRecord = reportFacilityRecord(facilityReference);
+    const facilityId = facilityRecord?.facilityId || "";
+    const facility = facilityRecord?.facilityName || "Unmapped Facility";
+    const rows = rowsForReportFacility(facilityId);
     const groups = reportRowsByGroup(rows);
-    const reqs = reqsForReportFacility(normalized, reportInclusions.closedRequisitions);
+    const reqs = reqsForReportFacility(facilityId, reportInclusions.closedRequisitions);
     const openReqs = reqs.filter((req) => isLiveRequisition(req));
     const leadershipReqs = openReqs.filter((req) => isLeadershipRequisition(req, settings.roles));
-    const contacts = reportContactsForFacility(normalized);
+    const contacts = reportContactsForFacility(facilityId);
     return {
-      facility: normalized,
-      site: siteForFacility(normalized),
+      facilityId,
+      facility,
+      originalFacilityLabel: facilityRecord?.siteName || facility,
+      regionId: facilityRecord?.regionId || "",
+      regionName: facilityRecord?.regionName || "",
+      site: siteForFacility(facilityId),
       contacts,
       missingContact: contacts.length === 0,
       openReqs,
@@ -13909,7 +13966,10 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
       "Shift": req.shiftPreference || req.shift || "N/A",
       "Openings": openingsForReq(req),
       "Employment Type": req.employmentType || "",
-      "Facility": normalizeFacilityName(req.siteName || ""),
+      "Facility ID": req.facilityId || req.canonicalFacilityId || "",
+      "Facility": req.canonicalFacilityName || req.siteName || "Unmapped Facility",
+      "Original Facility Label": req.originalFacilityLabel || req.siteName || "",
+      "Requisition ID": req.requisitionId || req.id || "",
       "Status": req.status || "Active",
     };
   }
@@ -13920,8 +13980,11 @@ function rowifyCandidate(item = {}) {
   return {
       "Candidate": item.candidate || "Unnamed Candidate",
       "Position": item.position || item.formSnapshot?.position || "",
-      "Facility": normalizeFacilityName(item.site || item.formSnapshot?.siteName || ""),
-      "Req Number": item.reqNumber || item.formSnapshot?.reqNumber || "",
+      "Facility ID": item.facilityId || item.canonicalFacilityId || "",
+      "Facility": item.canonicalFacilityName || item.site || "Unmapped Facility",
+      "Original Facility Label": item.originalFacilityLabel || item.formSnapshot?.siteName || "",
+      "Requisition ID": item.requisitionId || "",
+      "Req Number": item.requisitionNumber || item.reqNumber || item.formSnapshot?.reqNumber || "",
       "Submitted": displayDate(item.submissionDate),
       "Current Status": item.status || "",
       "Next Action": item.nextAction || "",
@@ -14095,7 +14158,7 @@ function rowifyCandidate(item = {}) {
   }
 
   function regionalEmailContent(rows = facilityReportQueueFiltered) {
-    const models = rows.map((row) => facilityReportModel(row.facility));
+    const models = rows.map((row) => facilityReportModel(row.facilityId || row.id || row.facility));
     const openReqCount = models.reduce((total, model) => total + model.openReqs.length, 0);
     const noOpeningFacilities = models.filter((model) => !model.openReqs.length).map((model) => model.facility);
     const highRiskFacilities = models.filter((model) => model.riskCandidates.length).map((model) => `${model.facility} (${model.riskCandidates.length})`);
@@ -14120,7 +14183,7 @@ function rowifyCandidate(item = {}) {
   }
 
   function cSuiteEmailContent(rows = facilityReportQueueFiltered) {
-    const models = rows.map((row) => facilityReportModel(row.facility));
+    const models = rows.map((row) => facilityReportModel(row.facilityId || row.id || row.facility));
     const leadershipReqs = models.flatMap((model) => model.leadershipReqs);
     const riskFacilities = models.filter((model) => model.riskCandidates.length).map((model) => `${model.facility} (${model.riskCandidates.length})`);
     const activeCandidates = models.flatMap((model) => model.activeCandidates);
@@ -14136,7 +14199,7 @@ function rowifyCandidate(item = {}) {
       leadership_opening_count: leadershipReqs.length,
       aging_feedback_count: agingFeedbackCount,
       high_risk_facilities: riskFacilities.length ? riskFacilities.join(", ") : "None",
-      leadership_openings: leadershipReqs.length ? leadershipReqs.map((req) => `${normalizeFacilityName(req.siteName)} | ${req.positionTitle || "Leadership role"} | Req ${req.reqNumber || "N/A"} | ${openingsForReq(req)} opening${openingsForReq(req) === 1 ? "" : "s"}`).join(NL) : "No active leadership roles open.",
+      leadership_openings: leadershipReqs.length ? leadershipReqs.map((req) => `${req.canonicalFacilityName || req.siteName || "Unmapped Facility"} | ${req.positionTitle || "Leadership role"} | Req ${req.requisitionNumber || req.reqNumber || "N/A"} | ${openingsForReq(req)} opening${openingsForReq(req) === 1 ? "" : "s"}`).join(NL) : "No active leadership roles open.",
       no_opening_summary: `${noOpeningCount} facilit${noOpeningCount === 1 ? "y" : "ies"} with no current openings.`,
       attachment_note: "Attached is the detailed leadership workbook. Candidate-level detail is limited to leadership roles, urgent risk, pending offers, and tentative starts.",
     });
@@ -14151,7 +14214,7 @@ function rowifyCandidate(item = {}) {
     if (selectedReportType === "Regional Manager Summary") return regionalEmailContent(sourceRows);
     if (selectedReportType === "C-Suite Leadership Report") return cSuiteEmailContent(sourceRows);
     if (sourceRows.length === 1) return facilityEmailContent(facilityReportModel(sourceRows[0].facility), selectedReportType);
-    const contents = sourceRows.map((row) => facilityEmailContent(facilityReportModel(row.facility), selectedReportType));
+    const contents = sourceRows.map((row) => facilityEmailContent(facilityReportModel(row.facilityId || row.id || row.facility), selectedReportType));
     const subjectTemplate = contents[0] || facilityEmailContent(facilityReportModel(""), selectedReportType);
     return {
       ...subjectTemplate,
@@ -14174,7 +14237,7 @@ function rowifyCandidate(item = {}) {
       if (item.atsNote || item.atsUpdate || item.formSnapshot?.atsUpdate) return item.atsNote || item.atsUpdate || item.formSnapshot?.atsUpdate;
       return `${candidate} is tied to ${position} at ${facility}. Current status: ${status}. Next action: ${nextAction}.`;
     };
-    const candidateColumns = ["Candidate", "Position", "Facility", "Req Number", "Submitted", "Current Status", "Next Action", "Awaiting Feedback", "Pending Offer", "Interview Date", "Interview Time", "Booking Status", "Calendar Source", "Tentative Start", "Risk", "Attention", "Timing Risk", "Delay Type", "Next Recommended Timing Action", "Outreach Response Time", "Outreach Response Bucket", "Submittal To Interview", "Submittal To Interview Bucket", "Interview To Decision", "Interview To Decision Bucket", "HR Response Time", "HR Response Bucket"];
+    const candidateColumns = ["Candidate", "Position", "Facility ID", "Facility", "Original Facility Label", "Requisition ID", "Req Number", "Submitted", "Current Status", "Next Action", "Awaiting Feedback", "Pending Offer", "Interview Date", "Interview Time", "Booking Status", "Calendar Source", "Tentative Start", "Risk", "Attention", "Timing Risk", "Delay Type", "Next Recommended Timing Action", "Outreach Response Time", "Outreach Response Bucket", "Submittal To Interview", "Submittal To Interview Bucket", "Interview To Decision", "Interview To Decision Bucket", "HR Response Time", "HR Response Bucket"];
     const sheets = [
       { name: "Facility Summary", columns: ["Metric", "Value"], rows: [
         { Metric: "Facility", Value: model.facility },
@@ -14185,12 +14248,12 @@ function rowifyCandidate(item = {}) {
         { Metric: "Pending Offers", Value: model.pendingOffers.length },
         { Metric: "Hires / Tentative Starts", Value: model.hiresTentativeStarts.length },
       ] },
-      { name: "Open Requisitions", columns: ["Position", "Req Number", "Unique ID", "FTE", "Shift", "Openings", "Employment Type", "Facility", "Status"], rows: model.openReqs.map(rowifyReq) },
+      { name: "Open Requisitions", columns: ["Position", "Requisition ID", "Req Number", "Unique ID", "FTE", "Shift", "Openings", "Employment Type", "Facility ID", "Facility", "Original Facility Label", "Status"], rows: model.openReqs.map(rowifyReq) },
       { name: "Active Candidates", columns: candidateColumns, rows: model.activeCandidates.map(rowifyCandidate) },
       { name: "Awaiting Feedback", columns: candidateColumns, rows: model.awaitingFeedback.map(rowifyCandidate) },
       { name: "Pending Offers", columns: candidateColumns, rows: model.pendingOffers.map(rowifyCandidate) },
       { name: "Hires and Starts", columns: candidateColumns, rows: model.hiresTentativeStarts.map(rowifyCandidate) },
-      { name: "Leadership Openings", columns: ["Position", "Req Number", "Unique ID", "FTE", "Shift", "Openings", "Employment Type", "Facility", "Status"], rows: model.leadershipReqs.map(rowifyReq) },
+      { name: "Leadership Openings", columns: ["Position", "Requisition ID", "Req Number", "Unique ID", "FTE", "Shift", "Openings", "Employment Type", "Facility ID", "Facility", "Original Facility Label", "Status"], rows: model.leadershipReqs.map(rowifyReq) },
       { name: "Risk and Attention", columns: candidateColumns, rows: model.riskCandidates.map(rowifyCandidate) },
       { name: "Candidate Timing", columns: ["Candidate", "Facility", "Req Number", "Position", "Main Stage", "Current Action Status", "Last Action Date", "Days Since Last Action", "Delay Type", "Next Recommended Action", "Candidate Timing Risk", "Initial Outreach Sent", "Candidate First Response", "Outreach Response Time", "Outreach Response Bucket", "Submitted To Facility", "Interview Scheduled", "Actual Interview", "Submittal To Interview", "Submittal To Interview Bucket", "Interview To Decision", "Interview To Decision Bucket", "HR Request Sent", "HR Response Received", "HR Response Time", "HR Response Bucket", "Final Outcome", "Made It Through Process"], rows: model.rows.map((item) => {
         const timing = candidateTimingFor(item);
@@ -14199,14 +14262,14 @@ function rowifyCandidate(item = {}) {
       { name: "ATS Cleanup Notes", columns: ["Candidate", "Req Number", "Position", "Facility", "Status", "ATS Note"], rows: model.rows.map((item) => ({ Candidate: item.candidate || "", "Req Number": item.reqNumber || item.formSnapshot?.reqNumber || "", Position: item.position || "", Facility: model.facility, Status: item.status || "", "ATS Note": atsNoteForReportRow(item) })) },
     ];
     if (reportInclusions.screenings) sheets.push({ name: "Screening Details", columns: ["Candidate", "Notes", "Interview Availability", "Work Notes"], rows: model.rows.map((item) => ({ Candidate: item.candidate || "", Notes: item.formSnapshot?.candidateNotes || item.notes || "", "Interview Availability": item.formSnapshot?.interviewAvailability || "", "Work Notes": item.formSnapshot?.workNotes || "" })) });
-    if (reportInclusions.qualifiedApplicants) sheets.push({ name: "Qualified Applicants", columns: ["Lead", "Position", "Facility", "Status", "ATS Note"], rows: hotLeads.filter((lead) => normalizeFacilityName(lead.selectedFacility || "") === model.facility).map((lead) => ({ Lead: lead.candidateName, Position: lead.appliedPosition || lead.selectedRole, Facility: model.facility, Status: lead.outreachStatus, "ATS Note": lead.atsNoteDraft || hotLeadAtsNoteFor(lead, settings) })) });
+    if (reportInclusions.qualifiedApplicants) sheets.push({ name: "Qualified Applicants", columns: ["Lead", "Position", "Facility ID", "Facility", "Original Facility Label", "Status", "ATS Note"], rows: hotLeads.filter((lead) => reportFacilityRecord(lead.selectedFacility || lead.facilityId)?.facilityId === model.facilityId).map((lead) => ({ Lead: lead.candidateName, Position: lead.appliedPosition || lead.selectedRole, "Facility ID": model.facilityId, Facility: model.facility, "Original Facility Label": lead.selectedFacility || "", Status: lead.outreachStatus, "ATS Note": lead.atsNoteDraft || hotLeadAtsNoteFor(lead, settings) })) });
     if (reportInclusions.archivedCandidates) sheets.push({ name: "Archived Records", columns: ["Candidate", "Outcome", "Position", "Facility", "Req Number", "Archived", "Reason"], rows: model.archivedRecords.map((item) => ({ Candidate: item.candidate || "", Outcome: archivedOutcomeLabelFor(item), Position: item.position || "", Facility: model.facility, "Req Number": item.reqNumber || item.formSnapshot?.reqNumber || "", Archived: displayDate(reportDateForItem(item)), Reason: item.archiveReason || item.archiveNotes || "" })) });
     return sheets;
   }
 
   function buildAllFacilityWorkbookSheets() {
-    const models = reportFacilityNames.map(facilityReportModel);
-    const candidateColumns = ["Candidate", "Position", "Facility", "Req Number", "Submitted", "Current Status", "Next Action", "Awaiting Feedback", "Pending Offer", "Interview Date", "Interview Time", "Booking Status", "Calendar Source", "Tentative Start", "Risk", "Attention", "Timing Risk", "Delay Type", "Next Recommended Timing Action", "Outreach Response Time", "Outreach Response Bucket", "Submittal To Interview", "Submittal To Interview Bucket", "Interview To Decision", "Interview To Decision Bucket", "HR Response Time", "HR Response Bucket"];
+    const models = reportFacilityRecords.map((facility) => facilityReportModel(facility.facilityId));
+    const candidateColumns = ["Candidate", "Position", "Facility ID", "Facility", "Original Facility Label", "Requisition ID", "Req Number", "Submitted", "Current Status", "Next Action", "Awaiting Feedback", "Pending Offer", "Interview Date", "Interview Time", "Booking Status", "Calendar Source", "Tentative Start", "Risk", "Attention", "Timing Risk", "Delay Type", "Next Recommended Timing Action", "Outreach Response Time", "Outreach Response Bucket", "Submittal To Interview", "Submittal To Interview Bucket", "Interview To Decision", "Interview To Decision Bucket", "HR Response Time", "HR Response Bucket"];
     const openReqs = models.flatMap((model) => model.openReqs);
     const activeRows = models.flatMap((model) => model.activeCandidates);
     const awaitingRows = models.flatMap((model) => model.awaitingFeedback);
@@ -14225,21 +14288,21 @@ function rowifyCandidate(item = {}) {
         { Metric: "Leadership Openings", Value: leadershipReqs.length },
       ] },
       { name: "Facility Breakdown", columns: ["Facility", "Open Reqs", "Active Candidates", "Awaiting Feedback", "Pending Offers", "Hires / Starts", "Leadership Openings", "Risk Items"], rows: models.map((model) => ({ Facility: model.facility, "Open Reqs": model.openReqs.length, "Active Candidates": model.activeCandidates.length, "Awaiting Feedback": model.awaitingFeedback.length, "Pending Offers": model.pendingOffers.length, "Hires / Starts": model.hiresTentativeStarts.length, "Leadership Openings": model.leadershipReqs.length, "Risk Items": model.riskCandidates.length })) },
-      { name: "Open Requisitions", columns: ["Position", "Req Number", "Unique ID", "FTE", "Shift", "Openings", "Employment Type", "Facility", "Status"], rows: openReqs.map(rowifyReq) },
+      { name: "Open Requisitions", columns: ["Position", "Requisition ID", "Req Number", "Unique ID", "FTE", "Shift", "Openings", "Employment Type", "Facility ID", "Facility", "Original Facility Label", "Status"], rows: openReqs.map(rowifyReq) },
       { name: "Active Candidates", columns: candidateColumns, rows: activeRows.map(rowifyCandidate) },
       { name: "Awaiting Feedback", columns: candidateColumns, rows: awaitingRows.map(rowifyCandidate) },
       { name: "Pending Offers", columns: candidateColumns, rows: offerRows.map(rowifyCandidate) },
       { name: "Hires and Starts", columns: candidateColumns, rows: startRows.map(rowifyCandidate) },
-      { name: "Leadership Openings", columns: ["Position", "Req Number", "Unique ID", "FTE", "Shift", "Openings", "Employment Type", "Facility", "Status"], rows: leadershipReqs.map(rowifyReq) },
+      { name: "Leadership Openings", columns: ["Position", "Requisition ID", "Req Number", "Unique ID", "FTE", "Shift", "Openings", "Employment Type", "Facility ID", "Facility", "Original Facility Label", "Status"], rows: leadershipReqs.map(rowifyReq) },
       { name: "Risk and Attention", columns: candidateColumns, rows: riskRows.map(rowifyCandidate) },
       { name: "Candidate Timing", columns: ["Candidate", "Facility", "Req Number", "Position", "Main Stage", "Current Action Status", "Last Action Date", "Days Since Last Action", "Delay Type", "Next Recommended Action", "Candidate Timing Risk", "Initial Outreach Sent", "Candidate First Response", "Outreach Response Time", "Outreach Response Bucket", "Submitted To Facility", "Interview Scheduled", "Actual Interview", "Submittal To Interview", "Submittal To Interview Bucket", "Interview To Decision", "Interview To Decision Bucket", "HR Request Sent", "HR Response Received", "HR Response Time", "HR Response Bucket", "Final Outcome", "Made It Through Process"], rows: includedReportRows.map((item) => {
         const timing = candidateTimingFor(item);
         return { Candidate: timing.candidateName, Facility: timing.facility, "Req Number": timing.reqNumber, Position: timing.position, "Main Stage": timing.mainStage, "Current Action Status": timing.currentActionStatus, "Last Action Date": timing.lastActionDate, "Days Since Last Action": timing.daysSinceLastAction, "Delay Type": timing.delayType, "Next Recommended Action": timing.nextRecommendedAction, "Candidate Timing Risk": timing.candidateTimingRisk, "Initial Outreach Sent": timing.initialOutreachSentAt, "Candidate First Response": timing.candidateFirstResponseAt, "Outreach Response Time": timing.outreachResponseTime, "Outreach Response Bucket": timing.outreachResponseBucket, "Submitted To Facility": timing.candidateSubmittedToFacilityAt, "Interview Scheduled": timing.interviewScheduledAt, "Actual Interview": timing.actualInterviewAt, "Submittal To Interview": timing.submittalToInterviewScheduledTime, "Submittal To Interview Bucket": timing.submittalToInterviewScheduledBucket, "Interview To Decision": timing.interviewToDecisionTime, "Interview To Decision Bucket": timing.interviewToDecisionBucket, "HR Request Sent": timing.hrVerificationRequestSentAt, "HR Response Received": timing.hrVerificationResponseReceivedAt, "HR Response Time": timing.hrResponseTime, "HR Response Bucket": timing.hrResponseBucket, "Final Outcome": timing.finalCandidateOutcome, "Made It Through Process": timing.candidateMadeItThroughProcess };
       }) },
-      { name: "ATS Cleanup", columns: ["Candidate", "Req Number", "Position", "Facility", "Status", "Next Action"], rows: includedReportRows.map((item) => ({ Candidate: item.candidate || "", "Req Number": item.reqNumber || item.formSnapshot?.reqNumber || "", Position: item.position || "", Facility: normalizeFacilityName(item.site || item.formSnapshot?.siteName || ""), Status: item.status || "", "Next Action": item.nextAction || "" })) },
+      { name: "ATS Cleanup", columns: ["Candidate", "Requisition ID", "Req Number", "Position", "Facility ID", "Facility", "Original Facility Label", "Status", "Next Action"], rows: includedReportRows.map((item) => ({ Candidate: item.candidate || "", "Requisition ID": item.requisitionId || "", "Req Number": item.requisitionNumber || item.reqNumber || item.formSnapshot?.reqNumber || "", Position: item.position || "", "Facility ID": item.facilityId || "", Facility: item.canonicalFacilityName || item.site || "Unmapped Facility", "Original Facility Label": item.originalFacilityLabel || "", Status: item.status || "", "Next Action": item.nextAction || "" })) },
       { name: "No Opening Facilities", columns: ["Facility", "Status"], rows: models.filter((model) => !model.openReqs.length).map((model) => ({ Facility: model.facility, Status: "No current openings this week" })) },
     ];
-    if (reportInclusions.closedRequisitions) sheets.push({ name: "Archived Requisitions", columns: ["Position", "Req Number", "Unique ID", "FTE", "Shift", "Openings", "Employment Type", "Facility", "Status"], rows: safeObjectRecords(settings.requisitions).filter((req) => !isLiveRequisition(req)).map(rowifyReq) });
+    if (reportInclusions.closedRequisitions) sheets.push({ name: "Archived Requisitions", columns: ["Position", "Requisition ID", "Req Number", "Unique ID", "FTE", "Shift", "Openings", "Employment Type", "Facility ID", "Facility", "Original Facility Label", "Status"], rows: canonicalReportingModel.requisitions.filter((record) => !isLiveRequisition(record.source)).map((record) => rowifyReq(record.reportingItem)) });
     models.forEach((model) => sheets.push({ name: model.facility, columns: ["Section", "Name", "Position", "Req Number", "Status", "Notes"], rows: [
       ...model.openReqs.map((req) => ({ Section: "Open Requisition", Name: req.positionTitle || "", Position: req.positionTitle || "", "Req Number": req.reqNumber || "", Status: req.status || "Active", Notes: `${fteLabel(req.fte) || "N/A"} | ${req.shiftPreference || "N/A"} | ${openingsForReq(req)} openings` })),
       ...model.activeCandidates.map((item) => ({ Section: "Candidate", Name: item.candidate || "", Position: item.position || "", "Req Number": item.reqNumber || item.formSnapshot?.reqNumber || "", Status: item.status || "", Notes: item.nextAction || "" })),
@@ -14280,7 +14343,7 @@ function rowifyCandidate(item = {}) {
   function exportSelectedFacilityReports() {
     const rows = selectedFacilityReportRows;
     if (rows.length === 1) {
-      const model = facilityReportModel(rows[0].facility);
+      const model = facilityReportModel(rows[0].facilityId || rows[0].id || rows[0].facility);
       downloadExcelWorkbook(`welcomeflow-${safeExcelSheetName(model.facility).replace(/\s+/g, "-").toLowerCase()}-${reportStartDate}.xls`, facilityWorkbookSheets(model));
     } else {
       downloadExcelWorkbook(`welcomeflow-facility-reports-${reportStartDate}.xls`, buildAllFacilityWorkbookSheets());
@@ -14292,7 +14355,7 @@ function rowifyCandidate(item = {}) {
   function exportFacilityWorkbooks() {
     const rows = selectedFacilityReportRows.length ? selectedFacilityReportRows : facilityReportQueueFiltered;
     const sheets = rows.flatMap((row) => {
-      const model = facilityReportModel(row.facility);
+      const model = facilityReportModel(row.facilityId || row.id || row.facility);
       return facilityWorkbookSheets(model).map((sheet) => ({
         ...sheet,
         name: `${model.facility} - ${sheet.name}`,
@@ -14307,13 +14370,17 @@ function rowifyCandidate(item = {}) {
     const now = new Date().toISOString();
     const sourceRows = rows.length ? rows : selectedFacilityReportRows;
     const nextRecords = sourceRows.map((row) => {
-      const model = facilityReportModel(row.facility);
+      const model = facilityReportModel(row.facilityId || row.id || row.facility);
       const missingContact = model.missingContact;
       return {
         id: makeId("report"),
         reportWeek: `${reportStartDate} to ${reportEndDate}`,
         generatedDate: now,
+        facilityId: model.facilityId,
         facility: model.facility,
+        originalFacilityLabel: model.originalFacilityLabel,
+        regionId: model.regionId,
+        regionName: model.regionName,
         reportType: selectedReportType,
         audience: selectedRecipientGroup,
         recipientGroup: selectedRecipientGroup,
@@ -19029,7 +19096,7 @@ function rowifyCandidate(item = {}) {
               <Card title="Generated Reports" subtitle="Report-ready audience drafts based on the current Weekly Cleanup selections." compact>
                 <div style={{ display: "grid", gap: 10 }}>
                   {selectedFacilityReportRows.map((row) => {
-                    const model = facilityReportModel(row.facility);
+                    const model = facilityReportModel(row.facilityId || row.id || row.facility);
                     const content = facilityEmailContent(model, row.reportType || selectedReportType);
                     const subject = content.subject;
                     return <div key={row.id} style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "1.3fr 1fr 1fr auto", gap: 10, alignItems: "center", border: `1px solid ${model.missingContact ? THEME.red : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panel }}><div><strong>{model.facility}</strong><div style={{ color: THEME.muted, fontSize: 12 }}>{subject}</div></div><Badge tone={model.missingContact ? "High" : row.status === "Needs Review" ? "Medium" : "Low"}>{model.missingContact ? "Blocked, Missing Contact" : row.status}</Badge><span style={{ color: THEME.muted }}>{facilityWorkbookSheets(model).length} attachment tabs</span><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button subtle onClick={() => { setWeeklySubject(subject); setWeeklyReport(content.body); }}>Preview</Button><Button subtle onClick={() => downloadExcelWorkbook(`welcomeflow-${safeExcelSheetName(model.facility).replace(/\s+/g, "-").toLowerCase()}-${reportStartDate}.xls`, facilityWorkbookSheets(model))}>Download</Button></div></div>;

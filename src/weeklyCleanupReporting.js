@@ -145,7 +145,12 @@ export function applyCanonicalFacilityUpdate(previous = {}, draft = {}) {
 }
 
 export function buildFacilityIndex(sites = []) {
-  const facilities = records(sites).map(normalizeFacilityRecord).filter((site) => site.id && site.siteName);
+  const normalizedFacilities = records(sites).map(normalizeFacilityRecord).filter((site) => site.id && site.siteName);
+  const uniqueFacilities = new Map();
+  normalizedFacilities.forEach((site) => {
+    if (!uniqueFacilities.has(site.id)) uniqueFacilities.set(site.id, site);
+  });
+  const facilities = Array.from(uniqueFacilities.values());
   const byId = new Map(facilities.map((site) => [site.id, site]));
   const byName = new Map();
   const byAlias = new Map();
@@ -205,6 +210,253 @@ export function resolveCanonicalFacility({ candidate = {}, requisition = null, s
     if (aliasMatches.length > 1) return { facility: null, status: "ambiguous", matchedBy: "alias", originalLabel: label, matches: aliasMatches };
   }
   return { facility: null, status: "unmapped", matchedBy: "none", originalLabel: text(candidate.site || form.siteName || requisition?.siteName) };
+}
+
+function candidateRequisitionId(candidate = {}) {
+  const form = candidate.formSnapshot || {};
+  return text(candidate.requisitionId || candidate.reqId || candidate.selectedRequisitionId || form.selectedRequisitionId || form.requisitionId);
+}
+
+function candidateRequisitionNumber(candidate = {}) {
+  const form = candidate.formSnapshot || {};
+  return text(candidate.reqNumber || form.reqNumber);
+}
+
+function issueRecord({ recordType = "", originalFacilityLabel = "", identifier = "", issue = "", recommendedSetupLocation = "" } = {}) {
+  return { recordType, originalFacilityLabel, identifier, issue, recommendedSetupLocation };
+}
+
+function uniqueIssues(issues = []) {
+  const seen = new Set();
+  return issues.filter((item) => {
+    const key = [item.recordType, item.identifier, item.issue, item.originalFacilityLabel].map(text).join("|");
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export function dataQualityWorksheetRow(issue = {}) {
+  return {
+    "Record Type": text(issue.recordType),
+    "Original Facility Label": text(issue.originalFacilityLabel),
+    "Candidate or Requisition Identifier": text(issue.identifier),
+    Issue: text(issue.issue),
+    "Recommended Setup Location": text(issue.recommendedSetupLocation),
+  };
+}
+
+export function buildCanonicalReportingModel({ tracker = [], requisitions = [], sites = [], contacts = [], reporting = {} } = {}) {
+  const normalizedReporting = normalizeReportingSettings(reporting);
+  const facilityIndex = buildFacilityIndex(sites);
+  const regionById = new Map(normalizedReporting.regions.map((region) => [region.id, region]));
+  const regionalContacts = activeRegionalContacts(contacts);
+  const dataQuality = [];
+
+  [
+    ...Array.from(facilityIndex.byName.entries()),
+    ...Array.from(facilityIndex.byAlias.entries()),
+  ].forEach(([label, matches]) => {
+    const facilityIds = Array.from(new Set(matches.map((facility) => facility.id).filter(Boolean)));
+    if (facilityIds.length < 2) return;
+    dataQuality.push(issueRecord({
+      recordType: "Facility",
+      originalFacilityLabel: label,
+      identifier: facilityIds.join(", "),
+      issue: "Ambiguous Facility",
+      recommendedSetupLocation: "Facility & Position Setup → Facilities",
+    }));
+  });
+
+  const requisitionRecords = records(requisitions).map((requisition, index) => {
+    const resolution = resolveCanonicalFacility({ requisition, sites, facilityIndex });
+    const facility = resolution.facility;
+    const requisitionId = text(requisition.id);
+    const requisitionNumber = text(requisition.reqNumber);
+    const identifier = requisitionId || requisitionNumber || `requisition-row-${index + 1}`;
+    if (resolution.status !== "resolved") {
+      dataQuality.push(issueRecord({
+        recordType: "Requisition",
+        originalFacilityLabel: resolution.originalLabel,
+        identifier,
+        issue: resolution.status === "ambiguous" ? "Ambiguous Facility" : "Unmapped Facility",
+        recommendedSetupLocation: "Facility & Position Setup → Facilities",
+      }));
+    }
+    if (!requisitionId) {
+      dataQuality.push(issueRecord({
+        recordType: "Requisition",
+        originalFacilityLabel: resolution.originalLabel,
+        identifier,
+        issue: "Missing Requisition ID",
+        recommendedSetupLocation: "Facility & Position Setup → Positions / Requisitions",
+      }));
+    }
+    if (!text(requisition.uniqueIdNumber)) {
+      dataQuality.push(issueRecord({
+        recordType: "Requisition",
+        originalFacilityLabel: resolution.originalLabel,
+        identifier,
+        issue: "Missing Unique ID",
+        recommendedSetupLocation: "Facility & Position Setup → Positions / Requisitions",
+      }));
+    }
+    return {
+      id: identifier,
+      requisitionId,
+      requisitionNumber,
+      uniqueIdNumber: text(requisition.uniqueIdNumber),
+      facilityId: facility?.id || "",
+      facilityName: facility?.siteName || "Unmapped Facility",
+      originalFacilityLabel: resolution.originalLabel,
+      regionId: facility?.regionId || "",
+      regionName: regionById.get(facility?.regionId)?.name || text(facility?.region),
+      position: text(requisition.positionTitle),
+      resolutionStatus: resolution.status,
+      resolutionMatchedBy: resolution.matchedBy,
+      source: requisition,
+      reportingItem: {
+        ...requisition,
+        facilityId: facility?.id || "",
+        canonicalFacilityId: facility?.id || "",
+        canonicalFacilityName: facility?.siteName || "Unmapped Facility",
+        originalFacilityLabel: resolution.originalLabel,
+        regionId: facility?.regionId || "",
+        regionName: regionById.get(facility?.regionId)?.name || text(facility?.region),
+        requisitionId,
+        requisitionNumber,
+        siteName: facility?.siteName || "Unmapped Facility",
+      },
+    };
+  });
+
+  const requisitionRecordBySource = new Map(requisitionRecords.map((record) => [record.source, record]));
+  const candidateRecords = records(tracker).map((candidate, index) => {
+    const requisitionResolution = resolveRequisition(candidate, requisitions);
+    const requisition = requisitionResolution.requisition;
+    const canonicalRequisition = requisition ? requisitionRecordBySource.get(requisition) : null;
+    const facilityResolution = resolveCanonicalFacility({ candidate, requisition, sites, facilityIndex });
+    const facility = facilityResolution.facility;
+    const form = candidate.formSnapshot || {};
+    const candidateId = text(candidate.id) || `candidate-row-${index + 1}`;
+    const requisitionId = text(requisition?.id) || candidateRequisitionId(candidate);
+    const requisitionNumber = text(requisition?.reqNumber) || candidateRequisitionNumber(candidate);
+    const facilityName = facility?.siteName || "Unmapped Facility";
+    const regionName = regionById.get(facility?.regionId)?.name || text(facility?.region);
+    const regionalContactNames = facility
+      ? regionalContacts
+        .filter((contact) => uniqueText(contact.assignedFacilityIds).includes(facility.id))
+        .map((contact) => text(contact.name || contact.title))
+        .filter(Boolean)
+      : [];
+
+    if (facilityResolution.status !== "resolved") {
+      dataQuality.push(issueRecord({
+        recordType: "Candidate",
+        originalFacilityLabel: facilityResolution.originalLabel,
+        identifier: candidateId,
+        issue: facilityResolution.status === "ambiguous" ? "Ambiguous Facility" : "Unmapped Facility",
+        recommendedSetupLocation: "Facility & Position Setup → Facilities",
+      }));
+    }
+    if (!facility?.id) {
+      dataQuality.push(issueRecord({
+        recordType: "Candidate",
+        originalFacilityLabel: facilityResolution.originalLabel,
+        identifier: candidateId,
+        issue: "Missing Facility ID",
+        recommendedSetupLocation: "Facility & Position Setup → Facilities",
+      }));
+    }
+    if (!requisition || requisitionResolution.status !== "resolved") {
+      dataQuality.push(issueRecord({
+        recordType: "Candidate",
+        originalFacilityLabel: facilityResolution.originalLabel,
+        identifier: candidateId,
+        issue: requisitionResolution.status === "ambiguous" ? "Ambiguous Requisition" : "Missing Requisition ID",
+        recommendedSetupLocation: "Facility & Position Setup → Positions / Requisitions",
+      }));
+    }
+
+    const reportingItem = {
+      ...candidate,
+      facilityId: facility?.id || "",
+      canonicalFacilityId: facility?.id || "",
+      canonicalFacilityName: facilityName,
+      originalFacilityLabel: facilityResolution.originalLabel,
+      regionId: facility?.regionId || "",
+      regionName,
+      requisitionId,
+      requisitionNumber,
+      reqNumber: requisitionNumber,
+      uniqueIdNumber: text(requisition?.uniqueIdNumber || candidate.uniqueIdNumber || form.uniqueIdNumber),
+      site: facilityName,
+      position: text(requisition?.positionTitle || candidate.position || form.position || form.positionTitle),
+      reportingResolution: {
+        facility: facilityResolution.status,
+        facilityMatchedBy: facilityResolution.matchedBy,
+        requisition: requisitionResolution.status,
+        requisitionMatchedBy: requisitionResolution.matchedBy,
+      },
+    };
+
+    return {
+      id: candidateId,
+      candidateId,
+      facilityId: facility?.id || "",
+      facilityName,
+      originalFacilityLabel: facilityResolution.originalLabel,
+      regionId: facility?.regionId || "",
+      regionName,
+      regionalContactNames,
+      requisitionId,
+      requisitionNumber,
+      uniqueIdNumber: reportingItem.uniqueIdNumber,
+      position: reportingItem.position,
+      facilityResolutionStatus: facilityResolution.status,
+      facilityResolutionMatchedBy: facilityResolution.matchedBy,
+      requisitionResolutionStatus: requisitionResolution.status,
+      requisitionResolutionMatchedBy: requisitionResolution.matchedBy,
+      requisitionRecord: canonicalRequisition,
+      source: candidate,
+      reportingItem,
+    };
+  });
+
+  regionalContacts.forEach((contact) => {
+    const assigned = uniqueText(contact.assignedFacilityIds);
+    if (!assigned.length) {
+      dataQuality.push(issueRecord({
+        recordType: "Regional Contact",
+        identifier: text(contact.id || contact.name),
+        issue: "Regional contact with no assigned facilities",
+        recommendedSetupLocation: "Settings → People & Contacts",
+      }));
+    }
+    assigned.filter((id) => facilityIndex.byId.get(id)?.status === "Inactive").forEach((id) => {
+      dataQuality.push(issueRecord({
+        recordType: "Regional Contact",
+        originalFacilityLabel: facilityIndex.byId.get(id)?.siteName || "",
+        identifier: text(contact.id || contact.name),
+        issue: "Inactive assigned facility",
+        recommendedSetupLocation: "Settings → People & Contacts",
+      }));
+    });
+  });
+
+  return {
+    facilities: facilityIndex.facilities.map((facility) => ({
+      ...facility,
+      facilityId: facility.id,
+      facilityName: facility.siteName,
+      regionName: regionById.get(facility.regionId)?.name || text(facility.region),
+    })),
+    requisitions: requisitionRecords,
+    candidates: candidateRecords,
+    dataQuality: uniqueIssues(dataQuality),
+    facilityIndex,
+    reporting: normalizedReporting,
+  };
 }
 
 export function activeRegionalContacts(contacts = []) {
@@ -279,46 +531,39 @@ export function buildWeeklyCleanupReport({ tracker = [], requisitions = [], site
   const errors = [];
   if (!hydrated || loadError) errors.push("WelcomeFlow could not load the current reporting data. Export was paused to prevent an incomplete report.");
   if (!selectedColumns.length) errors.push("Select at least one report column.");
-  const normalizedReporting = normalizeReportingSettings(reporting);
+  const canonicalModel = buildCanonicalReportingModel({ tracker, requisitions, sites, contacts, reporting });
+  const normalizedReporting = canonicalModel.reporting;
   const resolvedScope = resolveReportScope({ sites, regions: normalizedReporting.regions, contacts, ...scope, scope: scopeName });
   errors.push(...resolvedScope.errors);
-  const facilityIndex = buildFacilityIndex(sites);
+  const facilityIndex = canonicalModel.facilityIndex;
   const allowed = new Set(resolvedScope.facilityIds);
-  const regionById = new Map(normalizedReporting.regions.map((region) => [region.id, region]));
-  const regionalContacts = activeRegionalContacts(contacts);
   const rows = [];
-  const dataQuality = [];
+  const dataQuality = canonicalModel.dataQuality.map(dataQualityWorksheetRow);
   const seenCandidateIds = new Set();
 
-  records(tracker).forEach((candidate, index) => {
-    const reqResolution = resolveRequisition(candidate, requisitions);
-    const req = reqResolution.requisition;
-    const facilityResolution = resolveCanonicalFacility({ candidate, requisition: req, sites, facilityIndex });
-    const facility = facilityResolution.facility;
-    const unresolved = facilityResolution.status !== "resolved";
+  canonicalModel.candidates.forEach((canonicalRecord) => {
+    const candidate = canonicalRecord.source;
+    const req = canonicalRecord.requisitionRecord?.source || null;
+    const facility = canonicalRecord.facilityId ? facilityIndex.byId.get(canonicalRecord.facilityId) : null;
+    const unresolved = canonicalRecord.facilityResolutionStatus !== "resolved";
     if (facility && !allowed.has(facility.id)) return;
-    if (unresolved && scopeName !== "all-active") {
-      dataQuality.push({ "Record Type": "Candidate", "Original Facility Label": facilityResolution.originalLabel, "Candidate or Requisition Identifier": text(candidate.id || candidate.reqNumber || `row-${index + 1}`), Issue: facilityResolution.status === "ambiguous" ? "Ambiguous Facility" : "Unmapped Facility", "Recommended Setup Location": "Facility & Position Setup → Facilities" });
-      return;
-    }
-    const candidateId = text(candidate.id) || `candidate-${index + 1}`;
+    if (unresolved && scopeName !== "all-active") return;
+    const candidateId = canonicalRecord.candidateId;
     seenCandidateIds.add(candidateId);
     const form = candidate.formSnapshot || {};
-    const region = facility ? regionById.get(facility.regionId) : null;
-    const contactNames = facility ? regionalContacts.filter((contact) => uniqueText(contact.assignedFacilityIds).includes(facility.id)).map((contact) => text(contact.name || contact.title)).filter(Boolean) : [];
     const submitted = firstDate(candidate.submissionDate, candidate.submittedAt, form.submissionDate);
     const values = {
       candidateName: text(candidate.candidate || candidate.name || form.fullName) || "Unnamed Candidate",
       candidateType: text(candidate.candidateType || form.candidateType),
-      facility: facility?.siteName || (unresolved ? "Unmapped Facility" : ""),
-      facilityId: facility?.id || "",
+      facility: canonicalRecord.facilityName,
+      facilityId: canonicalRecord.facilityId,
       facilityCode: facility?.facilityCode || "",
-      originalFacilityLabel: facilityResolution.originalLabel,
-      region: region?.name || text(facility?.region),
-      regionalContact: contactNames.join("; "),
-      position: text(req?.positionTitle || candidate.position || form.position || form.positionTitle),
-      reqNumber: text(req?.reqNumber || candidate.reqNumber || form.reqNumber),
-      uniqueIdNumber: text(req?.uniqueIdNumber || candidate.uniqueIdNumber || form.uniqueIdNumber),
+      originalFacilityLabel: canonicalRecord.originalFacilityLabel,
+      region: canonicalRecord.regionName,
+      regionalContact: canonicalRecord.regionalContactNames.join("; "),
+      position: canonicalRecord.position,
+      reqNumber: canonicalRecord.requisitionNumber,
+      uniqueIdNumber: canonicalRecord.uniqueIdNumber,
       employmentType: text(req?.employmentType || candidate.employmentType || form.employmentType),
       shift: text(req?.shiftPreference || req?.shift || candidate.shift || form.shiftPreference),
       fte: text(req?.fte || candidate.fte || form.fte),
@@ -340,23 +585,23 @@ export function buildWeeklyCleanupReport({ tracker = [], requisitions = [], site
       confirmedStartDate: firstDate(candidate.confirmedStartDate, candidate.startDate, form.confirmedStartDate),
       recruiterOwner: text(candidate.recruiterOwner || candidate.relationshipOwner || form.recruiterName),
     };
-    rows.push({ id: candidateId, facilityId: facility?.id || "", regionId: facility?.regionId || "", values, resolution: facilityResolution.status });
-    if (facilityResolution.status !== "resolved") dataQuality.push({ "Record Type": "Candidate", "Original Facility Label": facilityResolution.originalLabel, "Candidate or Requisition Identifier": candidateId, Issue: facilityResolution.status === "ambiguous" ? "Ambiguous Facility" : "Unmapped Facility", "Recommended Setup Location": "Facility & Position Setup → Facilities" });
-    if (!facility?.id) dataQuality.push({ "Record Type": "Candidate", "Original Facility Label": facilityResolution.originalLabel, "Candidate or Requisition Identifier": candidateId, Issue: "Missing Facility ID", "Recommended Setup Location": "Facility & Position Setup → Facilities" });
-    if (!req) dataQuality.push({ "Record Type": "Candidate", "Original Facility Label": facilityResolution.originalLabel, "Candidate or Requisition Identifier": candidateId, Issue: reqResolution.status === "ambiguous" ? "Ambiguous Requisition" : "Missing Requisition ID", "Recommended Setup Location": "Facility & Position Setup → Positions / Requisitions" });
-    if (req && !text(req.uniqueIdNumber)) dataQuality.push({ "Record Type": "Requisition", "Original Facility Label": text(req.siteName), "Candidate or Requisition Identifier": text(req.id || req.reqNumber), Issue: "Missing Unique ID", "Recommended Setup Location": "Facility & Position Setup → Positions / Requisitions" });
+    rows.push({
+      id: candidateId,
+      candidateId,
+      facilityId: canonicalRecord.facilityId,
+      facilityName: canonicalRecord.facilityName,
+      originalFacilityLabel: canonicalRecord.originalFacilityLabel,
+      regionId: canonicalRecord.regionId,
+      regionName: canonicalRecord.regionName,
+      requisitionId: canonicalRecord.requisitionId,
+      requisitionNumber: canonicalRecord.requisitionNumber,
+      values,
+      resolution: canonicalRecord.facilityResolutionStatus,
+      source: candidate,
+    });
   });
 
-  regionalContacts.forEach((contact) => {
-    const assigned = uniqueText(contact.assignedFacilityIds);
-    if (!assigned.length) dataQuality.push({ "Record Type": "Regional Contact", "Original Facility Label": "", "Candidate or Requisition Identifier": text(contact.id || contact.name), Issue: "Regional contact with no assigned facilities", "Recommended Setup Location": "Settings → People & Contacts" });
-    assigned.filter((id) => facilityIndex.byId.get(id)?.status === "Inactive").forEach((id) => dataQuality.push({ "Record Type": "Regional Contact", "Original Facility Label": facilityIndex.byId.get(id)?.siteName || "", "Candidate or Requisition Identifier": text(contact.id || contact.name), Issue: "Inactive assigned facility", "Recommended Setup Location": "Settings → People & Contacts" }));
-  });
-
-  const scopedReqs = records(requisitions).filter((req) => {
-    const resolved = resolveCanonicalFacility({ requisition: req, candidate: {}, sites, facilityIndex });
-    return resolved.facility && allowed.has(resolved.facility.id);
-  });
+  const scopedReqs = canonicalModel.requisitions.filter((record) => record.facilityId && allowed.has(record.facilityId)).map((record) => record.source);
   const totals = {
     candidateRows: rows.length,
     uniqueCandidates: seenCandidateIds.size,
@@ -383,7 +628,7 @@ export function buildWeeklyCleanupReport({ tracker = [], requisitions = [], site
     "Current Facility Data Version": normalizedReporting.facilityDataUpdatedAt || "Current hydrated workspace",
   };
   const expectedTabs = workbookTabsFor({ workbookLayout, rows, sites: facilityIndex.facilities, regions: normalizedReporting.regions, dataQuality });
-  return { canExport: errors.length === 0, errors, rows, detailRows, dataQuality, totals, metadata, selectedColumns: columnDefinitions, resolvedScope, includeTotals, workbookLayout, expectedTabs };
+  return { canExport: errors.length === 0, errors, rows, detailRows, dataQuality, totals, metadata, selectedColumns: columnDefinitions, resolvedScope, includeTotals, workbookLayout, expectedTabs, canonicalModel };
 }
 
 function workbookTabsFor({ workbookLayout, rows, sites, regions }) {

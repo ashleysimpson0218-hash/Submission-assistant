@@ -5,6 +5,7 @@ import {
   REPORT_COLUMNS,
   activeRegionalContacts,
   applyCanonicalFacilityUpdate,
+  buildCanonicalReportingModel,
   buildFacilityIndex,
   buildWeeklyCleanupReport,
   buildWeeklyCleanupWorkbook,
@@ -48,6 +49,102 @@ function report(overrides = {}) {
 }
 
 describe("configurable Weekly Cleanup reporting", () => {
+  test("canonical reporting records expose stable facility and requisition identity without mutating source data", () => {
+    const trackerBefore = JSON.parse(JSON.stringify(tracker));
+    const requisitionsBefore = JSON.parse(JSON.stringify(requisitions));
+    const sitesBefore = JSON.parse(JSON.stringify(sites));
+    const model = buildCanonicalReportingModel({ tracker, requisitions, sites, contacts, reporting });
+    const record = model.candidates.find((candidate) => candidate.candidateId === "candidate-1");
+
+    expect(record).toMatchObject({
+      facilityId: "facility-burruss",
+      facilityName: "Burruss Training Center",
+      originalFacilityLabel: "Burruss CTC",
+      regionId: "region-south",
+      regionName: "South",
+      requisitionId: "req-1",
+      requisitionNumber: "1001",
+      uniqueIdNumber: "U-1001",
+      position: "Registered Nurse",
+      facilityResolutionStatus: "resolved",
+      requisitionResolutionStatus: "resolved",
+    });
+    expect(record.reportingItem).toMatchObject({
+      facilityId: "facility-burruss",
+      canonicalFacilityName: "Burruss Training Center",
+      originalFacilityLabel: "Burruss CTC",
+      requisitionId: "req-1",
+      requisitionNumber: "1001",
+      site: "Burruss Training Center",
+      position: "Registered Nurse",
+    });
+    expect(tracker).toEqual(trackerBefore);
+    expect(requisitions).toEqual(requisitionsBefore);
+    expect(sites).toEqual(sitesBefore);
+  });
+
+  test("canonical reporting records collapse aliases to one facility identity", () => {
+    const model = buildCanonicalReportingModel({
+      tracker: [
+        { ...tracker[0], id: "candidate-alias", site: "Burruss CTC" },
+        { ...tracker[0], id: "candidate-canonical", site: "Burruss Training Center" },
+      ],
+      requisitions,
+      sites,
+      contacts,
+      reporting,
+    });
+
+    expect(model.candidates.map((record) => record.facilityId)).toEqual(["facility-burruss", "facility-burruss"]);
+    expect(model.candidates.map((record) => record.facilityName)).toEqual(["Burruss Training Center", "Burruss Training Center"]);
+    expect(model.facilities.filter((facility) => facility.facilityId === "facility-burruss")).toHaveLength(1);
+  });
+
+  test("ambiguous aliases remain unresolved and blocking in the canonical model", () => {
+    const model = buildCanonicalReportingModel({
+      tracker: [{ id: "candidate-ambiguous", candidate: "Synthetic Ambiguous", site: "Shared Alias", status: "Submitted" }],
+      requisitions: [],
+      sites,
+      contacts,
+      reporting,
+    });
+    const record = model.candidates[0];
+
+    expect(record.facilityId).toBe("");
+    expect(record.facilityName).toBe("Unmapped Facility");
+    expect(record.originalFacilityLabel).toBe("Shared Alias");
+    expect(record.facilityResolutionStatus).toBe("ambiguous");
+    expect(model.dataQuality).toEqual(expect.arrayContaining([
+      expect.objectContaining({ recordType: "Candidate", identifier: "candidate-ambiguous", issue: "Ambiguous Facility" }),
+      expect.objectContaining({ recordType: "Candidate", identifier: "candidate-ambiguous", issue: "Missing Facility ID" }),
+    ]));
+  });
+
+  test("facility master-data alias collisions are surfaced instead of merged", () => {
+    const model = buildCanonicalReportingModel({ tracker: [], requisitions: [], sites, contacts, reporting });
+
+    expect(model.dataQuality).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        recordType: "Facility",
+        identifier: "facility-north, facility-east",
+        issue: "Ambiguous Facility",
+      }),
+    ]));
+    expect(model.facilities.filter((facility) => ["facility-north", "facility-east"].includes(facility.facilityId))).toHaveLength(2);
+  });
+
+  test("duplicate facility source rows with one stable ID produce one canonical facility", () => {
+    const model = buildCanonicalReportingModel({
+      tracker,
+      requisitions,
+      sites: [...sites, { ...sites[0], siteName: "Legacy Duplicate Label" }],
+      contacts,
+      reporting,
+    });
+
+    expect(model.facilities.filter((facility) => facility.facilityId === "facility-burruss")).toHaveLength(1);
+  });
+
   test("default scope behaves as All Active Facilities and preserves unmapped rows", () => {
     const result = buildWeeklyCleanupReport({ tracker: [...tracker, { id: "candidate-unmapped", candidate: "Unmapped", site: "Unknown Facility" }], requisitions, sites, contacts, reporting, selectedColumnIds: ["candidateName", "facility"], generatedAt: new Date("2026-07-21T12:00:00.000Z") });
     expect(result.metadata["Report Scope"]).toBe("All Active Facilities");
