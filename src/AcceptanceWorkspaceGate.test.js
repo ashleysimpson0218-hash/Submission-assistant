@@ -16,7 +16,9 @@ test("acceptance gate shows workspace identity, counts, fingerprint, source, and
   render(<AcceptanceWorkspaceGate diagnostics={diagnostics} expectedCounts={{ candidates: 100, facilities: 32, requisitions: 114, history: 200, reportHistory: 53 }} onVerify={() => {}} />);
   expect(screen.getByTestId("acceptance-workspace-id")).toHaveTextContent("phase1-acceptance-synthetic");
   expect(screen.getByText("Cloud")).toBeInTheDocument();
-  expect(screen.getByText("Disabled")).toBeInTheDocument();
+  expect(screen.getAllByText("Disabled")).toHaveLength(2);
+  expect(screen.getByText("Browser Persistence")).toBeInTheDocument();
+  expect(screen.getByText("Locked")).toBeInTheDocument();
   expect(screen.getByText("77e09a1cec69...")).toBeInTheDocument();
   [100, 32, 114, 200, 53, 122, 7, 3].forEach((value) => expect(screen.getByText(String(value))).toBeInTheDocument());
 });
@@ -28,4 +30,11 @@ test("acceptance gate does not enable verification before cloud loading succeeds
   rerender(<AcceptanceWorkspaceGate diagnostics={diagnostics} expectedCounts={{}} onVerify={onVerify} />);
   fireEvent.click(screen.getByRole("button", { name: "Verify Workspace" }));
   expect(onVerify).toHaveBeenCalledTimes(1);
+});
+
+test("loaded diagnostics remain an interaction lock until Verify Workspace is used", () => {
+  render(<AcceptanceWorkspaceGate diagnostics={diagnostics} expectedCounts={{ candidates: 100, facilities: 32, requisitions: 114, history: 200, reportHistory: 53 }} onVerify={() => {}} />);
+  expect(screen.getByRole("button", { name: "Verify Workspace" })).toBeEnabled();
+  expect(screen.queryByText("Recruiter Workspace")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Start Weekly Review/i })).not.toBeInTheDocument();
 });

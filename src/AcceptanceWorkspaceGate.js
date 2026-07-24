@@ -11,6 +11,7 @@ export function AcceptanceWorkspaceGate({ diagnostics, expectedCounts, loadError
   const counts = diagnostics?.counts || {};
   const fingerprint = diagnostics?.fingerprint || "";
   const ready = diagnostics?.status === "loaded" && !loadError;
+  const browserPersistenceEnabled = diagnostics?.browserPersistenceEnabled ?? diagnostics?.autosaveEnabled;
   const metrics = [
     ["Candidates", counts.candidates],
     ["Facilities", counts.facilities],
@@ -33,6 +34,8 @@ export function AcceptanceWorkspaceGate({ diagnostics, expectedCounts, loadError
           <div style={metricStyle}><small>Environment</small><strong style={{ display: "block" }}>{diagnostics?.environment || "test"}</strong></div>
           <div style={metricStyle}><small>Loaded From</small><strong style={{ display: "block" }}>{diagnostics?.source || "Waiting for cloud"}</strong></div>
           <div style={metricStyle}><small>Autosave</small><strong style={{ display: "block", color: "#b45309" }}>{diagnostics?.autosaveEnabled ? "Enabled" : "Disabled"}</strong></div>
+          <div style={metricStyle}><small>Browser Persistence</small><strong style={{ display: "block", color: "#b45309" }}>{browserPersistenceEnabled ? "Enabled" : "Disabled"}</strong></div>
+          <div style={metricStyle}><small>Interaction</small><strong style={{ display: "block", color: "#b45309" }}>Locked</strong></div>
           <div style={metricStyle}><small>Updated</small><strong style={{ display: "block" }}>{diagnostics?.updatedAt ? new Date(diagnostics.updatedAt).toLocaleString() : "Waiting..."}</strong></div>
           <div style={metricStyle}><small>Fingerprint</small><strong title={fingerprint} style={{ display: "block", fontFamily: "monospace" }}>{fingerprint ? `${fingerprint.slice(0, 12)}...` : "Calculating..."}</strong></div>
         </div>

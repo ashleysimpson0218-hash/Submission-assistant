@@ -24,6 +24,7 @@ import { readRuntimeConfig } from "./runtimeConfig";
 import { getRuntimeSupabaseClient } from "./supabaseRuntimeClient";
 import { workspaceCounts, workspaceFingerprint, verifyAcceptanceWorkspace } from "./acceptanceWorkspace";
 import { AcceptanceWorkspaceGate } from "./AcceptanceWorkspaceGate";
+import { readSavedIntakeDraftIdentity, savedDraftArray } from "./intakeDraftCompatibility";
 import { buildCommunicationPreview } from "./communicationGeneration";
 import {
   REVIEW_ACKNOWLEDGMENT,
@@ -7500,10 +7501,11 @@ function RecruiterApp() {
 
   const validationErrors = useMemo(() => {
     const errors = [];
-    const emailValue = String(form.emailAddress || "").trim();
+    const draftIdentity = readSavedIntakeDraftIdentity(form);
+    const emailValue = draftIdentity.emailAddress;
     const emailIsPlaceholder = /^(none|n\/a|na)$/i.test(emailValue);
     const hasUsableEmail = Boolean(emailValue && !emailIsPlaceholder);
-    if (!form.fullName.trim()) errors.push("Legal name is required.");
+    if (!draftIdentity.fullName) errors.push("Legal name is required.");
     if (!form.position) errors.push("Position is required.");
     if (!form.siteName) errors.push("Site / Facility is required.");
     if (!hasUsableEmail && !form.phoneNumber) errors.push("Add at least one candidate contact method.");
@@ -7528,24 +7530,26 @@ function RecruiterApp() {
   }, [form, selectedRole, showCredentials, showFte, showShift, intakeRules, internalLicenseQuestionApplies, requiresLicenseReverification]);
   const intakeOutputBlockers = useMemo(() => {
     const blockers = [];
-    const emailValue = String(form.emailAddress || "").trim();
+    const draftIdentity = readSavedIntakeDraftIdentity(form);
+    const emailValue = draftIdentity.emailAddress;
     const emailIsPlaceholder = /^(none|n\/a|na)$/i.test(emailValue);
     const hasUsableEmail = Boolean(emailValue && !emailIsPlaceholder);
-    if (!form.fullName.trim()) blockers.push("Legal name is required.");
+    if (!draftIdentity.fullName) blockers.push("Legal name is required.");
     if (!form.position) blockers.push("Position is required.");
     if (!form.siteName) blockers.push("Site / Facility is required.");
     if (!hasUsableEmail && !form.phoneNumber) blockers.push("Add at least one candidate contact method.");
     return blockers;
-  }, [form.fullName, form.position, form.siteName, form.emailAddress, form.phoneNumber]);
+  }, [form]);
   const intakeReviewWarnings = useMemo(() => {
     const blockerSet = new Set(intakeOutputBlockers);
     return validationErrors.filter((error) => !blockerSet.has(error));
   }, [validationErrors, intakeOutputBlockers]);
 
   const duplicateCandidates = useMemo(() => {
-    const email = form.emailAddress.trim().toLowerCase();
-    const phone = form.phoneNumber.replace(/\D/g, "");
-    const name = form.fullName.trim().toLowerCase();
+    const draftIdentity = readSavedIntakeDraftIdentity(form);
+    const email = draftIdentity.normalizedEmail;
+    const phone = draftIdentity.phoneDigits;
+    const name = draftIdentity.normalizedName;
     if (!email && !phone && !name) return [];
     return safeTrackerRows.filter((item) => {
       const itemEmail = String(item.candidateEmail || item.formSnapshot?.emailAddress || "").trim().toLowerCase();
@@ -7553,7 +7557,7 @@ function RecruiterApp() {
       const itemName = String(item.candidate || item.formSnapshot?.fullName || "").trim().toLowerCase();
       return (email && email === itemEmail) || (phone && phone === itemPhone) || (name && name === itemName);
     }).slice(0, 5);
-  }, [form.emailAddress, form.phoneNumber, form.fullName, safeTrackerRows]);
+  }, [form, safeTrackerRows]);
   const duplicateUniqueIdRequisitions = useMemo(() => {
     const uniqueId = String(form.uniqueIdNumber || "").trim().toLowerCase();
     if (!uniqueId || (Array.isArray(ignoredDuplicateUniqueIds) && ignoredDuplicateUniqueIds.includes(uniqueId))) return [];
@@ -16442,7 +16446,7 @@ function rowifyCandidate(item = {}) {
                   </div>
                   {form.extractionWarnings?.length ? (
                     <div style={{ border: `1px solid ${THEME.amber}`, borderRadius: 6, background: THEME.amberBg, padding: 9, color: THEME.text, fontSize: 12, lineHeight: 1.5, marginTop: 10 }}>
-                      {form.extractionWarnings.slice(0, 3).map((warning, index) => <div key={`${warning}-${index}`}>- {warning}</div>)}
+                      {savedDraftArray(form.extractionWarnings).slice(0, 3).map((warning, index) => <div key={`${warning}-${index}`}>- {warning}</div>)}
                     </div>
                   ) : null}
                   <div style={{ display: "grid", gridTemplateColumns: formCompact ? "1fr" : "repeat(4, minmax(0, 1fr))", gap: 8, marginTop: 10 }}>
