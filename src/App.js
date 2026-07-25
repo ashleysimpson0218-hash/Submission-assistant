@@ -87,6 +87,13 @@ import {
   normalizeReportingSettings,
 } from "./weeklyCleanupReporting";
 import {
+  LEGACY_REPORT_STATUS_DISPLAY,
+  createReportingIssue,
+  groupReportingIssues,
+  reportingActionEligibility,
+  reportStatusCountsAsComplete,
+} from "./weeklyReportingEligibility";
+import {
   DEFAULT_WEEKLY_REPORT_TEMPLATES,
   WEEKLY_REPORT_TEMPLATE_KEYS,
   WEEKLY_REPORT_TEMPLATE_TOKENS,
@@ -5908,6 +5915,7 @@ function RecruiterApp() {
   const [activeSettingsTab, setActiveSettingsTab] = useState("general");
   const [reportsTab, setReportsTab] = useState("metrics");
   const [reportsHubTab, setReportsHubTab] = useState("preview");
+  const [expandedReportIssueCode, setExpandedReportIssueCode] = useState("");
   const [automationTab, setAutomationTab] = useState("report");
   const [candidateManagementTab, setCandidateManagementTab] = useState("connect");
   const [candidateManagementSearch, setCandidateManagementSearch] = useState("");
@@ -13557,6 +13565,7 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
   }
 
   function generateWeeklyReport() {
+    if (blockReportAction("canGenerateReport", selectedFacilityReportRows, "Weekly report generation")) return;
     const weeklyRows = includedReportRows;
     const activeRows = weeklyRows.filter((item) => !isClosedStatus(item.status) && !item.archived);
     const hiredRows = weeklyRows.filter((item) => item.status === "Hired" || item.status === "Placed" || item.archiveOutcome === "Hired");
@@ -13751,7 +13760,6 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
   );
 
   const facilityReportQueue = useMemo(() => {
-    const completedStatuses = new Set(["Sent", "Copied", "Exported", "Scheduled", "Manually Completed"]);
     return reportFacilityRecords.map((facilityRecord) => {
       const facilityId = facilityRecord.facilityId;
       const facility = facilityRecord.facilityName;
@@ -13789,12 +13797,12 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
         recipientGroup: stored?.recipientGroup || "Facility Contacts",
         status,
         lastAction,
-        action: completedStatuses.has(status) ? "View" : status === "Missing Contact" ? "Fix" : status === "Needs Review" ? "Review" : "Preview",
+        action: reportStatusCountsAsComplete(status) ? "View" : status === "Missing Contact" ? "Fix" : status === "Needs Review" ? "Review" : "Preview",
         activeReqs: facilityReqs,
         candidates: facilityRows,
         missingContact,
         highRisk,
-        complete: completedStatuses.has(status),
+        complete: reportStatusCountsAsComplete(status),
       };
     });
   }, [reportFacilityRecords, canonicalReportingModel.requisitions, canonicalReportingModel.facilityIndex, includedReportRows, completedFacilityReports, preventMissingContactSend, flagHighRiskForReview, reportAutomationEnabled, reportAutomationDay, reportAutomationTime]);
@@ -13821,7 +13829,7 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
   }, [selectedFacilityReports, facilityReportQueueFiltered]);
 
   const reportCompletionSummary = useMemo(() => {
-    const done = facilityReportQueue.filter((row) => ["Sent", "Copied", "Exported", "Scheduled", "Manually Completed"].includes(row.status)).length;
+    const done = facilityReportQueue.filter((row) => reportStatusCountsAsComplete(row.status)).length;
     return {
       total: facilityReportQueue.length,
       done,
@@ -13846,36 +13854,37 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
   }, [reportHistory, reportHistoryFilters]);
 
   const reportValidationIssues = useMemo(() => {
-    const issues = canonicalReportingModel.dataQuality.map((issue) => ({
+    const issues = canonicalReportingModel.dataQuality.map((issue) => createReportingIssue({
+      ...issue,
       type: issue.issue,
-      detail: [issue.originalFacilityLabel, issue.identifier].filter(Boolean).join(" | "),
-      recordType: issue.recordType,
-      facilityId: "",
-      requisitionId: issue.recordType === "Requisition" ? issue.identifier : "",
+      detail: [issue.facilityName || issue.originalFacilityLabel, issue.position, issue.requisitionNumber && `Req ${issue.requisitionNumber}`, issue.missingField].filter(Boolean).join(" | ") || issue.identifier,
       source: "Canonical reporting data quality",
-      blocking: ["Ambiguous Facility", "Unmapped Facility", "Missing Facility ID", "Missing Requisition ID", "Ambiguous Requisition"].includes(issue.issue),
     }));
-    facilityReportQueue.forEach((row) => {
-      if (row.missingContact) issues.push({ type: "Missing facility contact", detail: row.facility, facilityId: row.facilityId, source: "Facility", blocking: true });
-    });
-    canonicalReportingModel.requisitions.forEach((record) => {
-      const req = record.source;
-      if (!isLiveRequisition(req)) return;
-      const detail = `${record.facilityName || "Unmapped Facility"} | ${record.requisitionNumber || "No req"} | ${req.positionTitle || "No position"}`;
-      if (!req.reqNumber) issues.push({ type: "Missing requisition number", detail, facilityId: record.facilityId, requisitionId: record.requisitionId, source: "Requisition", blocking: true });
-      if (!record.facilityId) issues.push({ type: "Missing facility", detail, facilityId: "", requisitionId: record.requisitionId, source: "Requisition", blocking: true });
-      if (!req.fte) issues.push({ type: "Missing FTE", detail, facilityId: record.facilityId, requisitionId: record.requisitionId, source: "Requisition", blocking: true });
-      if (!req.shiftPreference && !req.shift) issues.push({ type: "Missing shift", detail, facilityId: record.facilityId, requisitionId: record.requisitionId, source: "Requisition", blocking: true });
-    });
     canonicalReportingModel.candidates.forEach((record) => {
       const item = record.reportingItem;
       const detail = `${record.facilityName} | ${record.requisitionNumber || "No req"} | ${item.candidate || "Unnamed candidate"}`;
-      if (!item.status) issues.push({ type: "Missing candidate status", detail, facilityId: record.facilityId, requisitionId: record.requisitionId, candidateId: record.candidateId, source: "Candidate", blocking: true });
-      if ((item.status === "Hired" || item.archiveOutcome === "Hired") && !tentativeStartDateFor(item)) issues.push({ type: "Missing tentative start date", detail, facilityId: record.facilityId, requisitionId: record.requisitionId, candidateId: record.candidateId, source: "Candidate", blocking: true });
-      if ((item.archived || item.status === "Archived") && !archivedOutcomeApplies(item)) issues.push({ type: "Archived candidate missing outcome", detail, facilityId: record.facilityId, requisitionId: record.requisitionId, candidateId: record.candidateId, source: "Candidate", blocking: true });
+      const shared = { detail, facilityId: record.facilityId, facilityName: record.facilityName, requisitionId: record.requisitionId, requisitionNumber: record.requisitionNumber, position: record.position, candidateId: record.candidateId, source: "Candidate" };
+      if (!item.status) issues.push(createReportingIssue({ ...shared, type: "Missing candidate status", issue: "Missing candidate status", missingField: "Candidate status" }));
+      if ((item.status === "Hired" || item.archiveOutcome === "Hired") && !tentativeStartDateFor(item)) issues.push(createReportingIssue({ ...shared, type: "Missing tentative start date", issue: "Missing tentative start date", missingField: "Tentative start date" }));
+      if ((item.archived || item.status === "Archived") && !archivedOutcomeApplies(item)) issues.push(createReportingIssue({ ...shared, type: "Archived candidate missing outcome", issue: "Archived candidate missing outcome", missingField: "Archive outcome" }));
     });
     return issues;
-  }, [canonicalReportingModel, facilityReportQueue]);
+  }, [canonicalReportingModel]);
+
+  const selectedReportEligibilityScope = useMemo(() => ({
+    all: selectedFacility === "All Facilities" && selectedFacilityReports.length === 0 && facilityReportQueueFiltered.length === facilityReportQueue.length,
+    facilityIds: selectedFacilityReportRows.map((row) => row.facilityId).filter(Boolean),
+    requisitionIds: selectedFacilityReportRows.flatMap((row) => row.activeReqs.map((req) => req.id)).filter(Boolean),
+    candidateIds: selectedFacilityReportRows.flatMap((row) => row.candidates.map((candidate) => candidate.id)).filter(Boolean),
+  }), [selectedFacility, selectedFacilityReports, selectedFacilityReportRows, facilityReportQueueFiltered.length, facilityReportQueue.length]);
+  const selectedReportEligibility = useMemo(
+    () => reportingActionEligibility(reportValidationIssues, selectedReportEligibilityScope),
+    [reportValidationIssues, selectedReportEligibilityScope],
+  );
+  const reportIssueGroups = useMemo(
+    () => groupReportingIssues(reportValidationIssues, selectedReportEligibilityScope),
+    [reportValidationIssues, selectedReportEligibilityScope],
+  );
 
   const routingPreviewSummary = useMemo(() => ({
     facilityReports: facilityReportQueue.length,
@@ -14362,6 +14371,29 @@ function rowifyCandidate(item = {}) {
     return sheets;
   }
 
+  function reportingScopeForRows(rows = []) {
+    return {
+      all: rows === selectedFacilityReportRows && selectedReportEligibilityScope.all,
+      facilityIds: rows.map((row) => row.facilityId || row.id).filter(Boolean),
+      requisitionIds: rows.flatMap((row) => safeObjectRecords(row.activeReqs).map((req) => req.id)).filter(Boolean),
+      candidateIds: rows.flatMap((row) => safeObjectRecords(row.candidates).map((candidate) => candidate.id)).filter(Boolean),
+    };
+  }
+
+  function eligibilityForReportRows(rows = selectedFacilityReportRows) {
+    if (rows === selectedFacilityReportRows) return selectedReportEligibility;
+    return reportingActionEligibility(reportValidationIssues, reportingScopeForRows(rows));
+  }
+
+  function blockReportAction(action, rows = selectedFacilityReportRows, label = "This report action") {
+    const eligibility = eligibilityForReportRows(rows);
+    if (eligibility[action]) return false;
+    const reasons = eligibility.reasonsByAction[action] || [];
+    const issueTypes = Array.from(new Set(reasons.map((issue) => issue.issue))).join(", ");
+    setCopyNotice(`${label} is blocked for the selected scope. Resolve: ${issueTypes || "reporting data issues"}. Diagnostic review remains available.`);
+    return true;
+  }
+
   function markFacilityReports(rows, status) {
     const now = new Date().toISOString();
     setCompletedFacilityReports((prev) => {
@@ -14375,36 +14407,67 @@ function rowifyCandidate(item = {}) {
 
   function previewSelectedFacilityReports(rows = selectedFacilityReportRows) {
     const sourceRows = rows.length ? rows : selectedFacilityReportRows;
+    if (blockReportAction("canCreateFinalPreview", sourceRows, "Final report preview")) return;
     const content = selectedAudienceEmailContent(sourceRows);
     setGeneratedReportPreview(content.body);
     setWeeklyReport(content.body);
     setWeeklySubject(content.subject);
-    addHistory("Facility Report Preview", selectedReportType, content.body, "");
     setCopyNotice("Facility report preview generated.");
   }
 
   function copySelectedFacilityReports() {
     const rows = selectedFacilityReportRows;
+    if (blockReportAction("canPrepareEmail", rows, "Copying the report email")) return;
     const body = facilityReportBundle(rows);
     safeCopy(body);
-    markFacilityReports(rows, "Copied");
-    setCopyNotice("Selected facility reports copied and marked complete.");
+    setCopyNotice("Selected facility report email copied. Report status was not changed.");
+  }
+
+  function copyReportEmailContent(value, label = "Email content") {
+    if (blockReportAction("canPrepareEmail", selectedFacilityReportRows, `Copying ${label.toLowerCase()}`)) return;
+    safeCopy(value);
+    setCopyNotice(`${label} copied. Report status was not changed.`);
   }
 
   function exportSelectedFacilityReports() {
     const rows = selectedFacilityReportRows;
+    if (blockReportAction("canDownloadWorkbook", rows, "Workbook download")) return;
     if (rows.length === 1) {
       const model = facilityReportModel(rows[0].facilityId || rows[0].id || rows[0].facility);
       downloadExcelWorkbook(`welcomeflow-${safeExcelSheetName(model.facility).replace(/\s+/g, "-").toLowerCase()}-${reportStartDate}.xls`, facilityWorkbookSheets(model));
     } else {
       downloadExcelWorkbook(`welcomeflow-facility-reports-${reportStartDate}.xls`, buildAllFacilityWorkbookSheets());
     }
-    markFacilityReports(rows, "Exported");
-    setCopyNotice("Selected facility reports exported and marked complete.");
+    setCopyNotice("Selected facility reports downloaded. Report status was not changed.");
+  }
+
+  function exportWeeklyFullDataWorkbook() {
+    if (blockReportAction("canDownloadWorkbook", selectedFacilityReportRows, "All-facility workbook download")) return;
+    exportFullDataWorkbook();
+  }
+
+  function downloadGeneratedFacilityReport(row) {
+    const rows = [row];
+    if (blockReportAction("canDownloadWorkbook", rows, "Facility workbook download")) return;
+    const model = facilityReportModel(row.facilityId || row.id || row.facility);
+    downloadExcelWorkbook(
+      `welcomeflow-${safeExcelSheetName(model.facility).replace(/\s+/g, "-").toLowerCase()}-${reportStartDate}.xls`,
+      facilityWorkbookSheets(model),
+    );
+    setCopyNotice("Facility workbook downloaded. Report status was not changed.");
+  }
+
+  function downloadHistoricalFacilityReport(record) {
+    const model = facilityReportModel(record.facilityId || record.facility);
+    const row = { facilityId: model.facilityId, id: model.facilityId, activeReqs: model.activeReqs, candidates: model.candidates };
+    if (blockReportAction("canDownloadWorkbook", [row], "Historical workbook regeneration")) return;
+    downloadExcelWorkbook(record.attachmentName || `welcomeflow-report-${todayIso()}.xls`, facilityWorkbookSheets(model));
+    setCopyNotice("Workbook regenerated from current data. Report status was not changed.");
   }
 
   function exportFacilityWorkbooks() {
     const rows = selectedFacilityReportRows.length ? selectedFacilityReportRows : facilityReportQueueFiltered;
+    if (blockReportAction("canDownloadWorkbook", rows, "Facility workbook download")) return;
     const sheets = rows.flatMap((row) => {
       const model = facilityReportModel(row.facilityId || row.id || row.facility);
       return facilityWorkbookSheets(model).map((sheet) => ({
@@ -14413,8 +14476,7 @@ function rowifyCandidate(item = {}) {
       }));
     });
     downloadExcelWorkbook(`welcomeflow-facility-workbooks-${reportStartDate}.xls`, sheets);
-    markFacilityReports(rows, "Exported");
-    setCopyNotice(`${rows.length} facility report${rows.length === 1 ? "" : "s"} downloaded in one Excel file.`);
+    setCopyNotice(`${rows.length} facility report${rows.length === 1 ? "" : "s"} downloaded in one Excel file. Report status was not changed.`);
   }
 
   function saveReportsToHistory(rows = selectedFacilityReportRows, status = "Draft Generated") {
@@ -14453,6 +14515,7 @@ function rowifyCandidate(item = {}) {
   }
 
   function markSelectedFacilityReportsComplete() {
+    if (blockReportAction("canMarkReady", selectedFacilityReportRows, "Mark Complete")) return;
     markFacilityReports(selectedFacilityReportRows, "Manually Completed");
     setCopyNotice("Selected facility reports marked complete.");
   }
@@ -14463,6 +14526,7 @@ function rowifyCandidate(item = {}) {
       setCopyNotice("No ready facility reports selected to mark sent.");
       return;
     }
+    if (blockReportAction("canPrepareEmail", rows, "Mark Sent")) return;
     markFacilityReports(rows, "Sent");
     saveReportsToHistory(rows, "Sent");
     setCopyNotice(`${rows.length} report${rows.length === 1 ? "" : "s"} marked sent and complete. Attach/send confirmation has been documented.`);
@@ -14474,6 +14538,8 @@ function rowifyCandidate(item = {}) {
       setCopyNotice("No ready reports to send. Resolve missing contacts or review items first.");
       return;
     }
+    if (blockReportAction("canPrepareEmail", readyRows, "Preparing report emails")) return;
+    if (blockReportAction("canMarkReady", readyRows, "Mark Ready")) return;
     const body = facilityReportBundle(readyRows);
     setGeneratedReportPreview(body);
     setWeeklyReport(body);
@@ -18694,7 +18760,7 @@ function rowifyCandidate(item = {}) {
                 </div>
               </div>
               <div style={{ display: "grid", gap: 10 }}>
-                <Button primary onClick={generateWeeklyReport}>Generate Weekly Report</Button>
+                <Button primary onClick={generateWeeklyReport} disabled={!selectedReportEligibility.canGenerateReport}>Generate Weekly Report</Button>
                 <Button subtle onClick={clearAndRegenerateWeeklyReports}>Clear + Regenerate Reports</Button>
               </div>
             </div>
@@ -18904,9 +18970,9 @@ function rowifyCandidate(item = {}) {
                         <div key={row.id} style={{ display: "grid", gridTemplateColumns: "1.1fr 90px 105px 1fr 70px", gap: 8, alignItems: "center", border: `1px solid ${row.status === "Missing Contact" ? THEME.red : row.status === "Needs Review" ? THEME.amber : THEME.borderSoft}`, borderRadius: 6, padding: 8, background: THEME.panel }}>
                           <strong style={{ fontSize: 12 }}>{row.facility}</strong>
                           <span style={{ color: THEME.muted, fontSize: 12 }}>{row.report}</span>
-                          <Badge tone={row.status === "Missing Contact" ? "High" : row.status === "Needs Review" ? "Medium" : row.complete ? "Low" : "Interview"}>{row.status}</Badge>
+                          <Badge tone={row.status === "Missing Contact" ? "High" : row.status === "Needs Review" ? "Medium" : row.complete ? "Low" : "Interview"}>{LEGACY_REPORT_STATUS_DISPLAY[row.status] || row.status}</Badge>
                           <span style={{ color: THEME.muted, fontSize: 12 }}>{row.lastAction}</span>
-                            <Button subtle onClick={() => { setSelectedFacility(row.facility); setSelectedFacilityReports([row.id]); previewSelectedFacilityReports([row]); }} style={{ padding: "6px 7px", fontSize: 11 }}>{row.action}</Button>
+                            <Button subtle disabled={!eligibilityForReportRows([row]).canCreateFinalPreview} onClick={() => { setSelectedFacility(row.facility); setSelectedFacilityReports([row.id]); previewSelectedFacilityReports([row]); }} style={{ padding: "6px 7px", fontSize: 11 }}>{row.action}</Button>
                         </div>
                       ))}
                     </div>
@@ -18914,7 +18980,7 @@ function rowifyCandidate(item = {}) {
                 </Card>
                 <Card title="Weekly Report Preview" subtitle="Preview your weekly report before sharing." compact>
                   <div style={{ border: `1px dashed ${THEME.border}`, borderRadius: 6, minHeight: 260, padding: 16, background: THEME.panelAlt, display: "grid", placeItems: weeklyReport ? "stretch" : "center" }}>
-                    {weeklyReport ? <EmailDocument title="Weekly Report" subject={weeklySubject} body={weeklyReport} attachmentLabel="Download Excel Attachment" onDownloadAttachment={exportFullDataWorkbook} onMarkSent={markSelectedFacilityReportsSent} attachmentNotice="Mailto opens the email body only. Download this Excel attachment, then attach it to the draft before sending. After sending, use Mark Sent to document completion." /> : <div style={{ textAlign: "center", color: THEME.muted }}><div style={{ fontSize: 36, marginBottom: 10 }}> </div><strong style={{ color: THEME.text }}>Generate the weekly report to preview it here.</strong><div style={{ marginTop: 12 }}><Button primary onClick={generateWeeklyReport}>Generate Weekly Report</Button></div></div>}
+                    {weeklyReport ? <EmailDocument title="Weekly Report" subject={weeklySubject} body={weeklyReport} attachmentLabel="Download Excel Attachment" onDownloadAttachment={exportWeeklyFullDataWorkbook} onMarkSent={markSelectedFacilityReportsSent} attachmentNotice="Mailto opens the email body only. Download this Excel attachment, then attach it to the draft before sending. After sending, use Mark Sent to document completion." /> : <div style={{ textAlign: "center", color: THEME.muted }}><div style={{ fontSize: 36, marginBottom: 10 }}> </div><strong style={{ color: THEME.text }}>Generate the weekly report to preview it here.</strong><div style={{ marginTop: 12 }}><Button primary onClick={generateWeeklyReport} disabled={!selectedReportEligibility.canGenerateReport}>Generate Weekly Report</Button></div></div>}
                   </div>
                 </Card>
               </div>
@@ -18933,11 +18999,11 @@ function rowifyCandidate(item = {}) {
                 <div style={{ display: "grid", gap: 12, gridTemplateColumns: isMedium ? "1fr" : "minmax(0, 1fr) 280px", alignItems: "start" }}>
                   <div style={{ display: "grid", gap: 10 }}>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <Button primary onClick={previewSelectedFacilityReports}>Preview Selected</Button>
-                      <Button subtle onClick={copySelectedFacilityReports} disabled={!facilityReportQueueFiltered.length}>Copy Selected</Button>
-                      <Button subtle onClick={exportSelectedFacilityReports} disabled={!facilityReportQueueFiltered.length}>Export Selected</Button>
-                      <Button subtle onClick={markSelectedFacilityReportsComplete} disabled={!allowManualCompletion || !facilityReportQueueFiltered.length}>Mark Complete</Button>
-                      <Button primary onClick={sendReadyFacilityReports} disabled={!facilityReportQueueFiltered.length}>Send Ready</Button>
+                      <Button primary onClick={previewSelectedFacilityReports} disabled={!selectedReportEligibility.canCreateFinalPreview}>Preview Selected</Button>
+                      <Button subtle onClick={copySelectedFacilityReports} disabled={!facilityReportQueueFiltered.length || !selectedReportEligibility.canPrepareEmail}>Copy Selected</Button>
+                      <Button subtle onClick={exportSelectedFacilityReports} disabled={!facilityReportQueueFiltered.length || !selectedReportEligibility.canDownloadWorkbook}>Export Selected</Button>
+                      <Button subtle onClick={markSelectedFacilityReportsComplete} disabled={!allowManualCompletion || !facilityReportQueueFiltered.length || !selectedReportEligibility.canMarkReady}>Mark Complete</Button>
+                      <Button primary onClick={sendReadyFacilityReports} disabled={!facilityReportQueueFiltered.length || !selectedReportEligibility.canPrepareEmail || !selectedReportEligibility.canMarkReady}>Send Ready</Button>
                     </div>
                     <div style={{ overflowX: "auto" }}>
                       <div style={{ minWidth: isNarrow ? 760 : 0, display: "grid", gap: 8 }}>
@@ -18954,7 +19020,7 @@ function rowifyCandidate(item = {}) {
                             <input type="checkbox" checked={selectedFacilityReports.includes(row.id)} onChange={(event) => toggleFacilityReportSelection(row.id, event.target.checked)} aria-label={`Select ${row.facility} report`} />
                             <strong>{row.facility}</strong>
                             <span style={{ color: THEME.muted }}>{row.report}</span>
-                            <Badge tone={row.status === "Missing Contact" ? "High" : row.status === "Needs Review" ? "Medium" : row.complete ? "Low" : "Interview"}>{row.status}</Badge>
+                            <Badge tone={row.status === "Missing Contact" ? "High" : row.status === "Needs Review" ? "Medium" : row.complete ? "Low" : "Interview"}>{LEGACY_REPORT_STATUS_DISPLAY[row.status] || row.status}</Badge>
                             <span style={{ color: THEME.muted }}>{row.lastAction}</span>
                             <Button subtle onClick={() => { setSelectedFacilityReports([row.id]); previewSelectedFacilityReports(); }} style={{ padding: "6px 8px", fontSize: 11 }}>{row.action}</Button>
                           </div>
@@ -18993,20 +19059,20 @@ function rowifyCandidate(item = {}) {
                   <Field label="Status Filter"><SelectInput value={selectedStatusFilter} onChange={(event) => { setSelectedStatusFilter(event.target.value); setSelectedFacilityReports([]); }} options={reportStatusOptions} /></Field>
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <Button primary onClick={previewSelectedFacilityReports}>Preview Selected</Button>
+                  <Button primary onClick={previewSelectedFacilityReports} disabled={!selectedReportEligibility.canCreateFinalPreview}>Preview Selected</Button>
                   <Button subtle onClick={() => saveReportsToHistory(selectedFacilityReportRows, "Draft Generated")} disabled={!facilityReportQueueFiltered.length}>Save to History</Button>
-                  <Button subtle onClick={copySelectedFacilityReports} disabled={!facilityReportQueueFiltered.length}>Copy Selected</Button>
-                  <Button subtle onClick={exportSelectedFacilityReports} disabled={!facilityReportQueueFiltered.length}>Export Selected</Button>
-                  <Button subtle onClick={exportFacilityWorkbooks} disabled={!facilityReportQueueFiltered.length}>Export Facility Workbooks</Button>
-                  <Button subtle onClick={markSelectedFacilityReportsComplete} disabled={!allowManualCompletion || !facilityReportQueueFiltered.length}>Mark Complete</Button>
-                  <Button primary onClick={sendReadyFacilityReports} disabled={!facilityReportQueueFiltered.length}>Send Ready</Button>
+                  <Button subtle onClick={copySelectedFacilityReports} disabled={!facilityReportQueueFiltered.length || !selectedReportEligibility.canPrepareEmail}>Copy Selected</Button>
+                  <Button subtle onClick={exportSelectedFacilityReports} disabled={!facilityReportQueueFiltered.length || !selectedReportEligibility.canDownloadWorkbook}>Export Selected</Button>
+                  <Button subtle onClick={exportFacilityWorkbooks} disabled={!facilityReportQueueFiltered.length || !selectedReportEligibility.canDownloadWorkbook}>Export Facility Workbooks</Button>
+                  <Button subtle onClick={markSelectedFacilityReportsComplete} disabled={!allowManualCompletion || !facilityReportQueueFiltered.length || !selectedReportEligibility.canMarkReady}>Mark Complete</Button>
+                  <Button primary onClick={sendReadyFacilityReports} disabled={!facilityReportQueueFiltered.length || !selectedReportEligibility.canPrepareEmail || !selectedReportEligibility.canMarkReady}>Send Ready</Button>
                 </div>
                 <Accordion title="Report Sections" subtitle="Choose what goes in the Excel attachment. Email stays concise." defaultOpen={false}>
                   <div style={{ display: "grid", gap: 8, gridTemplateColumns: isNarrow ? "1fr" : "repeat(3, minmax(0, 1fr))" }}>
                     {Object.entries(reportInclusions).map(([key, value]) => <ToggleField key={key} label={labelFromKey(key)} checked={Boolean(value)} onChange={(checked) => setReportInclusions((prev) => ({ ...prev, [key]: checked }))} />)}
                   </div>
                 </Accordion>
-                {reportValidationIssues.length ? <Card compact title="Needs Review" subtitle={`${reportValidationIssues.length} report data issue${reportValidationIssues.length === 1 ? "" : "s"} found. These warn the recruiter but do not break the page.`}><div style={{ display: "grid", gap: 8 }}>{reportValidationIssues.slice(0, 8).map((issue, index) => <div key={`${issue.type}-${index}`} style={{ border: `1px solid ${THEME.amber}`, borderRadius: 6, padding: 9, background: THEME.amberBg }}><strong>{issue.type}</strong><div style={{ color: THEME.muted, fontSize: 12 }}>{issue.detail}</div></div>)}</div></Card> : null}
+                {reportIssueGroups.length ? <Card compact title="Reporting Issues" subtitle={`${selectedReportEligibility.blockingReasons.length} blocker${selectedReportEligibility.blockingReasons.length === 1 ? "" : "s"} in the selected scope. Diagnostic details remain available even when final output is blocked.`}><div style={{ display: "grid", gap: 8 }}>{reportIssueGroups.map((group) => <div key={group.code} style={{ border: `1px solid ${group.blocking ? THEME.red : THEME.amber}`, borderRadius: 6, background: group.blocking ? THEME.coralBg : THEME.amberBg }}><button type="button" aria-expanded={expandedReportIssueCode === group.code} onClick={() => setExpandedReportIssueCode((current) => current === group.code ? "" : group.code)} style={{ width: "100%", border: 0, background: "transparent", padding: 10, display: "flex", justifyContent: "space-between", gap: 10, color: THEME.text, fontWeight: 900, cursor: "pointer", textAlign: "left" }}><span>{group.label}</span><span>{group.count}</span></button>{expandedReportIssueCode === group.code ? <div style={{ display: "grid", gap: 7, padding: "0 10px 10px" }}>{group.issues.map((issue, index) => <div key={`${group.code}-${issue.identifier || issue.candidateId || issue.requisitionId || issue.facilityId}-${index}`} style={{ borderTop: `1px solid ${THEME.borderSoft}`, paddingTop: 8 }}><strong>{issue.facilityName || issue.originalFacilityLabel || "Unmapped Facility"}</strong><div style={{ color: THEME.muted, fontSize: 12 }}>{[issue.position, issue.requisitionNumber && `Req ${issue.requisitionNumber}`, issue.missingField].filter(Boolean).join(" | ") || issue.detail || issue.identifier}</div>{issue.originalFacilityLabel ? <div style={{ color: THEME.muted, fontSize: 12 }}>Original label: {issue.originalFacilityLabel}</div> : null}{issue.resolutionAction ? <div style={{ color: THEME.primary2, fontSize: 12, fontWeight: 850 }}>Next action: {issue.resolutionAction}</div> : null}</div>)}</div> : null}</div>)}</div></Card> : null}
                 <div style={{ overflowX: "auto" }}>
                   <div style={{ minWidth: isNarrow ? 760 : 0, display: "grid", gap: 8 }}>
                     <div style={{ display: "grid", gridTemplateColumns: "34px 1.2fr 120px 140px 1fr 90px", gap: 10, padding: "0 10px", color: THEME.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>
@@ -19022,9 +19088,9 @@ function rowifyCandidate(item = {}) {
                         <input type="checkbox" checked={selectedFacilityReports.includes(row.id)} onChange={(event) => toggleFacilityReportSelection(row.id, event.target.checked)} aria-label={`Select ${row.facility} report`} />
                         <strong>{row.facility}</strong>
                         <span style={{ color: THEME.muted }}>{row.report}</span>
-                        <Badge tone={row.status === "Missing Contact" ? "High" : row.status === "Needs Review" ? "Medium" : row.complete ? "Low" : "Interview"}>{row.status}</Badge>
+                        <Badge tone={row.status === "Missing Contact" ? "High" : row.status === "Needs Review" ? "Medium" : row.complete ? "Low" : "Interview"}>{LEGACY_REPORT_STATUS_DISPLAY[row.status] || row.status}</Badge>
                         <span style={{ color: THEME.muted }}>{row.lastAction}</span>
-                        <Button subtle onClick={() => { setSelectedFacilityReports([row.id]); previewSelectedFacilityReports([row]); }} style={{ padding: "6px 8px", fontSize: 11 }}>{row.action}</Button>
+                        <Button subtle disabled={!eligibilityForReportRows([row]).canCreateFinalPreview} onClick={() => { setSelectedFacilityReports([row.id]); previewSelectedFacilityReports([row]); }} style={{ padding: "6px 8px", fontSize: 11 }}>{row.action}</Button>
                       </div>
                     )) : <EmptyState>No facility reports match this filter.</EmptyState>}
                   </div>
@@ -19065,9 +19131,9 @@ function rowifyCandidate(item = {}) {
                       <div key={row.id} style={{ display: "grid", gridTemplateColumns: "1.2fr 120px 140px 1fr 100px", gap: 10, alignItems: "center", border: `1px solid ${row.status === "Missing Contact" ? THEME.red : row.status === "Needs Review" ? THEME.amber : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panel }}>
                         <strong>{row.facility}</strong>
                         <span style={{ color: THEME.muted }}>{row.report}</span>
-                        <Badge tone={row.status === "Missing Contact" ? "High" : row.status === "Needs Review" ? "Medium" : row.complete ? "Low" : "Interview"}>{row.status}</Badge>
+                        <Badge tone={row.status === "Missing Contact" ? "High" : row.status === "Needs Review" ? "Medium" : row.complete ? "Low" : "Interview"}>{LEGACY_REPORT_STATUS_DISPLAY[row.status] || row.status}</Badge>
                         <span style={{ color: THEME.muted }}>{row.lastAction}</span>
-                        <Button subtle onClick={() => { setReportsTab("audience"); setSelectedFacility(row.facility); setSelectedFacilityReports([row.id]); previewSelectedFacilityReports([row]); }} style={{ padding: "6px 8px", fontSize: 11 }}>{row.action}</Button>
+                        <Button subtle disabled={!eligibilityForReportRows([row]).canCreateFinalPreview} onClick={() => { setReportsTab("audience"); setSelectedFacility(row.facility); setSelectedFacilityReports([row.id]); previewSelectedFacilityReports([row]); }} style={{ padding: "6px 8px", fontSize: 11 }}>{row.action}</Button>
                       </div>
                     )) : <EmptyState>No facility reports match this filter.</EmptyState>}
                   </div>
@@ -19100,7 +19166,7 @@ function rowifyCandidate(item = {}) {
               </div>
               <div style={{ display: "grid", gap: 12, gridTemplateColumns: isNarrow ? "1fr" : isMedium ? "repeat(2, minmax(0, 1fr))" : "repeat(5, minmax(0, 1fr))" }}>
                 {[
-                  { title: "Export All Data Excel", detail: "Export the complete weekly report with all sections and data.", action: exportFullDataWorkbook, button: "Export All Data Excel", icon: "", recommended: true, tone: THEME.primary2, bg: THEME.blueBg },
+                  { title: "Export All Data Excel", detail: "Export the complete weekly report with all sections and data.", action: exportWeeklyFullDataWorkbook, button: "Export All Data Excel", icon: "", disabled: !selectedReportEligibility.canDownloadWorkbook, recommended: true, tone: THEME.primary2, bg: THEME.blueBg },
                   { title: "Export Facility Workbooks", detail: "Download individual detailed Excel attachments by selected facility.", action: exportFacilityWorkbooks, button: "Export Facility Excel", icon: "", tone: THEME.primary2, bg: THEME.blueBg },
                   { title: "Export Tracker CSV", detail: "Export candidate tracker data in CSV format.", action: exportTrackerCsv, button: "Export CSV", icon: "", tone: THEME.green, bg: THEME.greenBg },
                   { title: "Export History CSV", detail: "Export your weekly cleanup history in CSV format.", action: exportHistoryCsv, button: "Export CSV", icon: "", disabled: !history.length, tone: THEME.primary2, bg: THEME.blueBg },
@@ -19153,10 +19219,10 @@ function rowifyCandidate(item = {}) {
               <Card title="Email Preview" subtitle="The email stays high-level. The Excel attachment carries the detail." compact>
                 <div style={{ display: "grid", gap: 12 }}>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <Button primary onClick={previewSelectedFacilityReports}>Preview Email</Button>
-                    <Button subtle onClick={() => safeCopy(weeklyReport || selectedAudienceEmailBody())}>Copy Email</Button>
-                    <Button subtle onClick={() => safeCopy(weeklySubject)}>Copy Subject</Button>
-                    <Button subtle onClick={() => saveReportsToHistory(selectedFacilityReportRows, "Draft Generated")}>Mark Reviewed</Button>
+                    <Button primary onClick={previewSelectedFacilityReports} disabled={!selectedReportEligibility.canCreateFinalPreview}>Preview Email</Button>
+                    <Button subtle onClick={() => copyReportEmailContent(weeklyReport || selectedAudienceEmailBody(), "Email body")} disabled={!selectedReportEligibility.canPrepareEmail}>Copy Email</Button>
+                    <Button subtle onClick={() => copyReportEmailContent(weeklySubject, "Email subject")} disabled={!selectedReportEligibility.canPrepareEmail}>Copy Subject</Button>
+                    <Button subtle onClick={() => saveReportsToHistory(selectedFacilityReportRows, "Reviewed")}>Mark Reviewed</Button>
                     <Button subtle onClick={() => saveReportsToHistory(selectedFacilityReportRows, "Held for Approval")}>Hold for Approval</Button>
                     <Button subtle disabled>Send Later</Button>
                   </div>
@@ -19172,7 +19238,8 @@ function rowifyCandidate(item = {}) {
                     const model = facilityReportModel(row.facilityId || row.id || row.facility);
                     const content = facilityEmailContent(model, row.reportType || selectedReportType);
                     const subject = content.subject;
-                    return <div key={row.id} style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "1.3fr 1fr 1fr auto", gap: 10, alignItems: "center", border: `1px solid ${model.missingContact ? THEME.red : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panel }}><div><strong>{model.facility}</strong><div style={{ color: THEME.muted, fontSize: 12 }}>{subject}</div></div><Badge tone={model.missingContact ? "High" : row.status === "Needs Review" ? "Medium" : "Low"}>{model.missingContact ? "Blocked, Missing Contact" : row.status}</Badge><span style={{ color: THEME.muted }}>{facilityWorkbookSheets(model).length} attachment tabs</span><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button subtle onClick={() => { setWeeklySubject(subject); setWeeklyReport(content.body); }}>Preview</Button><Button subtle onClick={() => downloadExcelWorkbook(`welcomeflow-${safeExcelSheetName(model.facility).replace(/\s+/g, "-").toLowerCase()}-${reportStartDate}.xls`, facilityWorkbookSheets(model))}>Download</Button></div></div>;
+                    const rowEligibility = eligibilityForReportRows([row]);
+                    return <div key={row.id} style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "1.3fr 1fr 1fr auto", gap: 10, alignItems: "center", border: `1px solid ${model.missingContact ? THEME.red : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panel }}><div><strong>{model.facility}</strong><div style={{ color: THEME.muted, fontSize: 12 }}>{subject}</div></div><Badge tone={model.missingContact ? "High" : row.status === "Needs Review" ? "Medium" : "Low"}>{model.missingContact ? "Blocked, Missing Contact" : (LEGACY_REPORT_STATUS_DISPLAY[row.status] || row.status)}</Badge><span style={{ color: THEME.muted }}>{facilityWorkbookSheets(model).length} attachment tabs</span><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button subtle disabled={!rowEligibility.canCreateFinalPreview} onClick={() => { setWeeklySubject(subject); setWeeklyReport(content.body); }}>Preview</Button><Button subtle disabled={!rowEligibility.canDownloadWorkbook} onClick={() => downloadGeneratedFacilityReport(row)}>Download</Button></div></div>;
                   })}
                   {selectedReportType === "Regional Manager Summary" ? <Card compact title="Regional Manager Email" subtitle="Grouped by selected facilities."><div style={{ whiteSpace: "pre-wrap", lineHeight: 1.65 }}>{regionalEmailBody(selectedFacilityReportRows)}</div></Card> : null}
                   {selectedReportType === "C-Suite Leadership Report" ? <Card compact title="C-Suite Leadership Email" subtitle="High-level leadership visibility."><div style={{ whiteSpace: "pre-wrap", lineHeight: 1.65 }}>{cSuiteEmailBody(selectedFacilityReportRows)}</div></Card> : null}
@@ -19193,7 +19260,7 @@ function rowifyCandidate(item = {}) {
                   <div style={{ overflowX: "auto" }}>
                     <div style={{ minWidth: isNarrow ? 900 : 0, display: "grid", gap: 8 }}>
                       <div style={{ display: "grid", gridTemplateColumns: "130px 130px 1fr 150px 140px 150px 1fr 220px", gap: 8, color: THEME.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase", padding: "0 8px" }}><span>Report Week</span><span>Generated</span><span>Facility</span><span>Report Type</span><span>Audience</span><span>Status</span><span>Attachment</span><span>Actions</span></div>
-                      {reportHistoryFiltered.length ? reportHistoryFiltered.map((record) => <div key={record.id} style={{ display: "grid", gridTemplateColumns: "130px 130px 1fr 150px 140px 150px 1fr 220px", gap: 8, alignItems: "center", border: `1px solid ${record.status === "Blocked, Missing Contact" ? THEME.red : THEME.borderSoft}`, borderRadius: 6, padding: 8, background: THEME.panel }}><span>{record.reportWeek}</span><span>{displayDate(String(record.generatedDate || "").slice(0, 10))}</span><strong>{record.facility}</strong><span>{record.reportType}</span><span>{record.audience}</span><Badge tone={record.status === "Blocked, Missing Contact" ? "High" : record.status === "Held for Approval" || record.status === "Needs Review" ? "Medium" : "Low"}>{record.status}</Badge><span style={{ color: THEME.muted }}>{record.attachmentName}{record.missingContactWarning ? <><br />{record.missingContactWarning}</> : null}</span><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}><Button subtle onClick={() => { setWeeklySubject(record.emailSubject); setWeeklyReport(record.emailBody); setReportsHubTab("email"); }} style={{ padding: "6px 8px", fontSize: 11 }}>Preview</Button><Button subtle onClick={() => safeCopy(record.emailBody)} style={{ padding: "6px 8px", fontSize: 11 }}>Copy</Button><Button subtle onClick={() => downloadExcelWorkbook(record.attachmentName || `welcomeflow-report-${todayIso()}.xls`, facilityWorkbookSheets(facilityReportModel(record.facility)))} style={{ padding: "6px 8px", fontSize: 11 }}>Download</Button></div></div>) : <EmptyState>No reports have been saved to history yet.</EmptyState>}
+                      {reportHistoryFiltered.length ? reportHistoryFiltered.map((record) => <div key={record.id} style={{ display: "grid", gridTemplateColumns: "130px 130px 1fr 150px 140px 150px 1fr 220px", gap: 8, alignItems: "center", border: `1px solid ${record.status === "Blocked, Missing Contact" ? THEME.red : THEME.borderSoft}`, borderRadius: 6, padding: 8, background: THEME.panel }}><span>{record.reportWeek}</span><span>{displayDate(String(record.generatedDate || "").slice(0, 10))}</span><strong>{record.facility}</strong><span>{record.reportType}</span><span>{record.audience}</span><Badge tone={record.status === "Blocked, Missing Contact" ? "High" : record.status === "Held for Approval" || record.status === "Needs Review" ? "Medium" : "Low"}>{LEGACY_REPORT_STATUS_DISPLAY[record.status] || record.status}</Badge><span style={{ color: THEME.muted }}>{record.attachmentName}{record.missingContactWarning ? <><br />{record.missingContactWarning}</> : null}</span><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}><Button subtle onClick={() => { setWeeklySubject(record.emailSubject); setWeeklyReport(record.emailBody); setReportsHubTab("email"); }} style={{ padding: "6px 8px", fontSize: 11 }}>Preview</Button><Button subtle onClick={() => safeCopy(record.emailBody)} style={{ padding: "6px 8px", fontSize: 11 }}>Copy</Button><Button subtle onClick={() => downloadHistoricalFacilityReport(record)} style={{ padding: "6px 8px", fontSize: 11 }}>Download</Button></div></div>) : <EmptyState>No reports have been saved to history yet.</EmptyState>}
                     </div>
                   </div>
                 </div>
@@ -19203,7 +19270,7 @@ function rowifyCandidate(item = {}) {
             {reportsHubTab === "download" || reportsHubTab === "attachment" ? (
               <Card title="Download Center" subtitle="Download detailed Excel attachments without changing the concise email body." compact>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <Button primary onClick={exportFullDataWorkbook}>Download All-Facility Excel</Button>
+                  <Button primary onClick={exportWeeklyFullDataWorkbook} disabled={!selectedReportEligibility.canDownloadWorkbook}>Download All-Facility Excel</Button>
                   <Button subtle onClick={exportFacilityWorkbooks}>Download Facility Excel Files</Button>
                   <Button subtle onClick={exportHistoryExcel} disabled={!history.length}>Download History Excel</Button>
                   <Button subtle onClick={exportAtsUpdatePacketExcel}>Download ATS Packet Excel</Button>
