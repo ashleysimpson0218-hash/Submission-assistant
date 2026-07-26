@@ -13,6 +13,7 @@ export const FACILITY_READINESS_OPTIONS = [
   "Blocked",
   "Needs Review",
   "Ready",
+  "No Report Required",
   "Scheduled",
   "Sent",
   "Not Started",
@@ -20,7 +21,9 @@ export const FACILITY_READINESS_OPTIONS = [
 ];
 
 export function facilityReadinessFor(row = {}, issues = []) {
+  if (row.policyReadiness === "No Report Required") return "No Report Required";
   if (values(issues).some((issue) => issue?.blocking)) return "Blocked";
+  if (row.policyReadiness) return row.policyReadiness;
   if (row.status === "Missing Contact") return "Blocked";
   if (row.status === "Needs Review") return "Needs Review";
   if (row.status === "Sent") return "Sent";
@@ -76,6 +79,7 @@ export function facilityReadinessCounts(rows = [], filters = DEFAULT_FACILITY_RE
     Blocked: count("Blocked"),
     "Needs Review": count("Needs Review"),
     Ready: count("Ready"),
+    "No Report Required": count("No Report Required"),
     Scheduled: count("Scheduled"),
     Sent: count("Sent"),
     "Not Started": count("Not Started"),

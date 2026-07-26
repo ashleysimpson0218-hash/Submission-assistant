@@ -48,6 +48,17 @@ const rows = [
     reportType: "Facility Weekly Report",
     status: "Ready",
   }),
+  withFacilityReadiness({
+    id: "facility-no-report",
+    facilityId: "facility-no-report",
+    facility: "Synthetic No Report Facility",
+    aliases: [],
+    regionId: "south",
+    reportType: "No Openings Update",
+    status: "No Report Required",
+    policyReadiness: "No Report Required",
+    reportRequired: false,
+  }),
 ];
 
 test("defaults Facility Readiness to Needs Action and includes only Blocked and Needs Review", () => {
@@ -91,10 +102,19 @@ test("status counts retain the current search, region, and report-type scope whi
   expect(counts).toMatchObject({ All: 2, "Needs Action": 1, Blocked: 0, "Needs Review": 1, Ready: 1 });
 });
 
+test("No Report Required remains visible only in its explicit audit filter and not Needs Action", () => {
+  expect(filterFacilityReadinessRows(rows, {
+    ...DEFAULT_FACILITY_READINESS_FILTERS,
+    readiness: "No Report Required",
+  }).map((row) => row.id)).toEqual(["facility-no-report"]);
+  expect(filterFacilityReadinessRows(rows).map((row) => row.id)).not.toContain("facility-no-report");
+  expect(facilityReadinessCounts(rows)["No Report Required"]).toBe(1);
+});
+
 test("Select All Visible and Select All Matching produce distinct explicit sets", () => {
   const visible = rows.slice(0, 2);
   expect(selectFacilityIds([], visible)).toEqual(["facility-burruss", "facility-central"]);
-  expect(selectFacilityIds([], rows)).toEqual(["facility-burruss", "facility-central", "facility-south", "facility-ready"]);
+  expect(selectFacilityIds([], rows)).toEqual(["facility-burruss", "facility-central", "facility-south", "facility-ready", "facility-no-report"]);
   expect(clearFacilitySelection()).toEqual([]);
 });
 

@@ -105,6 +105,21 @@ import {
   withFacilityReadiness,
 } from "./facilityReadinessNavigation";
 import {
+  NO_OPENINGS_POLICIES,
+  NO_OPENINGS_POLICY_OPTIONS,
+  NO_OPENINGS_WEEKLY_DECISIONS,
+  applyNoOpeningOutcome,
+  clearWeeklyNoOpeningDecisions,
+  deriveNoOpeningFacilityOutcome,
+  deriveNoOpeningsPolicy,
+  hasStandardNoOpeningsTemplate,
+  noOpeningReportingSummary,
+  reportActionEligibleRows,
+  settingsWithNoOpeningsPolicy,
+  undoWeeklyNoOpeningDecision,
+  updateWeeklyNoOpeningDecision,
+} from "./noOpeningFacilityPolicy";
+import {
   DEFAULT_WEEKLY_REPORT_TEMPLATES,
   WEEKLY_REPORT_TEMPLATE_KEYS,
   WEEKLY_REPORT_TEMPLATE_TOKENS,
@@ -5993,6 +6008,8 @@ function RecruiterApp() {
   const [facilityReadinessFilters, setFacilityReadinessFilters] = useState(() => ({ ...DEFAULT_FACILITY_READINESS_FILTERS }));
   const [facilityReadinessVisibleLimit, setFacilityReadinessVisibleLimit] = useState(20);
   const [reportCorrectionTarget, setReportCorrectionTarget] = useState(null);
+  const [noOpeningsPolicyDraft, setNoOpeningsPolicyDraft] = useState("");
+  const [noOpeningWeeklyDecisions, setNoOpeningWeeklyDecisions] = useState({});
   const [completedFacilityReports, setCompletedFacilityReports] = useState({});
   const [generatedReportPreview, setGeneratedReportPreview] = useState("");
   const [reportHistory, setReportHistory] = useState([]);
@@ -13569,6 +13586,7 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
 
   function clearAndRegenerateWeeklyReports() {
     setCompletedFacilityReports({});
+    setNoOpeningWeeklyDecisions(clearWeeklyNoOpeningDecisions());
     setSelectedFacilityReports([]);
     setExcludedReportIds([]);
     setGeneratedReportPreview("");
@@ -13578,8 +13596,24 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
     setCopyNotice("Weekly report selections and facility completion were cleared. Regenerate from the current data when ready.");
   }
 
+  function saveNoOpeningsPolicy() {
+    setSettings((current) => settingsWithNoOpeningsPolicy(current, noOpeningsPolicySelection));
+    setNoOpeningsPolicyDraft("");
+    setCopyNotice("No-opening facility policy saved. Existing settings and report history were not rewritten.");
+  }
+
+  function setWeeklyNoOpeningDecision(facilityId, decision) {
+    setNoOpeningWeeklyDecisions((current) => updateWeeklyNoOpeningDecision(current, facilityId, decision));
+    setCopyNotice("This no-opening choice applies to the current session only and will reset on reload.");
+  }
+
+  function undoNoOpeningWeeklyDecision(facilityId) {
+    setNoOpeningWeeklyDecisions((current) => undoWeeklyNoOpeningDecision(current, facilityId));
+    setCopyNotice("Weekly no-opening choice removed. The facility needs review again.");
+  }
+
   function generateWeeklyReport() {
-    if (blockReportAction("canGenerateReport", selectedFacilityReportRows, "Weekly report generation")) return;
+    if (blockReportAction("canGenerateReport", selectedFacilityActionRows, "Weekly report generation")) return;
     const weeklyRows = includedReportRows;
     const activeRows = weeklyRows.filter((item) => !isClosedStatus(item.status) && !item.archived);
     const hiredRows = weeklyRows.filter((item) => item.status === "Hired" || item.status === "Placed" || item.archiveOutcome === "Hired");
@@ -13751,6 +13785,9 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
   ];
 
   const reportAutomation = settings.options?.reportAutomation || {};
+  const noOpeningsPolicy = deriveNoOpeningsPolicy(settings);
+  const noOpeningsPolicySelection = noOpeningsPolicyDraft || noOpeningsPolicy;
+  const standardNoOpeningsTemplateAvailable = hasStandardNoOpeningsTemplate(settings);
   const reportAutomationEnabled = Boolean(reportAutomation.enabled);
   const reportAutomationDay = reportAutomation.day || "Friday";
   const reportAutomationTime = reportAutomation.time || "2:00 PM";
@@ -13777,8 +13814,10 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
     return reportFacilityRecords.map((facilityRecord) => {
       const facilityId = facilityRecord.facilityId;
       const facility = facilityRecord.facilityName;
-      const facilityReqs = canonicalReportingModel.requisitions
-        .filter((record) => record.facilityId === facilityId && isLiveRequisition(record.source))
+      const facilityRequisitionRecords = canonicalReportingModel.requisitions
+        .filter((record) => record.facilityId === facilityId);
+      const facilityReqs = facilityRequisitionRecords
+        .filter((record) => isLiveRequisition(record.source))
         .map((record) => record.reportingItem);
       const facilityRows = includedReportRows.filter((item) => item.facilityId === facilityId);
       const site = canonicalReportingModel.facilityIndex.byId.get(facilityId);
@@ -13819,6 +13858,10 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
         missingContact,
         highRisk,
         complete: reportStatusCountsAsComplete(status),
+        canonicalResolutionComplete: Boolean(facilityId && site),
+        requisitionStatusReliable: facilityRequisitionRecords.every((record) => (
+          isLiveRequisition(record.source) || isArchiveRequisitionStatus(record.source?.status)
+        )),
       };
     });
   }, [reportFacilityRecords, canonicalReportingModel.requisitions, canonicalReportingModel.facilityIndex, includedReportRows, completedFacilityReports, preventMissingContactSend, flagHighRiskForReview, reportAutomationEnabled, reportAutomationDay, reportAutomationTime]);
@@ -13843,18 +13886,6 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
     if (!selected.size) return [];
     return facilityReportQueue.filter((row) => selected.has(row.id) || selected.has(row.facility));
   }, [selectedFacilityReports, facilityReportQueue]);
-
-  const reportCompletionSummary = useMemo(() => {
-    const done = facilityReportQueue.filter((row) => reportStatusCountsAsComplete(row.status)).length;
-    return {
-      total: facilityReportQueue.length,
-      done,
-      remaining: Math.max(0, facilityReportQueue.length - done),
-      scheduled: facilityReportQueue.filter((row) => row.status === "Scheduled").length,
-      review: facilityReportQueue.filter((row) => row.status === "Needs Review").length,
-      missing: facilityReportQueue.filter((row) => row.status === "Missing Contact").length,
-    };
-  }, [facilityReportQueue]);
 
   const reportHistoryFiltered = useMemo(() => {
     return (reportHistory || []).filter((record) => {
@@ -13886,6 +13917,14 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
     });
     return issues;
   }, [canonicalReportingModel]);
+  const unresolvedOpeningRisk = useMemo(() => canonicalReportingModel.dataQuality.some((issue) => {
+    if (issue.issue === "Missing Facility ID") return true;
+    if (issue.recordType !== "Requisition" || !["Ambiguous Facility", "Unmapped Facility"].includes(issue.issue)) return false;
+    const record = canonicalReportingModel.requisitions.find((candidate) => (
+      candidate.requisitionId === issue.requisitionId || candidate.id === issue.identifier
+    ));
+    return !record || isLiveRequisition(record.source);
+  }), [canonicalReportingModel]);
 
   const selectedReportEligibilityScope = useMemo(() => ({
     all: selectedFacility === "All Facilities" && selectedFacilityReports.length === 0 && facilityReportQueueFiltered.length === facilityReportQueue.length,
@@ -13908,10 +13947,38 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
         requisitionIds: row.activeReqs.map((req) => req.id).filter(Boolean),
         candidateIds: row.candidates.map((candidate) => candidate.id).filter(Boolean),
       };
-      const issues = reportingActionEligibility(reportValidationIssues, scope).scopedIssues;
-      return withFacilityReadiness(row, issues);
+      const eligibility = reportingActionEligibility(reportValidationIssues, scope);
+      const outcome = deriveNoOpeningFacilityOutcome({
+        row,
+        policy: noOpeningsPolicy,
+        weeklyDecision: noOpeningWeeklyDecisions[row.facilityId],
+        eligibility,
+        hasTemplate: standardNoOpeningsTemplateAvailable,
+        unresolvedOpeningRisk,
+      });
+      return withFacilityReadiness(applyNoOpeningOutcome(row, outcome), eligibility.scopedIssues);
     }),
-    [facilityReportQueue, reportValidationIssues],
+    [facilityReportQueue, reportValidationIssues, noOpeningsPolicy, noOpeningWeeklyDecisions, standardNoOpeningsTemplateAvailable, unresolvedOpeningRisk],
+  );
+  const selectedFacilityPolicyRows = useMemo(() => {
+    const selected = new Set(selectedFacilityReports);
+    return facilityReadinessRows.filter((row) => selected.has(row.id) || selected.has(row.facility));
+  }, [selectedFacilityReports, facilityReadinessRows]);
+  const selectedFacilityActionRows = useMemo(
+    () => reportActionEligibleRows(selectedFacilityPolicyRows),
+    [selectedFacilityPolicyRows],
+  );
+  const selectedFacilityActionEligibility = useMemo(
+    () => reportingActionEligibility(reportValidationIssues, {
+      facilityIds: selectedFacilityActionRows.map((row) => row.facilityId).filter(Boolean),
+      requisitionIds: selectedFacilityActionRows.flatMap((row) => row.activeReqs.map((req) => req.id)).filter(Boolean),
+      candidateIds: selectedFacilityActionRows.flatMap((row) => row.candidates.map((candidate) => candidate.id)).filter(Boolean),
+    }),
+    [reportValidationIssues, selectedFacilityActionRows],
+  );
+  const reportCompletionSummary = useMemo(
+    () => noOpeningReportingSummary(facilityReadinessRows),
+    [facilityReadinessRows],
   );
   const facilityReadinessMatchingRows = useMemo(
     () => filterFacilityReadinessRows(facilityReadinessRows, facilityReadinessFilters),
@@ -13982,7 +14049,7 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
     ].join(NL);
   }
 
-  function facilityReportBundle(rows = selectedFacilityReportRows) {
+  function facilityReportBundle(rows = selectedFacilityActionRows) {
     const sourceRows = rows.length ? rows : facilityReportQueueFiltered;
     const header = [
       `${selectedReportType} | ${selectedRecipientGroup}`,
@@ -14323,7 +14390,7 @@ function rowifyCandidate(item = {}) {
     return cSuiteEmailContent(rows).body;
   }
 
-  function selectedAudienceEmailContent(rows = selectedFacilityReportRows) {
+  function selectedAudienceEmailContent(rows = selectedFacilityActionRows) {
     const sourceRows = rows.length ? rows : facilityReportQueueFiltered;
     if (selectedReportType === "Regional Manager Summary") return regionalEmailContent(sourceRows);
     if (selectedReportType === "C-Suite Leadership Report") return cSuiteEmailContent(sourceRows);
@@ -14337,7 +14404,7 @@ function rowifyCandidate(item = {}) {
     };
   }
 
-  function selectedAudienceEmailBody(rows = selectedFacilityReportRows) {
+  function selectedAudienceEmailBody(rows = selectedFacilityActionRows) {
     return selectedAudienceEmailContent(rows).body;
   }
 
@@ -14434,12 +14501,17 @@ function rowifyCandidate(item = {}) {
     };
   }
 
-  function eligibilityForReportRows(rows = selectedFacilityReportRows) {
-    if (rows === selectedFacilityReportRows) return selectedReportEligibility;
+  function policyRowsForReportAction(rows = selectedFacilityActionRows) {
+    const ids = new Set((rows || []).map((row) => row.facilityId || row.id).filter(Boolean));
+    return reportActionEligibleRows(facilityReadinessRows.filter((row) => ids.has(row.facilityId || row.id)));
+  }
+
+  function eligibilityForReportRows(rows = selectedFacilityActionRows) {
+    if (rows === selectedFacilityActionRows) return selectedFacilityActionEligibility;
     return reportingActionEligibility(reportValidationIssues, reportingScopeForRows(rows));
   }
 
-  function blockReportAction(action, rows = selectedFacilityReportRows, label = "This report action") {
+  function blockReportAction(action, rows = selectedFacilityActionRows, label = "This report action") {
     const eligibility = eligibilityForReportRows(rows);
     if (eligibility[action]) return false;
     const reasons = eligibility.reasonsByAction[action] || [];
@@ -14459,8 +14531,8 @@ function rowifyCandidate(item = {}) {
     });
   }
 
-  function previewSelectedFacilityReports(rows = selectedFacilityReportRows) {
-    const sourceRows = rows;
+  function previewSelectedFacilityReports(rows = selectedFacilityActionRows) {
+    const sourceRows = policyRowsForReportAction(rows);
     if (!sourceRows.length) {
       setCopyNotice("Select at least one facility report before previewing.");
       return;
@@ -14474,7 +14546,7 @@ function rowifyCandidate(item = {}) {
   }
 
   function copySelectedFacilityReports() {
-    const rows = selectedFacilityReportRows;
+    const rows = selectedFacilityActionRows;
     if (!rows.length) {
       setCopyNotice("Select at least one facility report before copying.");
       return;
@@ -14486,13 +14558,13 @@ function rowifyCandidate(item = {}) {
   }
 
   function copyReportEmailContent(value, label = "Email content") {
-    if (blockReportAction("canPrepareEmail", selectedFacilityReportRows, `Copying ${label.toLowerCase()}`)) return;
+    if (blockReportAction("canPrepareEmail", selectedFacilityActionRows, `Copying ${label.toLowerCase()}`)) return;
     safeCopy(value);
     setCopyNotice(`${label} copied. Report status was not changed.`);
   }
 
   function exportSelectedFacilityReports() {
-    const rows = selectedFacilityReportRows;
+    const rows = selectedFacilityActionRows;
     if (!rows.length) {
       setCopyNotice("Select at least one facility report before downloading.");
       return;
@@ -14508,12 +14580,16 @@ function rowifyCandidate(item = {}) {
   }
 
   function exportWeeklyFullDataWorkbook() {
-    if (blockReportAction("canDownloadWorkbook", selectedFacilityReportRows, "All-facility workbook download")) return;
+    if (blockReportAction("canDownloadWorkbook", selectedFacilityActionRows, "All-facility workbook download")) return;
     exportFullDataWorkbook();
   }
 
   function downloadGeneratedFacilityReport(row) {
-    const rows = [row];
+    const rows = policyRowsForReportAction([row]);
+    if (!rows.length) {
+      setCopyNotice("No report is required for this facility under the current no-openings policy.");
+      return;
+    }
     if (blockReportAction("canDownloadWorkbook", rows, "Facility workbook download")) return;
     const model = facilityReportModel(row.facilityId || row.id || row.facility);
     downloadExcelWorkbook(
@@ -14532,7 +14608,7 @@ function rowifyCandidate(item = {}) {
   }
 
   function exportFacilityWorkbooks() {
-    const rows = selectedFacilityReportRows;
+    const rows = selectedFacilityActionRows;
     if (!rows.length) {
       setCopyNotice("Select at least one facility report before downloading.");
       return;
@@ -14549,9 +14625,9 @@ function rowifyCandidate(item = {}) {
     setCopyNotice(`${rows.length} facility report${rows.length === 1 ? "" : "s"} downloaded in one Excel file. Report status was not changed.`);
   }
 
-  function saveReportsToHistory(rows = selectedFacilityReportRows, status = "Draft Generated") {
+  function saveReportsToHistory(rows = selectedFacilityActionRows, status = "Draft Generated") {
     const now = new Date().toISOString();
-    const sourceRows = rows;
+    const sourceRows = policyRowsForReportAction(rows);
     if (!sourceRows.length) {
       setCopyNotice("Select at least one facility report before saving report history.");
       return;
@@ -14589,17 +14665,17 @@ function rowifyCandidate(item = {}) {
   }
 
   function markSelectedFacilityReportsComplete() {
-    if (!selectedFacilityReportRows.length) {
+    if (!selectedFacilityActionRows.length) {
       setCopyNotice("Select at least one facility report before marking it complete.");
       return;
     }
-    if (blockReportAction("canMarkReady", selectedFacilityReportRows, "Mark Complete")) return;
-    markFacilityReports(selectedFacilityReportRows, "Manually Completed");
+    if (blockReportAction("canMarkReady", selectedFacilityActionRows, "Mark Complete")) return;
+    markFacilityReports(selectedFacilityActionRows, "Manually Completed");
     setCopyNotice("Selected facility reports marked complete.");
   }
 
   function markSelectedFacilityReportsSent() {
-    const rows = selectedFacilityReportRows;
+    const rows = selectedFacilityActionRows;
     if (!rows.length) {
       setCopyNotice("No ready facility reports selected to mark sent.");
       return;
@@ -14611,7 +14687,7 @@ function rowifyCandidate(item = {}) {
   }
 
   function sendReadyFacilityReports() {
-    const readyRows = selectedFacilityReportRows.filter((row) => !["Missing Contact", "Needs Review"].includes(row.status));
+    const readyRows = selectedFacilityActionRows.filter((row) => !["Missing Contact", "Needs Review", "Blocked", "No Report Required"].includes(row.status));
     if (!readyRows.length) {
       setCopyNotice("No ready reports to send. Resolve missing contacts or review items first.");
       return;
@@ -19137,11 +19213,11 @@ function rowifyCandidate(item = {}) {
                 <div style={{ display: "grid", gap: 12, gridTemplateColumns: isMedium ? "1fr" : "minmax(0, 1fr) 280px", alignItems: "start" }}>
                   <div style={{ display: "grid", gap: 10 }}>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <Button primary onClick={previewSelectedFacilityReports} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canCreateFinalPreview}>{facilityBulkActionLabel("Preview", selectedFacilityReportRows.length)}</Button>
-                      <Button subtle onClick={copySelectedFacilityReports} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canPrepareEmail}>{facilityBulkActionLabel("Copy Email", selectedFacilityReportRows.length)}</Button>
-                      <Button subtle onClick={exportSelectedFacilityReports} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canDownloadWorkbook}>{facilityBulkActionLabel("Download", selectedFacilityReportRows.length)}</Button>
-                      <Button subtle onClick={markSelectedFacilityReportsComplete} disabled={!allowManualCompletion || !selectedFacilityReportRows.length || !selectedReportEligibility.canMarkReady}>{facilityBulkActionLabel("Mark Complete", selectedFacilityReportRows.length)}</Button>
-                      <Button primary onClick={sendReadyFacilityReports} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canPrepareEmail || !selectedReportEligibility.canMarkReady}>{facilityBulkActionLabel("Prepare", selectedFacilityReportRows.length)}</Button>
+                      <Button primary onClick={previewSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canCreateFinalPreview}>{facilityBulkActionLabel("Preview", selectedFacilityActionRows.length)}</Button>
+                      <Button subtle onClick={copySelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail}>{facilityBulkActionLabel("Copy Email", selectedFacilityActionRows.length)}</Button>
+                      <Button subtle onClick={exportSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canDownloadWorkbook}>{facilityBulkActionLabel("Download", selectedFacilityActionRows.length)}</Button>
+                      <Button subtle onClick={markSelectedFacilityReportsComplete} disabled={!allowManualCompletion || !selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canMarkReady}>{facilityBulkActionLabel("Mark Complete", selectedFacilityActionRows.length)}</Button>
+                      <Button primary onClick={sendReadyFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail || !selectedFacilityActionEligibility.canMarkReady}>{facilityBulkActionLabel("Prepare", selectedFacilityActionRows.length)}</Button>
                     </div>
                     <div style={{ overflowX: "auto" }}>
                       <div style={{ minWidth: isNarrow ? 760 : 0, display: "grid", gap: 8 }}>
@@ -19197,13 +19273,13 @@ function rowifyCandidate(item = {}) {
                   <Field label="Status Filter"><SelectInput value={selectedStatusFilter} onChange={(event) => setSelectedStatusFilter(event.target.value)} options={reportStatusOptions} /></Field>
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <Button primary onClick={previewSelectedFacilityReports} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canCreateFinalPreview}>{facilityBulkActionLabel("Preview", selectedFacilityReportRows.length)}</Button>
-                  <Button subtle onClick={() => saveReportsToHistory(selectedFacilityReportRows, "Draft Generated")} disabled={!selectedFacilityReportRows.length}>{facilityBulkActionLabel("Save Draft", selectedFacilityReportRows.length)}</Button>
-                  <Button subtle onClick={copySelectedFacilityReports} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canPrepareEmail}>{facilityBulkActionLabel("Copy Email", selectedFacilityReportRows.length)}</Button>
-                  <Button subtle onClick={exportSelectedFacilityReports} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canDownloadWorkbook}>{facilityBulkActionLabel("Download", selectedFacilityReportRows.length)}</Button>
-                  <Button subtle onClick={exportFacilityWorkbooks} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canDownloadWorkbook}>{facilityBulkActionLabel("Download Separate", selectedFacilityReportRows.length)}</Button>
-                  <Button subtle onClick={markSelectedFacilityReportsComplete} disabled={!allowManualCompletion || !selectedFacilityReportRows.length || !selectedReportEligibility.canMarkReady}>{facilityBulkActionLabel("Mark Complete", selectedFacilityReportRows.length)}</Button>
-                  <Button primary onClick={sendReadyFacilityReports} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canPrepareEmail || !selectedReportEligibility.canMarkReady}>{facilityBulkActionLabel("Prepare", selectedFacilityReportRows.length)}</Button>
+                  <Button primary onClick={previewSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canCreateFinalPreview}>{facilityBulkActionLabel("Preview", selectedFacilityActionRows.length)}</Button>
+                  <Button subtle onClick={() => saveReportsToHistory(selectedFacilityActionRows, "Draft Generated")} disabled={!selectedFacilityActionRows.length}>{facilityBulkActionLabel("Save Draft", selectedFacilityActionRows.length)}</Button>
+                  <Button subtle onClick={copySelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail}>{facilityBulkActionLabel("Copy Email", selectedFacilityActionRows.length)}</Button>
+                  <Button subtle onClick={exportSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canDownloadWorkbook}>{facilityBulkActionLabel("Download", selectedFacilityActionRows.length)}</Button>
+                  <Button subtle onClick={exportFacilityWorkbooks} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canDownloadWorkbook}>{facilityBulkActionLabel("Download Separate", selectedFacilityActionRows.length)}</Button>
+                  <Button subtle onClick={markSelectedFacilityReportsComplete} disabled={!allowManualCompletion || !selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canMarkReady}>{facilityBulkActionLabel("Mark Complete", selectedFacilityActionRows.length)}</Button>
+                  <Button primary onClick={sendReadyFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail || !selectedFacilityActionEligibility.canMarkReady}>{facilityBulkActionLabel("Prepare", selectedFacilityActionRows.length)}</Button>
                 </div>
                 <Accordion title="Report Sections" subtitle="Choose what goes in the Excel attachment. Email stays concise." defaultOpen={false}>
                   <div style={{ display: "grid", gap: 8, gridTemplateColumns: isNarrow ? "1fr" : "repeat(3, minmax(0, 1fr))" }}>
@@ -19247,6 +19323,28 @@ function rowifyCandidate(item = {}) {
           <div style={{ display: "grid", gap: 18 }}>
             <Card title="Facility Readiness" subtitle={`${facilityReadinessStatusCounts["Needs Action"]} facilit${facilityReadinessStatusCounts["Needs Action"] === 1 ? "y needs" : "ies need"} action. Filters use AND behavior and selection remains explicit.`} compact>
               <div style={{ display: "grid", gap: 14 }}>
+                <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 12, background: THEME.panelAlt, display: "grid", gap: 10 }}>
+                  <div>
+                    <strong>No-opening facility policy</strong>
+                    <div style={{ color: THEME.muted, fontSize: 12, marginTop: 3 }}>
+                      Organization policy: {NO_OPENINGS_POLICY_OPTIONS.find((option) => option.value === noOpeningsPolicy)?.label}. “Ask me each week” choices are session-only and reset on reload.
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gap: 8, gridTemplateColumns: isNarrow ? "1fr" : "minmax(260px, 1fr) auto", alignItems: "end" }}>
+                    <Field label="Facilities with no active openings">
+                      <SelectInput
+                        value={noOpeningsPolicySelection}
+                        onChange={(event) => setNoOpeningsPolicyDraft(event.target.value)}
+                        options={NO_OPENINGS_POLICY_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
+                      />
+                    </Field>
+                    <Button primary onClick={saveNoOpeningsPolicy} disabled={Boolean(reportAutomation.noOpeningsPolicy) && (!noOpeningsPolicyDraft || noOpeningsPolicyDraft === noOpeningsPolicy)}>Save Policy</Button>
+                  </div>
+                  <div style={{ color: THEME.muted, fontSize: 12 }}>
+                    {NO_OPENINGS_POLICY_OPTIONS.find((option) => option.value === noOpeningsPolicySelection)?.description}
+                    {!reportAutomation.noOpeningsPolicy ? " This value is currently interpreted from existing settings and will not be written until Save Policy is selected." : ""}
+                  </div>
+                </div>
                 <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 999, height: 12, background: THEME.panelAlt, overflow: "hidden" }}>
                   <div style={{ width: `${reportCompletionSummary.total ? Math.round((reportCompletionSummary.done / reportCompletionSummary.total) * 100) : 0}%`, height: "100%", background: `linear-gradient(90deg, ${THEME.primary2}, ${THEME.green})` }} />
                 </div>
@@ -19254,7 +19352,7 @@ function rowifyCandidate(item = {}) {
                   <MiniStat label="Needs Action" value={facilityReadinessStatusCounts["Needs Action"]} tone={facilityReadinessStatusCounts["Needs Action"] ? "High" : "Low"} compact />
                   <MiniStat label="Blocked" value={facilityReadinessStatusCounts.Blocked} tone={facilityReadinessStatusCounts.Blocked ? "High" : "Low"} compact />
                   <MiniStat label="Needs Review" value={facilityReadinessStatusCounts["Needs Review"]} tone={facilityReadinessStatusCounts["Needs Review"] ? "Medium" : "Low"} compact />
-                  <MiniStat label="Ready / Sent" value={facilityReadinessStatusCounts.Ready + facilityReadinessStatusCounts.Sent} tone="Low" compact />
+                  <MiniStat label="No Report Required" value={facilityReadinessStatusCounts["No Report Required"]} tone="Low" compact />
                 </div>
                 <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : "minmax(240px, 1.4fr) repeat(3, minmax(150px, 1fr))" }}>
                   <Field label="Search Facilities">
@@ -19319,9 +19417,10 @@ function rowifyCandidate(item = {}) {
                   <div style={{ position: "sticky", top: 8, zIndex: 10, border: `1px solid ${THEME.primary2}`, borderRadius: 8, padding: 10, background: THEME.blueBg, boxShadow: THEME.shadow, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                     <strong>{facilityReadinessSelection.selectedCount} selected</strong>
                     {facilityReadinessSelection.hiddenSelectedCount ? <span style={{ color: THEME.muted }}>{facilityReadinessSelection.hiddenSelectedCount} hidden by current filters</span> : null}
-                    <Button primary onClick={() => previewSelectedFacilityReports()} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canCreateFinalPreview}>{facilityBulkActionLabel("Preview", selectedFacilityReportRows.length)}</Button>
-                    <Button subtle onClick={exportSelectedFacilityReports} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canDownloadWorkbook}>{facilityBulkActionLabel("Download", selectedFacilityReportRows.length)}</Button>
-                    <Button subtle onClick={markSelectedFacilityReportsComplete} disabled={!allowManualCompletion || !selectedFacilityReportRows.length || !selectedReportEligibility.canMarkReady}>{facilityBulkActionLabel("Mark Complete", selectedFacilityReportRows.length)}</Button>
+                    {selectedFacilityPolicyRows.length !== selectedFacilityActionRows.length ? <span style={{ color: THEME.muted }}>{selectedFacilityPolicyRows.length - selectedFacilityActionRows.length} ineligible under the current policy</span> : null}
+                    <Button primary onClick={() => previewSelectedFacilityReports()} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canCreateFinalPreview}>{facilityBulkActionLabel("Preview", selectedFacilityActionRows.length)}</Button>
+                    <Button subtle onClick={exportSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canDownloadWorkbook}>{facilityBulkActionLabel("Download", selectedFacilityActionRows.length)}</Button>
+                    <Button subtle onClick={markSelectedFacilityReportsComplete} disabled={!allowManualCompletion || !selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canMarkReady}>{facilityBulkActionLabel("Mark Complete", selectedFacilityActionRows.length)}</Button>
                     <Button subtle onClick={clearFacilityReportSelection}>Clear Selection</Button>
                   </div>
                 ) : null}
@@ -19334,12 +19433,17 @@ function rowifyCandidate(item = {}) {
                       <div key={row.id} style={{ display: "grid", gridTemplateColumns: "34px 1.3fr 110px 120px 1fr 180px", gap: 10, alignItems: "center", border: `1px solid ${row.readiness === "Blocked" ? THEME.red : row.readiness === "Needs Review" ? THEME.amber : selectedFacilityReports.includes(row.id) ? THEME.primary2 : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: selectedFacilityReports.includes(row.id) ? THEME.blueBg : THEME.panel }}>
                         <input type="checkbox" checked={selectedFacilityReports.includes(row.id)} onChange={(event) => toggleFacilityReportSelection(row.id, event.target.checked)} aria-label={`Select ${row.facility} readiness report`} />
                         <div><strong>{row.facility}</strong><div style={{ color: THEME.muted, fontSize: 11 }}>{[row.facilityId, row.regionName, row.originalFacilityLabel && row.originalFacilityLabel !== row.facility ? `Original: ${row.originalFacilityLabel}` : ""].filter(Boolean).join(" | ")}</div></div>
-                        <span style={{ color: THEME.muted }}>{row.report}</span>
+                        <span style={{ color: THEME.muted }}>{row.report}{row.noOpeningOutcomeLabel ? <><br /><strong style={{ color: row.readiness === "Blocked" ? THEME.red : row.readiness === "Needs Review" ? THEME.amber : THEME.green }}>{row.noOpeningOutcomeLabel}</strong></> : null}</span>
                         <Badge tone={row.readiness === "Blocked" ? "High" : row.readiness === "Needs Review" ? "Medium" : ["Ready", "Sent"].includes(row.readiness) ? "Low" : "Interview"}>{row.readiness}</Badge>
                         <span style={{ color: THEME.muted }}>{row.lastAction}</span>
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          {row.noOpeningOutcome?.applies && row.readiness !== "Blocked" && noOpeningsPolicy === NO_OPENINGS_POLICIES.ASK_WEEKLY && !noOpeningWeeklyDecisions[row.facilityId] ? <>
+                            <Button subtle onClick={() => setWeeklyNoOpeningDecision(row.facilityId, NO_OPENINGS_WEEKLY_DECISIONS.CREATE_STANDARD_REPORT)} style={{ padding: "6px 8px", fontSize: 11 }}>Create Standard Report This Week</Button>
+                            <Button subtle onClick={() => setWeeklyNoOpeningDecision(row.facilityId, NO_OPENINGS_WEEKLY_DECISIONS.NO_REPORT_NEEDED)} style={{ padding: "6px 8px", fontSize: 11 }}>No Report Needed This Week</Button>
+                          </> : null}
+                          {row.noOpeningOutcome?.applies && noOpeningsPolicy === NO_OPENINGS_POLICIES.ASK_WEEKLY && noOpeningWeeklyDecisions[row.facilityId] ? <Button subtle onClick={() => undoNoOpeningWeeklyDecision(row.facilityId)} style={{ padding: "6px 8px", fontSize: 11 }}>Undo Weekly Decision</Button> : null}
                           {row.readinessIssues.filter((issue) => issue.resolutionAction).slice(0, 2).map((issue, index) => <Button key={`${issue.code}-${issue.requisitionId || issue.facilityId}-${index}`} subtle onClick={() => openReportingIssueCorrection(issue)} style={{ padding: "6px 8px", fontSize: 11 }}>{issue.resolutionAction}</Button>)}
-                          {!row.readinessIssues.some((issue) => issue.resolutionAction) ? <Button subtle disabled={!eligibilityForReportRows([row]).canCreateFinalPreview} onClick={() => { setReportsTab("audience"); setSelectedFacility(row.facility); setSelectedFacilityReports([row.id]); previewSelectedFacilityReports([row]); }} style={{ padding: "6px 8px", fontSize: 11 }}>{row.action}</Button> : null}
+                          {!row.readinessIssues.some((issue) => issue.resolutionAction) && row.reportActionEligible !== false ? <Button subtle disabled={!eligibilityForReportRows([row]).canCreateFinalPreview} onClick={() => { setReportsTab("audience"); setSelectedFacility(row.facility); setSelectedFacilityReports([row.id]); previewSelectedFacilityReports([row]); }} style={{ padding: "6px 8px", fontSize: 11 }}>{row.action}</Button> : null}
                         </div>
                       </div>
                     )) : <EmptyState>No facilities match the current Needs Action filters.</EmptyState>}
@@ -19431,8 +19535,8 @@ function rowifyCandidate(item = {}) {
                     <Button primary onClick={previewSelectedFacilityReports} disabled={!selectedReportEligibility.canCreateFinalPreview}>Preview Email</Button>
                     <Button subtle onClick={() => copyReportEmailContent(weeklyReport || selectedAudienceEmailBody(), "Email body")} disabled={!selectedReportEligibility.canPrepareEmail}>Copy Email</Button>
                     <Button subtle onClick={() => copyReportEmailContent(weeklySubject, "Email subject")} disabled={!selectedReportEligibility.canPrepareEmail}>Copy Subject</Button>
-                    <Button subtle onClick={() => saveReportsToHistory(selectedFacilityReportRows, "Reviewed")}>Mark Reviewed</Button>
-                    <Button subtle onClick={() => saveReportsToHistory(selectedFacilityReportRows, "Held for Approval")}>Hold for Approval</Button>
+                    <Button subtle disabled={!selectedFacilityActionRows.length} onClick={() => saveReportsToHistory(selectedFacilityActionRows, "Reviewed")}>Mark Reviewed</Button>
+                    <Button subtle disabled={!selectedFacilityActionRows.length} onClick={() => saveReportsToHistory(selectedFacilityActionRows, "Held for Approval")}>Hold for Approval</Button>
                     <Button subtle disabled>Send Later</Button>
                   </div>
                   <div style={{ border: `1px dashed ${THEME.border}`, borderRadius: 6, padding: 14, background: THEME.panelAlt, whiteSpace: "pre-wrap", lineHeight: 1.65 }}>{weeklyReport || selectedAudienceEmailBody()}</div>
@@ -19443,15 +19547,15 @@ function rowifyCandidate(item = {}) {
             {reportsHubTab === "generated" || reportsHubTab === "facility" || reportsHubTab === "regional" || reportsHubTab === "csuite" ? (
               <Card title="Generated Reports" subtitle="Report-ready audience drafts based on the current Weekly Cleanup selections." compact>
                 <div style={{ display: "grid", gap: 10 }}>
-                  {selectedFacilityReportRows.map((row) => {
+                  {selectedFacilityActionRows.map((row) => {
                     const model = facilityReportModel(row.facilityId || row.id || row.facility);
                     const content = facilityEmailContent(model, row.reportType || selectedReportType);
                     const subject = content.subject;
                     const rowEligibility = eligibilityForReportRows([row]);
                     return <div key={row.id} style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "1.3fr 1fr 1fr auto", gap: 10, alignItems: "center", border: `1px solid ${model.missingContact ? THEME.red : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panel }}><div><strong>{model.facility}</strong><div style={{ color: THEME.muted, fontSize: 12 }}>{subject}</div></div><Badge tone={model.missingContact ? "High" : row.status === "Needs Review" ? "Medium" : "Low"}>{model.missingContact ? "Blocked, Missing Contact" : (LEGACY_REPORT_STATUS_DISPLAY[row.status] || row.status)}</Badge><span style={{ color: THEME.muted }}>{facilityWorkbookSheets(model).length} attachment tabs</span><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button subtle disabled={!rowEligibility.canCreateFinalPreview} onClick={() => { setWeeklySubject(subject); setWeeklyReport(content.body); }}>Preview</Button><Button subtle disabled={!rowEligibility.canDownloadWorkbook} onClick={() => downloadGeneratedFacilityReport(row)}>Download</Button></div></div>;
                   })}
-                  {selectedReportType === "Regional Manager Summary" ? <Card compact title="Regional Manager Email" subtitle="Grouped by selected facilities."><div style={{ whiteSpace: "pre-wrap", lineHeight: 1.65 }}>{regionalEmailBody(selectedFacilityReportRows)}</div></Card> : null}
-                  {selectedReportType === "C-Suite Leadership Report" ? <Card compact title="C-Suite Leadership Email" subtitle="High-level leadership visibility."><div style={{ whiteSpace: "pre-wrap", lineHeight: 1.65 }}>{cSuiteEmailBody(selectedFacilityReportRows)}</div></Card> : null}
+                  {selectedReportType === "Regional Manager Summary" ? <Card compact title="Regional Manager Email" subtitle="Grouped by selected facilities."><div style={{ whiteSpace: "pre-wrap", lineHeight: 1.65 }}>{regionalEmailBody(selectedFacilityActionRows)}</div></Card> : null}
+                  {selectedReportType === "C-Suite Leadership Report" ? <Card compact title="C-Suite Leadership Email" subtitle="High-level leadership visibility."><div style={{ whiteSpace: "pre-wrap", lineHeight: 1.65 }}>{cSuiteEmailBody(selectedFacilityActionRows)}</div></Card> : null}
                 </div>
               </Card>
             ) : null}
@@ -19485,7 +19589,7 @@ function rowifyCandidate(item = {}) {
                   <Button subtle onClick={exportAtsUpdatePacketExcel}>Download ATS Packet Excel</Button>
                 </div>
                 <div style={{ marginTop: 14, display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : "repeat(2, minmax(0, 1fr))" }}>
-                  <MiniStat label="Selected Facilities" value={selectedFacilityReportRows.length} tone="Interview" compact />
+                  <MiniStat label="Report-eligible Selected Facilities" value={selectedFacilityActionRows.length} tone="Interview" compact />
                   <MiniStat label="Attachment Tabs" value={buildAllFacilityWorkbookSheets().length} tone="Low" compact />
                 </div>
               </Card>
