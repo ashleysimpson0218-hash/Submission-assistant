@@ -94,6 +94,17 @@ import {
   reportStatusCountsAsComplete,
 } from "./weeklyReportingEligibility";
 import {
+  DEFAULT_FACILITY_READINESS_FILTERS,
+  FACILITY_READINESS_OPTIONS,
+  buildReportingCorrectionRoute,
+  facilityBulkActionLabel,
+  facilityReadinessCounts,
+  facilitySelectionSummary,
+  filterFacilityReadinessRows,
+  selectFacilityIds,
+  withFacilityReadiness,
+} from "./facilityReadinessNavigation";
+import {
   DEFAULT_WEEKLY_REPORT_TEMPLATES,
   WEEKLY_REPORT_TEMPLATE_KEYS,
   WEEKLY_REPORT_TEMPLATE_TOKENS,
@@ -5979,6 +5990,9 @@ function RecruiterApp() {
   const [selectedRecipientGroup, setSelectedRecipientGroup] = useState("Facility Contacts");
   const [selectedStatusFilter, setSelectedStatusFilter] = useState("All");
   const [selectedFacilityReports, setSelectedFacilityReports] = useState([]);
+  const [facilityReadinessFilters, setFacilityReadinessFilters] = useState(() => ({ ...DEFAULT_FACILITY_READINESS_FILTERS }));
+  const [facilityReadinessVisibleLimit, setFacilityReadinessVisibleLimit] = useState(20);
+  const [reportCorrectionTarget, setReportCorrectionTarget] = useState(null);
   const [completedFacilityReports, setCompletedFacilityReports] = useState({});
   const [generatedReportPreview, setGeneratedReportPreview] = useState("");
   const [reportHistory, setReportHistory] = useState([]);
@@ -13790,6 +13804,8 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
         facilityId,
         facility,
         originalFacilityLabel: facilityRecord.siteName,
+        aliases: site?.aliases || [],
+        facilityCode: site?.facilityCode || "",
         regionId: facilityRecord.regionId || "",
         regionName: facilityRecord.regionName || "",
         report: facilityReqs.length ? "Weekly" : "No Openings",
@@ -13824,9 +13840,9 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
 
   const selectedFacilityReportRows = useMemo(() => {
     const selected = new Set(selectedFacilityReports);
-    const rows = selected.size ? facilityReportQueueFiltered.filter((row) => selected.has(row.id) || selected.has(row.facility)) : facilityReportQueueFiltered;
-    return rows.length ? rows : facilityReportQueueFiltered;
-  }, [selectedFacilityReports, facilityReportQueueFiltered]);
+    if (!selected.size) return [];
+    return facilityReportQueue.filter((row) => selected.has(row.id) || selected.has(row.facility));
+  }, [selectedFacilityReports, facilityReportQueue]);
 
   const reportCompletionSummary = useMemo(() => {
     const done = facilityReportQueue.filter((row) => reportStatusCountsAsComplete(row.status)).length;
@@ -13884,6 +13900,44 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
   const reportIssueGroups = useMemo(
     () => groupReportingIssues(reportValidationIssues, selectedReportEligibilityScope),
     [reportValidationIssues, selectedReportEligibilityScope],
+  );
+  const facilityReadinessRows = useMemo(
+    () => facilityReportQueue.map((row) => {
+      const scope = {
+        facilityIds: [row.facilityId],
+        requisitionIds: row.activeReqs.map((req) => req.id).filter(Boolean),
+        candidateIds: row.candidates.map((candidate) => candidate.id).filter(Boolean),
+      };
+      const issues = reportingActionEligibility(reportValidationIssues, scope).scopedIssues;
+      return withFacilityReadiness(row, issues);
+    }),
+    [facilityReportQueue, reportValidationIssues],
+  );
+  const facilityReadinessMatchingRows = useMemo(
+    () => filterFacilityReadinessRows(facilityReadinessRows, facilityReadinessFilters),
+    [facilityReadinessRows, facilityReadinessFilters],
+  );
+  const facilityReadinessVisibleRows = useMemo(
+    () => facilityReadinessMatchingRows.slice(0, facilityReadinessVisibleLimit),
+    [facilityReadinessMatchingRows, facilityReadinessVisibleLimit],
+  );
+  const facilityReadinessStatusCounts = useMemo(
+    () => facilityReadinessCounts(facilityReadinessRows, facilityReadinessFilters),
+    [facilityReadinessRows, facilityReadinessFilters],
+  );
+  const facilityReadinessSelection = useMemo(
+    () => facilitySelectionSummary(selectedFacilityReports, facilityReadinessVisibleRows),
+    [selectedFacilityReports, facilityReadinessVisibleRows],
+  );
+  const facilityReadinessRegions = useMemo(
+    () => Array.from(new Map(facilityReadinessRows.filter((row) => row.regionId).map((row) => [row.regionId, row.regionName || row.regionId])).entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [facilityReadinessRows],
+  );
+  const facilityReadinessIssueGroups = useMemo(
+    () => groupReportingIssues(reportValidationIssues, { all: true }),
+    [reportValidationIssues],
   );
 
   const routingPreviewSummary = useMemo(() => ({
@@ -14406,7 +14460,11 @@ function rowifyCandidate(item = {}) {
   }
 
   function previewSelectedFacilityReports(rows = selectedFacilityReportRows) {
-    const sourceRows = rows.length ? rows : selectedFacilityReportRows;
+    const sourceRows = rows;
+    if (!sourceRows.length) {
+      setCopyNotice("Select at least one facility report before previewing.");
+      return;
+    }
     if (blockReportAction("canCreateFinalPreview", sourceRows, "Final report preview")) return;
     const content = selectedAudienceEmailContent(sourceRows);
     setGeneratedReportPreview(content.body);
@@ -14417,6 +14475,10 @@ function rowifyCandidate(item = {}) {
 
   function copySelectedFacilityReports() {
     const rows = selectedFacilityReportRows;
+    if (!rows.length) {
+      setCopyNotice("Select at least one facility report before copying.");
+      return;
+    }
     if (blockReportAction("canPrepareEmail", rows, "Copying the report email")) return;
     const body = facilityReportBundle(rows);
     safeCopy(body);
@@ -14431,6 +14493,10 @@ function rowifyCandidate(item = {}) {
 
   function exportSelectedFacilityReports() {
     const rows = selectedFacilityReportRows;
+    if (!rows.length) {
+      setCopyNotice("Select at least one facility report before downloading.");
+      return;
+    }
     if (blockReportAction("canDownloadWorkbook", rows, "Workbook download")) return;
     if (rows.length === 1) {
       const model = facilityReportModel(rows[0].facilityId || rows[0].id || rows[0].facility);
@@ -14466,7 +14532,11 @@ function rowifyCandidate(item = {}) {
   }
 
   function exportFacilityWorkbooks() {
-    const rows = selectedFacilityReportRows.length ? selectedFacilityReportRows : facilityReportQueueFiltered;
+    const rows = selectedFacilityReportRows;
+    if (!rows.length) {
+      setCopyNotice("Select at least one facility report before downloading.");
+      return;
+    }
     if (blockReportAction("canDownloadWorkbook", rows, "Facility workbook download")) return;
     const sheets = rows.flatMap((row) => {
       const model = facilityReportModel(row.facilityId || row.id || row.facility);
@@ -14481,7 +14551,11 @@ function rowifyCandidate(item = {}) {
 
   function saveReportsToHistory(rows = selectedFacilityReportRows, status = "Draft Generated") {
     const now = new Date().toISOString();
-    const sourceRows = rows.length ? rows : selectedFacilityReportRows;
+    const sourceRows = rows;
+    if (!sourceRows.length) {
+      setCopyNotice("Select at least one facility report before saving report history.");
+      return;
+    }
     const nextRecords = sourceRows.map((row) => {
       const model = facilityReportModel(row.facilityId || row.id || row.facility);
       const missingContact = model.missingContact;
@@ -14515,13 +14589,17 @@ function rowifyCandidate(item = {}) {
   }
 
   function markSelectedFacilityReportsComplete() {
+    if (!selectedFacilityReportRows.length) {
+      setCopyNotice("Select at least one facility report before marking it complete.");
+      return;
+    }
     if (blockReportAction("canMarkReady", selectedFacilityReportRows, "Mark Complete")) return;
     markFacilityReports(selectedFacilityReportRows, "Manually Completed");
     setCopyNotice("Selected facility reports marked complete.");
   }
 
   function markSelectedFacilityReportsSent() {
-    const rows = selectedFacilityReportRows.length ? selectedFacilityReportRows : facilityReportQueueFiltered.filter((row) => !["Missing Contact", "Needs Review"].includes(row.status));
+    const rows = selectedFacilityReportRows;
     if (!rows.length) {
       setCopyNotice("No ready facility reports selected to mark sent.");
       return;
@@ -14551,6 +14629,55 @@ function rowifyCandidate(item = {}) {
 
   function toggleFacilityReportSelection(id, checked) {
     setSelectedFacilityReports((prev) => checked ? Array.from(new Set([...prev, id])) : prev.filter((item) => item !== id));
+  }
+
+  function updateFacilityReadinessFilter(key, value) {
+    setFacilityReadinessFilters((current) => ({ ...current, [key]: value }));
+    setFacilityReadinessVisibleLimit(20);
+  }
+
+  function selectAllVisibleFacilityReports() {
+    setSelectedFacilityReports((current) => selectFacilityIds(current, facilityReadinessVisibleRows));
+  }
+
+  function selectAllMatchingFacilityReports() {
+    setSelectedFacilityReports((current) => selectFacilityIds(current, facilityReadinessMatchingRows));
+  }
+
+  function clearFacilityReportSelection() {
+    setSelectedFacilityReports([]);
+  }
+
+  function returnToFacilityReadiness() {
+    const context = reportCorrectionTarget?.reportingContext;
+    if (context?.filters) setFacilityReadinessFilters({ ...context.filters });
+    if (context?.selectedFacilityIds) setSelectedFacilityReports([...context.selectedFacilityIds]);
+    if (context?.expandedIssueCode) setExpandedReportIssueCode(context.expandedIssueCode);
+    setActivePage("reports");
+    setReportsTab(context?.reportsTab || "facility");
+    setReportCorrectionTarget(null);
+  }
+
+  function openReportingIssueCorrection(issue) {
+    const target = buildReportingCorrectionRoute(issue, {
+      reportsTab: "facility",
+      filters: facilityReadinessFilters,
+      selectedFacilityIds: selectedFacilityReports,
+      expandedIssueCode: expandedReportIssueCode,
+    });
+    if (!target.recordId) {
+      setCopyNotice(`${target.action || "Correction"} could not open because the affected record has no stable ID.`);
+      return;
+    }
+    setReportCorrectionTarget(target);
+    if (target.page === "workspace") {
+      setSelectedId(target.recordId);
+      setActiveProfileTab("overview");
+      setTrackerPanelOpen(false);
+      setActivePage("workspace");
+      return;
+    }
+    setActivePage("positions");
   }
 
   function openReportAutomationSettings() {
@@ -15232,6 +15359,17 @@ function rowifyCandidate(item = {}) {
           </div>
 
         {candidateRouteKeys.includes(activePage) ? <CandidateSectionNavigator onChange={navigateToCandidateSection} /> : null}
+        {reportCorrectionTarget && activePage !== "reports" ? (
+          <div role="status" style={{ marginBottom: 14, border: `1px solid ${THEME.primary2}`, borderRadius: 8, padding: 12, background: THEME.blueBg, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <div>
+              <strong>{reportCorrectionTarget.action}: {reportCorrectionTarget.label || "reporting record"}</strong>
+              <div style={{ color: THEME.muted, fontSize: 12, marginTop: 3 }}>
+                Correct the highlighted {labelFromKey(reportCorrectionTarget.field)} field, save explicitly, then return to the same Facility Readiness view.
+              </div>
+            </div>
+            <Button subtle onClick={returnToFacilityReadiness}>Return to Facility Readiness</Button>
+          </div>
+        ) : null}
 
         {activePage === "home" ? (
           <RecruiterWorkspacePage
@@ -18999,11 +19137,11 @@ function rowifyCandidate(item = {}) {
                 <div style={{ display: "grid", gap: 12, gridTemplateColumns: isMedium ? "1fr" : "minmax(0, 1fr) 280px", alignItems: "start" }}>
                   <div style={{ display: "grid", gap: 10 }}>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <Button primary onClick={previewSelectedFacilityReports} disabled={!selectedReportEligibility.canCreateFinalPreview}>Preview Selected</Button>
-                      <Button subtle onClick={copySelectedFacilityReports} disabled={!facilityReportQueueFiltered.length || !selectedReportEligibility.canPrepareEmail}>Copy Selected</Button>
-                      <Button subtle onClick={exportSelectedFacilityReports} disabled={!facilityReportQueueFiltered.length || !selectedReportEligibility.canDownloadWorkbook}>Export Selected</Button>
-                      <Button subtle onClick={markSelectedFacilityReportsComplete} disabled={!allowManualCompletion || !facilityReportQueueFiltered.length || !selectedReportEligibility.canMarkReady}>Mark Complete</Button>
-                      <Button primary onClick={sendReadyFacilityReports} disabled={!facilityReportQueueFiltered.length || !selectedReportEligibility.canPrepareEmail || !selectedReportEligibility.canMarkReady}>Send Ready</Button>
+                      <Button primary onClick={previewSelectedFacilityReports} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canCreateFinalPreview}>{facilityBulkActionLabel("Preview", selectedFacilityReportRows.length)}</Button>
+                      <Button subtle onClick={copySelectedFacilityReports} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canPrepareEmail}>{facilityBulkActionLabel("Copy Email", selectedFacilityReportRows.length)}</Button>
+                      <Button subtle onClick={exportSelectedFacilityReports} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canDownloadWorkbook}>{facilityBulkActionLabel("Download", selectedFacilityReportRows.length)}</Button>
+                      <Button subtle onClick={markSelectedFacilityReportsComplete} disabled={!allowManualCompletion || !selectedFacilityReportRows.length || !selectedReportEligibility.canMarkReady}>{facilityBulkActionLabel("Mark Complete", selectedFacilityReportRows.length)}</Button>
+                      <Button primary onClick={sendReadyFacilityReports} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canPrepareEmail || !selectedReportEligibility.canMarkReady}>{facilityBulkActionLabel("Prepare", selectedFacilityReportRows.length)}</Button>
                     </div>
                     <div style={{ overflowX: "auto" }}>
                       <div style={{ minWidth: isNarrow ? 760 : 0, display: "grid", gap: 8 }}>
@@ -19022,7 +19160,7 @@ function rowifyCandidate(item = {}) {
                             <span style={{ color: THEME.muted }}>{row.report}</span>
                             <Badge tone={row.status === "Missing Contact" ? "High" : row.status === "Needs Review" ? "Medium" : row.complete ? "Low" : "Interview"}>{LEGACY_REPORT_STATUS_DISPLAY[row.status] || row.status}</Badge>
                             <span style={{ color: THEME.muted }}>{row.lastAction}</span>
-                            <Button subtle onClick={() => { setSelectedFacilityReports([row.id]); previewSelectedFacilityReports(); }} style={{ padding: "6px 8px", fontSize: 11 }}>{row.action}</Button>
+                            <Button subtle onClick={() => { setSelectedFacilityReports([row.id]); previewSelectedFacilityReports([row]); }} style={{ padding: "6px 8px", fontSize: 11 }}>{row.action}</Button>
                           </div>
                         )) : <EmptyState>No facility reports match this filter.</EmptyState>}
                       </div>
@@ -19053,19 +19191,19 @@ function rowifyCandidate(item = {}) {
             <Card title="Audience Report Queue + Sender" subtitle="Select the report audience, then preview, copy, export, send, or mark selected reports complete." compact>
               <div style={{ display: "grid", gap: 14 }}>
                 <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : "repeat(4, minmax(0, 1fr))" }}>
-                  <Field label="Facility"><SelectInput value={selectedFacility} onChange={(event) => { setSelectedFacility(event.target.value); setSelectedFacilityReports([]); }} options={["All Facilities", "Facilities With Openings", "Facilities With No Openings", ...reportFacilityNames]} /></Field>
+                  <Field label="Facility"><SelectInput value={selectedFacility} onChange={(event) => setSelectedFacility(event.target.value)} options={["All Facilities", "Facilities With Openings", "Facilities With No Openings", ...reportFacilityNames]} /></Field>
                   <Field label="Report Type"><SelectInput value={selectedReportType} onChange={(event) => setSelectedReportType(event.target.value)} options={reportTypeOptions} /></Field>
                   <Field label="Recipient Group"><SelectInput value={selectedRecipientGroup} onChange={(event) => setSelectedRecipientGroup(event.target.value)} options={recipientGroupOptions} /></Field>
-                  <Field label="Status Filter"><SelectInput value={selectedStatusFilter} onChange={(event) => { setSelectedStatusFilter(event.target.value); setSelectedFacilityReports([]); }} options={reportStatusOptions} /></Field>
+                  <Field label="Status Filter"><SelectInput value={selectedStatusFilter} onChange={(event) => setSelectedStatusFilter(event.target.value)} options={reportStatusOptions} /></Field>
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <Button primary onClick={previewSelectedFacilityReports} disabled={!selectedReportEligibility.canCreateFinalPreview}>Preview Selected</Button>
-                  <Button subtle onClick={() => saveReportsToHistory(selectedFacilityReportRows, "Draft Generated")} disabled={!facilityReportQueueFiltered.length}>Save to History</Button>
-                  <Button subtle onClick={copySelectedFacilityReports} disabled={!facilityReportQueueFiltered.length || !selectedReportEligibility.canPrepareEmail}>Copy Selected</Button>
-                  <Button subtle onClick={exportSelectedFacilityReports} disabled={!facilityReportQueueFiltered.length || !selectedReportEligibility.canDownloadWorkbook}>Export Selected</Button>
-                  <Button subtle onClick={exportFacilityWorkbooks} disabled={!facilityReportQueueFiltered.length || !selectedReportEligibility.canDownloadWorkbook}>Export Facility Workbooks</Button>
-                  <Button subtle onClick={markSelectedFacilityReportsComplete} disabled={!allowManualCompletion || !facilityReportQueueFiltered.length || !selectedReportEligibility.canMarkReady}>Mark Complete</Button>
-                  <Button primary onClick={sendReadyFacilityReports} disabled={!facilityReportQueueFiltered.length || !selectedReportEligibility.canPrepareEmail || !selectedReportEligibility.canMarkReady}>Send Ready</Button>
+                  <Button primary onClick={previewSelectedFacilityReports} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canCreateFinalPreview}>{facilityBulkActionLabel("Preview", selectedFacilityReportRows.length)}</Button>
+                  <Button subtle onClick={() => saveReportsToHistory(selectedFacilityReportRows, "Draft Generated")} disabled={!selectedFacilityReportRows.length}>{facilityBulkActionLabel("Save Draft", selectedFacilityReportRows.length)}</Button>
+                  <Button subtle onClick={copySelectedFacilityReports} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canPrepareEmail}>{facilityBulkActionLabel("Copy Email", selectedFacilityReportRows.length)}</Button>
+                  <Button subtle onClick={exportSelectedFacilityReports} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canDownloadWorkbook}>{facilityBulkActionLabel("Download", selectedFacilityReportRows.length)}</Button>
+                  <Button subtle onClick={exportFacilityWorkbooks} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canDownloadWorkbook}>{facilityBulkActionLabel("Download Separate", selectedFacilityReportRows.length)}</Button>
+                  <Button subtle onClick={markSelectedFacilityReportsComplete} disabled={!allowManualCompletion || !selectedFacilityReportRows.length || !selectedReportEligibility.canMarkReady}>{facilityBulkActionLabel("Mark Complete", selectedFacilityReportRows.length)}</Button>
+                  <Button primary onClick={sendReadyFacilityReports} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canPrepareEmail || !selectedReportEligibility.canMarkReady}>{facilityBulkActionLabel("Prepare", selectedFacilityReportRows.length)}</Button>
                 </div>
                 <Accordion title="Report Sections" subtitle="Choose what goes in the Excel attachment. Email stays concise." defaultOpen={false}>
                   <div style={{ display: "grid", gap: 8, gridTemplateColumns: isNarrow ? "1fr" : "repeat(3, minmax(0, 1fr))" }}>
@@ -19107,37 +19245,108 @@ function rowifyCandidate(item = {}) {
 
         {activePage === "reports" && reportsTab === "facility" ? (
           <div style={{ display: "grid", gap: 18 }}>
-            <Card title="Facility Report Completion" subtitle={`${reportCompletionSummary.done} of ${reportCompletionSummary.total} facility reports complete. ${reportCompletionSummary.remaining} remaining.`} compact action={<Button subtle onClick={clearAndRegenerateWeeklyReports}>Clear Completion + Regenerate</Button>}>
+            <Card title="Facility Readiness" subtitle={`${facilityReadinessStatusCounts["Needs Action"]} facilit${facilityReadinessStatusCounts["Needs Action"] === 1 ? "y needs" : "ies need"} action. Filters use AND behavior and selection remains explicit.`} compact>
               <div style={{ display: "grid", gap: 14 }}>
                 <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 999, height: 12, background: THEME.panelAlt, overflow: "hidden" }}>
                   <div style={{ width: `${reportCompletionSummary.total ? Math.round((reportCompletionSummary.done / reportCompletionSummary.total) * 100) : 0}%`, height: "100%", background: `linear-gradient(90deg, ${THEME.primary2}, ${THEME.green})` }} />
                 </div>
-                <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "repeat(2, minmax(0, 1fr))" : "repeat(5, minmax(0, 1fr))" }}>
-                  <MiniStat label="Done" value={reportCompletionSummary.done} tone="Low" compact />
-                  <MiniStat label="Remaining" value={reportCompletionSummary.remaining} tone={reportCompletionSummary.remaining ? "Medium" : "Low"} compact />
-                  <MiniStat label="Scheduled" value={reportCompletionSummary.scheduled} tone={reportCompletionSummary.scheduled ? "Interview" : "Low"} compact />
-                  <MiniStat label="Review" value={reportCompletionSummary.review} tone={reportCompletionSummary.review ? "Medium" : "Low"} compact />
-                  <MiniStat label="Missing" value={reportCompletionSummary.missing} tone={reportCompletionSummary.missing ? "High" : "Low"} compact />
+                <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))" }}>
+                  <MiniStat label="Needs Action" value={facilityReadinessStatusCounts["Needs Action"]} tone={facilityReadinessStatusCounts["Needs Action"] ? "High" : "Low"} compact />
+                  <MiniStat label="Blocked" value={facilityReadinessStatusCounts.Blocked} tone={facilityReadinessStatusCounts.Blocked ? "High" : "Low"} compact />
+                  <MiniStat label="Needs Review" value={facilityReadinessStatusCounts["Needs Review"]} tone={facilityReadinessStatusCounts["Needs Review"] ? "Medium" : "Low"} compact />
+                  <MiniStat label="Ready / Sent" value={facilityReadinessStatusCounts.Ready + facilityReadinessStatusCounts.Sent} tone="Low" compact />
                 </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {["All", "Needs Action", "Missing Contacts", "Scheduled", "Sent"].map((filter) => <Button key={filter} subtle={selectedStatusFilter !== filter} primary={selectedStatusFilter === filter} onClick={() => setSelectedStatusFilter(filter)} style={{ padding: "7px 9px", fontSize: 11 }}>{filter}</Button>)}
+                <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : "minmax(240px, 1.4fr) repeat(3, minmax(150px, 1fr))" }}>
+                  <Field label="Search Facilities">
+                    <TextInput
+                      value={facilityReadinessFilters.search}
+                      onChange={(event) => updateFacilityReadinessFilter("search", event.target.value)}
+                      placeholder="Canonical name, alias, original label, or Facility ID"
+                    />
+                  </Field>
+                  <Field label="Region">
+                    <SelectInput value={facilityReadinessFilters.regionId} onChange={(event) => updateFacilityReadinessFilter("regionId", event.target.value)} options={[{ value: "All Regions", label: "All Regions" }, ...facilityReadinessRegions.map((region) => ({ value: region.id, label: region.name }))]} />
+                  </Field>
+                  <Field label="Readiness">
+                    <SelectInput value={facilityReadinessFilters.readiness} onChange={(event) => updateFacilityReadinessFilter("readiness", event.target.value)} options={FACILITY_READINESS_OPTIONS} />
+                  </Field>
+                  <Field label="Report Type">
+                    <SelectInput value={facilityReadinessFilters.reportType} onChange={(event) => updateFacilityReadinessFilter("reportType", event.target.value)} options={["All Report Types", ...Array.from(new Set(facilityReadinessRows.map((row) => row.reportType).filter(Boolean)))]} />
+                  </Field>
                 </div>
+                <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+                  {FACILITY_READINESS_OPTIONS.map((filter) => (
+                    <button key={filter} type="button" onClick={() => updateFacilityReadinessFilter("readiness", filter)} style={{ border: `1px solid ${facilityReadinessFilters.readiness === filter ? THEME.primary2 : THEME.borderSoft}`, borderRadius: 999, padding: "7px 10px", background: facilityReadinessFilters.readiness === filter ? THEME.blueBg : THEME.panelAlt, color: facilityReadinessFilters.readiness === filter ? THEME.primary2 : THEME.muted, cursor: "pointer", fontWeight: 900, fontSize: 11 }}>
+                      {filter} ({facilityReadinessStatusCounts[filter] ?? 0})
+                    </button>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <Button subtle onClick={selectAllVisibleFacilityReports} disabled={!facilityReadinessVisibleRows.length}>Select All Visible ({facilityReadinessVisibleRows.length})</Button>
+                  <Button subtle onClick={selectAllMatchingFacilityReports} disabled={!facilityReadinessMatchingRows.length}>Select All Matching ({facilityReadinessMatchingRows.length})</Button>
+                  <Button subtle onClick={clearFacilityReportSelection} disabled={!selectedFacilityReports.length}>Clear Selection</Button>
+                  <span style={{ color: THEME.muted, fontSize: 12, fontWeight: 850 }}>
+                    {facilityReadinessSelection.selectedCount} selected
+                    {facilityReadinessSelection.hiddenSelectedCount ? `, ${facilityReadinessSelection.hiddenSelectedCount} hidden by current filters` : ""}
+                  </span>
+                </div>
+                {facilityReadinessIssueGroups.length ? (
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {facilityReadinessIssueGroups.map((group) => (
+                      <div key={group.code} style={{ border: `1px solid ${group.blocking ? THEME.red : THEME.amber}`, borderRadius: 7, background: group.blocking ? THEME.coralBg : THEME.amberBg }}>
+                        <button type="button" aria-expanded={expandedReportIssueCode === group.code} onClick={() => setExpandedReportIssueCode((current) => current === group.code ? "" : group.code)} style={{ width: "100%", border: 0, background: "transparent", padding: 10, display: "flex", justifyContent: "space-between", gap: 10, color: THEME.text, fontWeight: 900, cursor: "pointer", textAlign: "left" }}>
+                          <span>{group.label}</span><span>{group.count}</span>
+                        </button>
+                        {expandedReportIssueCode === group.code ? (
+                          <div style={{ display: "grid", gap: 8, padding: "0 10px 10px" }}>
+                            {group.issues.map((issue, index) => (
+                              <div key={`${group.code}-${issue.identifier || issue.candidateId || issue.requisitionId || issue.facilityId}-${index}`} style={{ borderTop: `1px solid ${THEME.borderSoft}`, paddingTop: 9, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                                <div>
+                                  <strong>{issue.facilityName || issue.originalFacilityLabel || "Unmapped Facility"}</strong>
+                                  <div style={{ color: THEME.muted, fontSize: 12 }}>{[issue.position, issue.requisitionNumber && `Req ${issue.requisitionNumber}`, issue.missingField].filter(Boolean).join(" | ") || issue.detail || issue.identifier}</div>
+                                  {issue.originalFacilityLabel ? <div style={{ color: THEME.muted, fontSize: 11 }}>Original label: {issue.originalFacilityLabel}</div> : null}
+                                </div>
+                                {issue.resolutionAction ? <Button subtle onClick={() => openReportingIssueCorrection(issue)}>{issue.resolutionAction}</Button> : null}
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {selectedFacilityReports.length ? (
+                  <div style={{ position: "sticky", top: 8, zIndex: 10, border: `1px solid ${THEME.primary2}`, borderRadius: 8, padding: 10, background: THEME.blueBg, boxShadow: THEME.shadow, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <strong>{facilityReadinessSelection.selectedCount} selected</strong>
+                    {facilityReadinessSelection.hiddenSelectedCount ? <span style={{ color: THEME.muted }}>{facilityReadinessSelection.hiddenSelectedCount} hidden by current filters</span> : null}
+                    <Button primary onClick={() => previewSelectedFacilityReports()} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canCreateFinalPreview}>{facilityBulkActionLabel("Preview", selectedFacilityReportRows.length)}</Button>
+                    <Button subtle onClick={exportSelectedFacilityReports} disabled={!selectedFacilityReportRows.length || !selectedReportEligibility.canDownloadWorkbook}>{facilityBulkActionLabel("Download", selectedFacilityReportRows.length)}</Button>
+                    <Button subtle onClick={markSelectedFacilityReportsComplete} disabled={!allowManualCompletion || !selectedFacilityReportRows.length || !selectedReportEligibility.canMarkReady}>{facilityBulkActionLabel("Mark Complete", selectedFacilityReportRows.length)}</Button>
+                    <Button subtle onClick={clearFacilityReportSelection}>Clear Selection</Button>
+                  </div>
+                ) : null}
                 <div style={{ overflowX: "auto" }}>
                   <div style={{ minWidth: isNarrow ? 760 : 0, display: "grid", gap: 8 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "1.2fr 120px 140px 1fr 100px", gap: 10, padding: "0 10px", color: THEME.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>
-                      <span>Facility</span><span>Report</span><span>Status</span><span>Last Action</span><span>Action</span>
+                    <div style={{ display: "grid", gridTemplateColumns: "34px 1.3fr 110px 120px 1fr 180px", gap: 10, padding: "0 10px", color: THEME.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>
+                      <span /><span>Facility</span><span>Report</span><span>Readiness</span><span>Last Action</span><span>Action</span>
                     </div>
-                    {facilityReportQueueFiltered.length ? facilityReportQueueFiltered.map((row) => (
-                      <div key={row.id} style={{ display: "grid", gridTemplateColumns: "1.2fr 120px 140px 1fr 100px", gap: 10, alignItems: "center", border: `1px solid ${row.status === "Missing Contact" ? THEME.red : row.status === "Needs Review" ? THEME.amber : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panel }}>
-                        <strong>{row.facility}</strong>
+                    {facilityReadinessVisibleRows.length ? facilityReadinessVisibleRows.map((row) => (
+                      <div key={row.id} style={{ display: "grid", gridTemplateColumns: "34px 1.3fr 110px 120px 1fr 180px", gap: 10, alignItems: "center", border: `1px solid ${row.readiness === "Blocked" ? THEME.red : row.readiness === "Needs Review" ? THEME.amber : selectedFacilityReports.includes(row.id) ? THEME.primary2 : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: selectedFacilityReports.includes(row.id) ? THEME.blueBg : THEME.panel }}>
+                        <input type="checkbox" checked={selectedFacilityReports.includes(row.id)} onChange={(event) => toggleFacilityReportSelection(row.id, event.target.checked)} aria-label={`Select ${row.facility} readiness report`} />
+                        <div><strong>{row.facility}</strong><div style={{ color: THEME.muted, fontSize: 11 }}>{[row.facilityId, row.regionName, row.originalFacilityLabel && row.originalFacilityLabel !== row.facility ? `Original: ${row.originalFacilityLabel}` : ""].filter(Boolean).join(" | ")}</div></div>
                         <span style={{ color: THEME.muted }}>{row.report}</span>
-                        <Badge tone={row.status === "Missing Contact" ? "High" : row.status === "Needs Review" ? "Medium" : row.complete ? "Low" : "Interview"}>{LEGACY_REPORT_STATUS_DISPLAY[row.status] || row.status}</Badge>
+                        <Badge tone={row.readiness === "Blocked" ? "High" : row.readiness === "Needs Review" ? "Medium" : ["Ready", "Sent"].includes(row.readiness) ? "Low" : "Interview"}>{row.readiness}</Badge>
                         <span style={{ color: THEME.muted }}>{row.lastAction}</span>
-                        <Button subtle disabled={!eligibilityForReportRows([row]).canCreateFinalPreview} onClick={() => { setReportsTab("audience"); setSelectedFacility(row.facility); setSelectedFacilityReports([row.id]); previewSelectedFacilityReports([row]); }} style={{ padding: "6px 8px", fontSize: 11 }}>{row.action}</Button>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          {row.readinessIssues.filter((issue) => issue.resolutionAction).slice(0, 2).map((issue, index) => <Button key={`${issue.code}-${issue.requisitionId || issue.facilityId}-${index}`} subtle onClick={() => openReportingIssueCorrection(issue)} style={{ padding: "6px 8px", fontSize: 11 }}>{issue.resolutionAction}</Button>)}
+                          {!row.readinessIssues.some((issue) => issue.resolutionAction) ? <Button subtle disabled={!eligibilityForReportRows([row]).canCreateFinalPreview} onClick={() => { setReportsTab("audience"); setSelectedFacility(row.facility); setSelectedFacilityReports([row.id]); previewSelectedFacilityReports([row]); }} style={{ padding: "6px 8px", fontSize: 11 }}>{row.action}</Button> : null}
+                        </div>
                       </div>
-                    )) : <EmptyState>No facility reports match this filter.</EmptyState>}
+                    )) : <EmptyState>No facilities match the current Needs Action filters.</EmptyState>}
                   </div>
                 </div>
+                {facilityReadinessVisibleRows.length < facilityReadinessMatchingRows.length ? <Button subtle onClick={() => setFacilityReadinessVisibleLimit((current) => current + 20)}>Show More ({facilityReadinessMatchingRows.length - facilityReadinessVisibleRows.length} remaining)</Button> : null}
+                <div style={{ color: THEME.muted, fontSize: 12 }}>Showing {facilityReadinessVisibleRows.length} of {facilityReadinessMatchingRows.length} matching facilities. Filter changes preserve, but never add to, the current selection.</div>
               </div>
             </Card>
           </div>
@@ -19305,6 +19514,9 @@ function rowifyCandidate(item = {}) {
             onRequisitionReferenceChange={syncRequisitionReferences}
             exportFullDataWorkbook={exportFullDataWorkbook}
             onScheduleCalendar={openCalendarCreate}
+            correctionTarget={reportCorrectionTarget}
+            onCorrectionSaved={returnToFacilityReadiness}
+            onReturnToFacilityReadiness={returnToFacilityReadiness}
           />
         ) : null}
         {activePage === "settings" ? (
@@ -21098,7 +21310,7 @@ function CandidateManagementPage({ activeTab, setActiveTab, search, setSearch, h
   );
 }
 
-function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], activeSites = [], tracker = [], setActivePage = () => {}, setActiveSettingsTab = () => {}, onRequisitionReferenceChange = () => {}, exportFullDataWorkbook = () => {}, onScheduleCalendar = () => {} }) {
+export function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], activeSites = [], tracker = [], setActivePage = () => {}, setActiveSettingsTab = () => {}, onRequisitionReferenceChange = () => {}, exportFullDataWorkbook = () => {}, onScheduleCalendar = () => {}, correctionTarget = null, onCorrectionSaved = () => {}, onReturnToFacilityReadiness = () => {} }) {
   const width = useWindowWidth();
   const compact = width < 960;
   const [activeTab, setActiveTab] = useState("facilities");
@@ -21136,6 +21348,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
   const [readinessSearch, setReadinessSearch] = useState("");
   const [readinessIncludeArchived, setReadinessIncludeArchived] = useState(false);
   const [newRegionName, setNewRegionName] = useState("");
+  const correctionOpenedRef = useRef("");
 
   useEffect(() => {
     const handler = (event) => {
@@ -21158,6 +21371,53 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
     if (!communicationReadinessReport) return null;
     return filterCommunicationReadinessReport(communicationReadinessReport, { filter: readinessFilter, search: readinessSearch });
   }, [communicationReadinessReport, readinessFilter, readinessSearch]);
+
+  useEffect(() => {
+    if (!correctionTarget?.recordId) {
+      correctionOpenedRef.current = "";
+      return;
+    }
+    const targetKey = `${correctionTarget.recordType}:${correctionTarget.recordId}:${correctionTarget.field}`;
+    if (correctionOpenedRef.current === targetKey) return;
+    correctionOpenedRef.current = targetKey;
+
+    if (correctionTarget.recordType === "requisition") {
+      const requisition = allReqs.find((req) => req.id === correctionTarget.recordId);
+      if (!requisition) {
+        window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: SAFE_REQUISITION_ERROR }));
+        return;
+      }
+      setActiveTab("positions");
+      setDraftReq({ ...requisition });
+      setDrawerMode("edit");
+      setCommunicationReview(null);
+      setCommunicationSaveError("");
+      setRequisitionDirtyFields([]);
+      setDrawerOpen(true);
+    } else if (correctionTarget.recordType === "facility") {
+      const facility = allSites.find((site) => site.id === correctionTarget.recordId);
+      if (!facility) {
+        window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "The exact facility could not be opened." }));
+        return;
+      }
+      setActiveTab("facilities");
+      setSelectedSiteId(facility.id);
+      setDraftSite({
+        ...facility,
+        aliasesText: (facility.aliases || []).join("\n"),
+        originalSiteName: facility.siteName || "",
+        siteSpecificQuestionsText: serializeScreeningQuestions(facility.siteSpecificQuestions),
+      });
+      setFacilityDrawerMode("edit");
+      setFacilityDrawerOpen(true);
+    }
+
+    const focusTimer = window.setTimeout(() => {
+      const field = document.querySelector(`[data-correction-field="${correctionTarget.field}"] input, [data-correction-field="${correctionTarget.field}"] select, [data-correction-field="${correctionTarget.field}"] textarea`);
+      field?.focus();
+    }, 60);
+    return () => window.clearTimeout(focusTimer);
+  }, [allReqs, allSites, correctionTarget]);
 
   function openReadinessIssue(issue) {
     if (issue.updateLocation === "Existing requisition") {
@@ -21616,6 +21876,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
       setCommunicationSaveError(testRuntime.error || "Test environment safety check failed.");
       return;
     }
+    const completesCorrection = !addAnother && correctionTarget?.recordType === "requisition" && correctionTarget.recordId === draftReq.id;
     try {
       const result = updateExistingRequisition(safeObjectRecords(settings.requisitions), draftReq.id, draftReq, requisitionDirtyFields);
       setSettings((prev) => ({ ...prev, requisitions: result.requisitions }));
@@ -21637,6 +21898,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
     setCommunicationReview(null);
     setCommunicationSaveError("");
     setRequisitionDirtyFields([]);
+    if (completesCorrection) onCorrectionSaved();
   }
 
 
@@ -21762,6 +22024,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
     });
     setSelectedSiteId(saved.id);
     window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "Facility saved from Facility & Position Setup." }));
+    const completesCorrection = !addAnother && correctionTarget?.recordType === "facility" && correctionTarget.recordId === saved.id;
     if (addAnother) {
       setDraftSite({ ...emptySite(), siteSpecificQuestionsText: "" });
       setFacilityDrawerMode("add");
@@ -21770,6 +22033,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
       setDraftSite(null);
       setFacilityDrawerMode("add");
     }
+    if (completesCorrection) onCorrectionSaved();
   }
 
   function addReportingRegion() {
@@ -21953,6 +22217,12 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
+      {correctionTarget ? (
+        <div role="status" data-testid="reporting-correction-target" style={{ border: `1px solid ${THEME.primary2}`, borderRadius: 8, padding: 12, background: THEME.blueBg, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <div><strong>{correctionTarget.action}: {correctionTarget.label || "reporting record"}</strong><div style={{ color: THEME.muted, fontSize: 12, marginTop: 3 }}>The exact saved record is open. Make the correction and save explicitly; navigation alone changes nothing.</div></div>
+          <Button subtle onClick={onReturnToFacilityReadiness}>Return to Facility Readiness</Button>
+        </div>
+      ) : null}
       <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "start", flexWrap: "wrap" }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 24, lineHeight: 1.15 }}>Facility & Position Setup</h1>
@@ -22634,7 +22904,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
             </div>
             <div style={{ display: "grid", gap: 14 }}>
               <div style={{ display: "grid", gridTemplateColumns: width < 760 ? "1fr" : "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-                <Field label="Facility Name"><TextInput value={draftSite.siteName} onChange={(event) => updateDraftSite("siteName", event.target.value)} /></Field>
+                <div data-correction-field="siteName" data-testid="correction-field-siteName"><Field label="Facility Name"><TextInput value={draftSite.siteName} onChange={(event) => updateDraftSite("siteName", event.target.value)} /></Field></div>
                 <Field label="Stable Facility ID"><input value={draftSite.id || ""} readOnly style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panelAlt, color: THEME.muted }} /></Field>
                 <Field label="Organization Facility Code"><TextInput value={draftSite.facilityCode || ""} onChange={(event) => updateDraftSite("facilityCode", event.target.value)} placeholder="Optional facility code" /></Field>
                 <Field label="Region"><select value={draftSite.regionId || ""} onChange={(event) => updateDraftSite("regionId", event.target.value)} style={{ width: "100%", border: `1px solid ${THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panel }}><option value="">No region assigned</option>{reportingRegions.filter((region) => region.active !== false).map((region) => <option key={region.id} value={region.id}>{region.name}</option>)}</select></Field>
@@ -22654,7 +22924,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
                 <span style={{ color: THEME.muted, fontSize: 12 }}>Renaming this facility preserves its stable ID and automatically stores the previous canonical name as an alias.</span>
               </div>
 
-              <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 12, background: THEME.panelAlt }}>
+              <div data-correction-field="facilityContact" data-testid="correction-field-facilityContact" style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 12, background: THEME.panelAlt }}>
                 <strong>Facility Leadership / Contacts</strong>
                 <div style={{ display: "grid", gridTemplateColumns: width < 760 ? "1fr" : "repeat(2, minmax(0, 1fr))", gap: 10, marginTop: 12 }}>
                   <Field label="Hiring Manager Name"><TextInput value={draftSite.hiringManagerName} onChange={(event) => updateDraftSite("hiringManagerName", event.target.value)} /></Field>
@@ -22704,7 +22974,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
               <Button subtle onClick={() => setDrawerOpen(false)}>Cancel</Button>
             </div>
             <div style={{ display: "grid", gap: 12 }}>
-              <Field label="Facility"><SelectInput value={draftReq.siteName} onChange={(event) => updateDraftReq("siteName", event.target.value)} options={allSites.map((site) => site.siteName).filter(Boolean)} /></Field>
+              <div data-correction-field="siteName" data-testid="correction-field-siteName"><Field label="Facility"><SelectInput value={draftReq.siteName} onChange={(event) => updateDraftReq("siteName", event.target.value)} options={allSites.map((site) => site.siteName).filter(Boolean)} /></Field></div>
               <Field label="Position Title"><TextInput value={draftReq.positionTitle} onChange={(event) => updateDraftReq("positionTitle", event.target.value)} placeholder="Position title" /></Field>
               <div style={{ display: "grid", gridTemplateColumns: width < 720 ? "1fr" : "repeat(2, minmax(0, 1fr))", gap: 10 }}>
                 <Field label="Req Number"><TextInput value={draftReq.reqNumber} onChange={(event) => updateDraftReq("reqNumber", event.target.value)} /></Field>
@@ -22729,9 +22999,9 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
                   <div style={{ display: "grid", gridTemplateColumns: width < 720 ? "1fr" : "repeat(2, minmax(0, 1fr))", gap: 10 }}>
                     <Field label="Employment Type"><SelectInput value={draftReq.employmentType || ""} onChange={(event) => updateDraftReq("employmentType", event.target.value)} options={["Full-time", "Part-time", "PRN", "Contract"]} /></Field>
                     <Field label="Benefits Eligible"><SelectInput value={draftReq.benefitsEligible === true ? "Yes" : draftReq.benefitsEligible === false ? "No" : "Unknown"} onChange={(event) => updateDraftReq("benefitsEligible", event.target.value === "Yes" ? true : event.target.value === "No" ? false : null)} options={["Unknown", "Yes", "No"]} /></Field>
-                    <Field label="FTE"><SelectInput value={draftReq.fte || ""} onChange={(event) => updateDraftReq("fte", event.target.value)} options={FTE_OPTIONS} /></Field>
+                    <div data-correction-field="fte" data-testid="correction-field-fte"><Field label="FTE"><SelectInput value={draftReq.fte || ""} onChange={(event) => updateDraftReq("fte", event.target.value)} options={FTE_OPTIONS} /></Field></div>
                     <Field label="Weekly Hours"><TextInput type="number" value={draftReq.weeklyHours ?? ""} onChange={(event) => updateDraftReq("weeklyHours", event.target.value)} placeholder="Example: 36" /></Field>
-                    <Field label="Shift"><SelectInput value={draftReq.shiftPreference || ""} onChange={(event) => updateDraftReq("shiftPreference", event.target.value)} options={settings.options?.shiftOptions || ["Day", "Night", "Evening", "As needed"]} /></Field>
+                    <div data-correction-field="shiftPreference" data-testid="correction-field-shiftPreference"><Field label="Shift"><SelectInput value={draftReq.shiftPreference || ""} onChange={(event) => updateDraftReq("shiftPreference", event.target.value)} options={settings.options?.shiftOptions || ["Day", "Night", "Evening", "As needed"]} /></Field></div>
                     <Field label="Schedule"><TextInput value={draftReq.workSchedule || ""} onChange={(event) => updateDraftReq("workSchedule", event.target.value)} placeholder="As Needed, Variable, Rotating, or schedule details" /></Field>
                     {String(draftReq.employmentType || "").toLowerCase() === "contract" ? <Field label="Contract Duration"><TextInput value={draftReq.contractDuration || ""} onChange={(event) => updateDraftReq("contractDuration", event.target.value)} placeholder="Example: 13 Weeks" /></Field> : null}
                   </div>
