@@ -70,6 +70,7 @@ import {
 } from "./requisitionCommunicationDetails";
 import { WeeklyReportingPage } from "./WeeklyReportingPage";
 import { ReportsHistoryPage } from "./ReportsHistoryPage";
+import { normalizeReportsHistoryDestination } from "./reportsHistoryNavigation";
 import {
   createWeeklyReviewSessionReset,
   confirmWeeklyReviewRestart,
@@ -5946,7 +5947,15 @@ function RecruiterApp() {
   const setReportsTab = useCallback((value) => {
     setReportsTabState((current) => normalizeWeeklyReportingStep(typeof value === "function" ? value(current) : value));
   }, []);
-  const [reportsHubTab, setReportsHubTab] = useState("preview");
+  const [reportsHubTab, setReportsHubTabState] = useState("ready-review");
+  const [reportsReviewAudience, setReportsReviewAudience] = useState("Facility");
+  const [reportHistoryStatusView, setReportHistoryStatusView] = useState("All");
+  const setReportsHubTab = useCallback((value) => {
+    const normalized = normalizeReportsHistoryDestination(value);
+    setReportsHubTabState(normalized.destination);
+    if (normalized.audience) setReportsReviewAudience(normalized.audience);
+    if (normalized.historyFilter) setReportHistoryStatusView(normalized.historyFilter);
+  }, []);
   const [expandedReportIssueCode, setExpandedReportIssueCode] = useState("");
   const [automationTab, setAutomationTab] = useState("report");
   const [candidateManagementTab, setCandidateManagementTab] = useState("connect");
@@ -14791,6 +14800,26 @@ function rowifyCandidate(item = {}) {
     window.setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 30);
   }
 
+  function openReportingSettingsSurface(surface) {
+    if (surface === "email-templates") {
+      setActiveSettingsTab("templates");
+      setActivePage("settings");
+    } else if (surface === "recipients") {
+      setActiveSettingsTab("contacts");
+      setActivePage("settings");
+    } else if (surface === "report-presets" || surface === "workbook-defaults") {
+      setActivePage("reports");
+      setReportsTab("send-export");
+    } else if (surface === "no-openings") {
+      setActivePage("reports");
+      setReportsTab("facility-readiness");
+    } else {
+      openReportAutomationSettings();
+      return;
+    }
+    window.setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 30);
+  }
+
   const isNarrow = viewportWidth < 900;
   const isMedium = viewportWidth < 1180;
   const queueCompact = viewportWidth < 640;
@@ -19157,25 +19186,34 @@ function rowifyCandidate(item = {}) {
             history,
             isNarrow,
             labelFromKey,
-            openReportAutomationSettings,
+            markSelectedFacilityReportsReviewed,
+            markSelectedFacilityReportsSent,
+            openReportingSettingsSurface,
             previewSelectedFacilityReports,
             regionalEmailBody,
+            reportEndDate,
             reportFacilityNames,
+            reportHistory,
             reportHistoryFiltered,
             reportHistoryFilters,
+            reportHistoryStatusView,
             reportInclusions,
+            reportStartDate,
             reportTypeOptions,
             reportsHubTab,
-            reportsTab,
+            reportsReviewAudience,
             safeCopy,
             saveReportsToHistory,
             selectedAudienceEmailBody,
             selectedFacilityActionRows,
+            selectedRecipientGroup,
             selectedReportEligibility,
             selectedReportType,
             setReportHistoryFilters,
+            setReportHistoryStatusView,
             setReportInclusions,
             setReportsHubTab,
+            setReportsReviewAudience,
             setWeeklyReport,
             setWeeklySubject,
             weeklyReport,

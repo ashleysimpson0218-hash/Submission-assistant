@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { ReportsHistoryPage } from "./ReportsHistoryPage";
+import { HISTORICAL_REGENERATION_WARNING, ReportsHistoryPage } from "./ReportsHistoryPage";
 
 const THEME = {
   blueBg: "#eef2ff",
@@ -19,8 +19,8 @@ function Button({ children, disabled, onClick, primary, subtle, ...props }) {
   return <button type="button" disabled={disabled} onClick={onClick} {...props}>{children}</button>;
 }
 
-function Card({ action, children, title, subtitle }) {
-  return <section aria-label={title}><h2>{title}</h2><div>{subtitle}</div>{action}{children}</section>;
+function Card({ children, title, subtitle }) {
+  return <section aria-label={title}><h2>{title}</h2><div>{subtitle}</div>{children}</section>;
 }
 
 function Field({ children, label }) {
@@ -37,10 +37,6 @@ function SelectInput({ options = [], ...props }) {
       })}
     </select>
   );
-}
-
-function TextInput(props) {
-  return <input {...props} />;
 }
 
 function MiniStat({ label, value }) {
@@ -76,6 +72,9 @@ const allowedEligibility = {
   canCreateFinalPreview: true,
   canDownloadWorkbook: true,
   canPrepareEmail: true,
+  canMarkReady: true,
+  blockingReasons: [],
+  warnings: [],
 };
 
 function baseProps(overrides = {}) {
@@ -87,14 +86,14 @@ function baseProps(overrides = {}) {
     Field,
     MiniStat,
     SelectInput,
-    TextInput,
+    TextInput: (props) => <input {...props} />,
     ToggleField,
     THEME,
     activePage: "reporting",
     buildAllFacilityWorkbookSheets: jest.fn(() => [{ name: "Summary" }, { name: "Detail" }]),
-    cSuiteEmailBody: jest.fn(() => "Synthetic C-Suite body"),
+    cSuiteEmailBody: jest.fn(() => "Synthetic executive body"),
     copyReportEmailContent: jest.fn(),
-    displayDate: jest.fn(() => "Jul 24, 2026"),
+    displayDate: jest.fn((value) => value),
     downloadGeneratedFacilityReport: jest.fn(),
     downloadHistoricalFacilityReport: jest.fn(),
     eligibilityForReportRows: jest.fn(() => allowedEligibility),
@@ -102,45 +101,40 @@ function baseProps(overrides = {}) {
     exportFacilityWorkbooks: jest.fn(),
     exportHistoryExcel: jest.fn(),
     exportWeeklyFullDataWorkbook: jest.fn(),
-    facilityEmailContent: jest.fn(() => ({
-      subject: "Synthetic facility subject",
-      body: "Synthetic facility body",
-    })),
-    facilityReportModel: jest.fn(() => ({
-      facility: "Synthetic Central Facility",
-      missingContact: false,
-    })),
+    facilityEmailContent: jest.fn(() => ({ subject: "Synthetic facility subject", body: "Synthetic facility body" })),
+    facilityReportModel: jest.fn(() => ({ facility: "Synthetic Central Facility", missingContact: false })),
     facilityWorkbookSheets: jest.fn(() => [{ name: "Summary" }]),
     history: [historyRecord],
     isNarrow: false,
     labelFromKey: jest.fn((key) => key),
-    openReportAutomationSettings: jest.fn(),
+    markSelectedFacilityReportsReviewed: jest.fn(),
+    markSelectedFacilityReportsSent: jest.fn(),
+    openReportingSettingsSurface: jest.fn(),
     previewSelectedFacilityReports: jest.fn(),
     regionalEmailBody: jest.fn(() => "Synthetic regional body"),
+    reportEndDate: "2026-07-24",
     reportFacilityNames: ["Synthetic Central Facility"],
+    reportHistory: [historyRecord],
     reportHistoryFiltered: [historyRecord],
-    reportHistoryFilters: {
-      facility: "All",
-      reportType: "All",
-      status: "All",
-      start: "",
-      end: "",
-    },
-    reportInclusions: {
-      candidates: true,
-      requisitions: false,
-    },
+    reportHistoryFilters: { facility: "All", reportType: "All", status: "All", audience: "All", start: "", end: "" },
+    reportHistoryStatusView: "All",
+    reportInclusions: { candidates: true, requisitions: false },
+    reportStartDate: "2026-07-20",
     reportTypeOptions: ["Facility Weekly Report"],
-    reportsHubTab: "preview",
+    reportsHubTab: "ready-review",
+    reportsReviewAudience: "Facility",
     safeCopy: jest.fn(),
     saveReportsToHistory: jest.fn(),
     selectedAudienceEmailBody: jest.fn(() => "Synthetic audience body"),
     selectedFacilityActionRows: [reportRow],
+    selectedRecipientGroup: "Facility contacts",
     selectedReportEligibility: allowedEligibility,
     selectedReportType: "Facility Weekly Report",
     setReportHistoryFilters: jest.fn(),
+    setReportHistoryStatusView: jest.fn(),
     setReportInclusions: jest.fn(),
     setReportsHubTab: jest.fn(),
+    setReportsReviewAudience: jest.fn(),
     setWeeklyReport: jest.fn(),
     setWeeklySubject: jest.fn(),
     weeklyReport: "Synthetic preview body",
@@ -149,160 +143,200 @@ function baseProps(overrides = {}) {
   };
 }
 
-const destinations = [
-  ["preview", "Report Preview"],
-  ["generated", "Generated Reports"],
-  ["history", "Report History"],
-  ["facility", "Facility Reports"],
-  ["regional", "Regional Reports"],
-  ["csuite", "C-Suite Reports"],
-  ["download", "Download Center"],
-  ["email", "Email Preview"],
-  ["attachment", "Attachment Preview"],
-  ["settings", "Report Settings"],
-];
-
-test("preserves every destination label, order, active styling, and navigation callback", () => {
-  const props = baseProps({ reportsHubTab: "history" });
+test("renders exactly three Reports & History destinations in the required order", () => {
+  const props = baseProps();
   render(<ReportsHistoryPage {...props} />);
 
-  const hub = screen.getByRole("region", { name: "Reports Hub" });
-  const buttons = within(hub).getAllByRole("button").slice(1);
-  expect(buttons.map((button) => button.textContent)).toEqual(destinations.map(([, label]) => label));
-  expect(screen.getByRole("button", { name: "Report History" })).toHaveStyle(`border: 1px solid ${THEME.primary2}`);
+  const hub = screen.getByRole("region", { name: "Reports & History" });
+  const buttons = within(hub).getAllByRole("button");
+  expect(buttons.map((button) => button.textContent)).toEqual(["Ready to Review", "Sent & History", "Templates & Settings"]);
 
-  destinations.forEach(([value], index) => {
-    fireEvent.click(buttons[index]);
-    expect(props.setReportsHubTab).toHaveBeenLastCalledWith(value);
-  });
+  buttons.forEach((button) => fireEvent.click(button));
+  expect(props.setReportsHubTab.mock.calls.map(([value]) => value)).toEqual(["ready-review", "sent-history", "templates-settings"]);
   expect(props.saveReportsToHistory).not.toHaveBeenCalled();
 });
 
 test.each([
-  ["preview", "Email Preview"],
-  ["email", "Email Preview"],
-  ["generated", "Generated Reports"],
-  ["facility", "Generated Reports"],
-  ["regional", "Generated Reports"],
-  ["csuite", "Generated Reports"],
-  ["history", "Report History"],
-  ["download", "Download Center"],
-  ["attachment", "Download Center"],
-  ["settings", "Report Settings Shortcut"],
-])("renders the existing %s destination content", (reportsHubTab, expectedTitle) => {
-  const overrides = { reportsHubTab };
-  if (reportsHubTab === "regional") overrides.selectedReportType = "Regional Manager Summary";
-  if (reportsHubTab === "csuite") overrides.selectedReportType = "C-Suite Leadership Report";
-  render(<ReportsHistoryPage {...baseProps(overrides)} />);
-  expect(screen.getByRole("heading", { name: expectedTitle })).toBeInTheDocument();
+  ["preview", "Ready to Review"],
+  ["facility", "Ready to Review"],
+  ["regional", "Ready to Review"],
+  ["csuite", "Ready to Review"],
+  ["email", "Ready to Review"],
+  ["attachment", "Ready to Review"],
+  ["generated", "Sent & History"],
+  ["history", "Sent & History"],
+  ["download", "Sent & History"],
+  ["settings", "Templates & Settings"],
+  ["unknown", "Ready to Review"],
+  [undefined, "Ready to Review"],
+])("renders legacy destination %s in the compatible consolidated destination", (reportsHubTab, title) => {
+  render(<ReportsHistoryPage {...baseProps({ reportsHubTab })} />);
+  expect(screen.getAllByRole("heading", { name: title }).length).toBeGreaterThan(0);
 });
 
-test("renders existing preview data and invokes copy or history changes only through explicit controls", () => {
+test("preserves Facility, Regional, and Executive audience context", () => {
   const props = baseProps();
-  const sourceRows = JSON.stringify(props.selectedFacilityActionRows);
-  render(<ReportsHistoryPage {...props} />);
-
+  const { rerender } = render(<ReportsHistoryPage {...props} />);
   expect(screen.getByText("Synthetic preview body")).toBeInTheDocument();
-  expect(props.copyReportEmailContent).not.toHaveBeenCalled();
-  expect(props.saveReportsToHistory).not.toHaveBeenCalled();
 
-  fireEvent.click(screen.getByRole("button", { name: "Copy Email" }));
-  expect(props.copyReportEmailContent).toHaveBeenCalledWith("Synthetic preview body", "Email body");
-  fireEvent.click(screen.getByRole("button", { name: "Copy Subject" }));
-  expect(props.copyReportEmailContent).toHaveBeenCalledWith("Synthetic preview subject", "Email subject");
-  fireEvent.click(screen.getByRole("button", { name: "Mark Reviewed" }));
-  expect(props.saveReportsToHistory).toHaveBeenCalledWith(props.selectedFacilityActionRows, "Reviewed");
-  expect(JSON.stringify(props.selectedFacilityActionRows)).toBe(sourceRows);
-});
-
-test("keeps preview, copy, and explicit history actions disabled under existing eligibility conditions", () => {
-  const props = baseProps({
-    selectedFacilityActionRows: [],
-    selectedReportEligibility: {
-      canCreateFinalPreview: false,
-      canDownloadWorkbook: false,
-      canPrepareEmail: false,
-    },
-  });
-  render(<ReportsHistoryPage {...props} />);
-
-  expect(screen.getByRole("button", { name: "Preview Email" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Copy Email" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Copy Subject" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Mark Reviewed" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Hold for Approval" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Send Later" })).toBeDisabled();
-});
-
-test("renders generated facility, regional, and C-Suite models without side effects", () => {
-  const facilityProps = baseProps({ reportsHubTab: "facility" });
-  const sourceRow = JSON.stringify(reportRow);
-  const { rerender } = render(<ReportsHistoryPage {...facilityProps} />);
-
-  expect(screen.getByText("Synthetic Central Facility")).toBeInTheDocument();
-  expect(screen.getByText("Synthetic facility subject")).toBeInTheDocument();
-  expect(screen.getByText("1 attachment tabs")).toBeInTheDocument();
-  expect(facilityProps.downloadGeneratedFacilityReport).not.toHaveBeenCalled();
-  expect(facilityProps.saveReportsToHistory).not.toHaveBeenCalled();
-
-  rerender(<ReportsHistoryPage {...baseProps({ reportsHubTab: "regional", selectedReportType: "Regional Manager Summary" })} />);
-  expect(screen.getByRole("heading", { name: "Regional Manager Email" })).toBeInTheDocument();
+  rerender(<ReportsHistoryPage {...baseProps({ reportsHubTab: "regional" })} />);
   expect(screen.getByText("Synthetic regional body")).toBeInTheDocument();
 
-  rerender(<ReportsHistoryPage {...baseProps({ reportsHubTab: "csuite", selectedReportType: "C-Suite Leadership Report" })} />);
-  expect(screen.getByRole("heading", { name: "C-Suite Leadership Email" })).toBeInTheDocument();
-  expect(screen.getByText("Synthetic C-Suite body")).toBeInTheDocument();
-  expect(JSON.stringify(reportRow)).toBe(sourceRow);
+  rerender(<ReportsHistoryPage {...baseProps({ reportsHubTab: "csuite" })} />);
+  expect(screen.getByText("Synthetic executive body")).toBeInTheDocument();
 });
 
-test("renders report history and calls preview, copy, and download only when selected", () => {
-  const props = baseProps({ reportsHubTab: "history" });
-  const original = JSON.stringify(props.reportHistoryFiltered);
+test("renders email and attachment details together", () => {
+  render(<ReportsHistoryPage {...baseProps()} />);
+
+  expect(screen.getByLabelText("Report recipient")).toHaveTextContent("Facility contacts");
+  expect(screen.getByLabelText("Report subject")).toHaveTextContent("Synthetic preview subject");
+  expect(screen.getByText("Synthetic preview body")).toBeInTheDocument();
+  expect(screen.getByText(/Attachment name:/)).toBeInTheDocument();
+  expect(screen.getByLabelText("Workbook tabs")).toHaveTextContent("Summary, Detail");
+  expect(screen.getByLabelText("Reporting period")).toHaveTextContent("2026-07-20 to 2026-07-24");
+  expect(screen.getByText(/Generated time:/)).toBeInTheDocument();
+  expect(screen.getByText(/Data-through time:/)).toBeInTheDocument();
+});
+
+test("keeps diagnostic details visible while blocking affected final actions", () => {
+  const eligibility = {
+    canCreateFinalPreview: false,
+    canDownloadWorkbook: false,
+    canPrepareEmail: false,
+    canMarkReady: false,
+    blockingReasons: [{ message: "Ambiguous facility must be resolved." }],
+    warnings: [],
+  };
+  render(<ReportsHistoryPage {...baseProps({ selectedReportEligibility: eligibility })} />);
+
+  expect(screen.getByText("Ambiguous facility must be resolved.")).toBeInTheDocument();
+  expect(screen.getByText(/Diagnostic details remain available/)).toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: "Review Report" })[0]).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Copy Email Body" })).toBeDisabled();
+  expect(screen.getAllByRole("button", { name: "Download Workbook" })[0]).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Mark Reviewed" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Mark Sent" })).toBeDisabled();
+});
+
+test("missing contact blocks email actions but permits workbook review", () => {
+  const eligibility = {
+    ...allowedEligibility,
+    canPrepareEmail: false,
+    canMarkReady: false,
+    blockingReasons: [{ message: "Missing facility contact." }],
+  };
+  render(<ReportsHistoryPage {...baseProps({ selectedReportEligibility: eligibility })} />);
+
+  expect(screen.getByRole("button", { name: "Copy Email Body" })).toBeDisabled();
+  expect(screen.getAllByRole("button", { name: "Download Workbook" })[0]).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Mark Sent" })).toBeDisabled();
+});
+
+test("renders nonblocking reporting warnings alongside the review details", () => {
+  const eligibility = {
+    ...allowedEligibility,
+    warnings: undefined,
+    scopedIssues: [{ issue: "Review source label", detail: "Original facility label differs", blocking: false }],
+  };
+  render(<ReportsHistoryPage {...baseProps({ selectedReportEligibility: eligibility })} />);
+
+  expect(screen.getByText("Review source label: Original facility label differs")).toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: "Download Workbook" })[0]).toBeEnabled();
+});
+
+test("copy, download, draft, reviewed, and sent callbacks run only from explicit controls", () => {
+  const props = baseProps();
   render(<ReportsHistoryPage {...props} />);
 
-  expect(screen.getByText(historyRecord.reportWeek)).toBeInTheDocument();
-  expect(screen.getByText(historyRecord.attachmentName)).toBeInTheDocument();
-  expect(props.safeCopy).not.toHaveBeenCalled();
-  expect(props.downloadHistoricalFacilityReport).not.toHaveBeenCalled();
+  expect(props.copyReportEmailContent).not.toHaveBeenCalled();
+  expect(props.exportWeeklyFullDataWorkbook).not.toHaveBeenCalled();
+  expect(props.saveReportsToHistory).not.toHaveBeenCalled();
+  expect(props.markSelectedFacilityReportsReviewed).not.toHaveBeenCalled();
+  expect(props.markSelectedFacilityReportsSent).not.toHaveBeenCalled();
 
-  fireEvent.click(screen.getByRole("button", { name: "Copy" }));
-  expect(props.safeCopy).toHaveBeenCalledWith(historyRecord.emailBody);
-  fireEvent.click(screen.getByRole("button", { name: "Download" }));
-  expect(props.downloadHistoricalFacilityReport).toHaveBeenCalledWith(historyRecord);
-  fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+  fireEvent.click(screen.getByRole("button", { name: "Copy Email Body" }));
+  fireEvent.click(screen.getAllByRole("button", { name: "Download Workbook" })[0]);
+  fireEvent.click(screen.getByRole("button", { name: "Save Draft to History" }));
+  fireEvent.click(screen.getByRole("button", { name: "Mark Reviewed" }));
+  fireEvent.click(screen.getByRole("button", { name: "Mark Sent" }));
+
+  expect(props.copyReportEmailContent).toHaveBeenCalledWith("Synthetic preview body", "Email body");
+  expect(props.exportWeeklyFullDataWorkbook).toHaveBeenCalledTimes(1);
+  expect(props.saveReportsToHistory).toHaveBeenCalledWith([reportRow], "Draft Generated");
+  expect(props.markSelectedFacilityReportsReviewed).toHaveBeenCalledTimes(1);
+  expect(props.markSelectedFacilityReportsSent).toHaveBeenCalledTimes(1);
+});
+
+test("Generated Reports opens Sent & History with Drafts selected", () => {
+  render(<ReportsHistoryPage {...baseProps({ reportsHubTab: "generated" })} />);
+  expect(screen.getByRole("button", { name: "Drafts" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByText("No report history matches this view.")).toBeInTheDocument();
+});
+
+test("preserves legacy history meanings", () => {
+  const records = [
+    { ...historyRecord, id: "copied", status: "Copied" },
+    { ...historyRecord, id: "exported", status: "Exported" },
+    { ...historyRecord, id: "completed", status: "Manually Completed" },
+  ];
+  render(<ReportsHistoryPage {...baseProps({ reportsHubTab: "sent-history", reportHistory: records, reportHistoryFiltered: records })} />);
+
+  expect(screen.getByText("Legacy activity: Copied")).toBeInTheDocument();
+  expect(screen.getByText("Legacy activity: Downloaded")).toBeInTheDocument();
+  expect(screen.getByText("Legacy status: Completed")).toBeInTheDocument();
+});
+
+test("warns before historical regeneration and distinguishes saved details from current-data regeneration", () => {
+  const props = baseProps({ reportsHubTab: "sent-history" });
+  render(<ReportsHistoryPage {...props} />);
+
+  expect(screen.getAllByText(HISTORICAL_REGENERATION_WARNING).length).toBeGreaterThanOrEqual(2);
+  fireEvent.click(screen.getByRole("button", { name: "View Saved Report Details" }));
   expect(props.setWeeklySubject).toHaveBeenCalledWith(historyRecord.emailSubject);
   expect(props.setWeeklyReport).toHaveBeenCalledWith(historyRecord.emailBody);
-  expect(props.setReportsHubTab).toHaveBeenCalledWith("email");
-  expect(JSON.stringify(props.reportHistoryFiltered)).toBe(original);
+  expect(props.setReportsHubTab).toHaveBeenCalledWith("ready-review");
+  expect(props.downloadHistoricalFacilityReport).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole("button", { name: "Regenerate Workbook Using Current Data" }));
+  expect(props.downloadHistoricalFacilityReport).toHaveBeenCalledWith(historyRecord);
 });
 
-test("renders download and attachment actions with existing workbook counts and explicit callbacks", () => {
-  const props = baseProps({ reportsHubTab: "attachment" });
+test("Templates & Settings consolidates all six existing settings surfaces without duplicate Report Settings controls", () => {
+  const props = baseProps({ reportsHubTab: "templates-settings" });
   render(<ReportsHistoryPage {...props} />);
 
-  expect(screen.getByText("Report-eligible Selected Facilities: 1")).toBeInTheDocument();
-  expect(screen.getByText("Attachment Tabs: 2")).toBeInTheDocument();
+  [
+    ["Open Email Templates", "email-templates"],
+    ["Open Recipient Setup", "recipients"],
+    ["Open Report Presets", "report-presets"],
+    ["Open Workbook Defaults", "workbook-defaults"],
+    ["Open No-Openings Policy", "no-openings"],
+    ["Open Reporting Automation", "automation"],
+  ].forEach(([label, value]) => {
+    fireEvent.click(screen.getByRole("button", { name: label }));
+    expect(props.openReportingSettingsSurface).toHaveBeenLastCalledWith(value);
+  });
+  expect(screen.queryByRole("button", { name: "Report Settings" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("candidates")).toBeChecked();
+  expect(screen.getByLabelText("requisitions")).not.toBeChecked();
+});
+
+test("rendering and destination navigation do not mutate records or trigger action callbacks", () => {
+  const props = baseProps();
+  const sourceRows = JSON.stringify(props.selectedFacilityActionRows);
+  const sourceHistory = JSON.stringify(props.reportHistory);
+  render(<ReportsHistoryPage {...props} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Sent & History" }));
+  fireEvent.click(screen.getByRole("button", { name: "Templates & Settings" }));
+
+  expect(JSON.stringify(props.selectedFacilityActionRows)).toBe(sourceRows);
+  expect(JSON.stringify(props.reportHistory)).toBe(sourceHistory);
+  expect(props.saveReportsToHistory).not.toHaveBeenCalled();
+  expect(props.copyReportEmailContent).not.toHaveBeenCalled();
   expect(props.exportWeeklyFullDataWorkbook).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Download All-Facility Excel" }));
-  fireEvent.click(screen.getByRole("button", { name: "Download Facility Excel Files" }));
-  fireEvent.click(screen.getByRole("button", { name: "Download History Excel" }));
-  fireEvent.click(screen.getByRole("button", { name: "Download ATS Packet Excel" }));
-  expect(props.exportWeeklyFullDataWorkbook).toHaveBeenCalledTimes(1);
-  expect(props.exportFacilityWorkbooks).toHaveBeenCalledTimes(1);
-  expect(props.exportHistoryExcel).toHaveBeenCalledTimes(1);
-  expect(props.exportAtsUpdatePacketExcel).toHaveBeenCalledTimes(1);
-});
-
-test("renders existing report settings and forwards changes without mutating settings", () => {
-  const props = baseProps({ reportsHubTab: "settings" });
-  const original = JSON.stringify(props.reportInclusions);
-  render(<ReportsHistoryPage {...props} />);
-
-  expect(screen.getByRole("checkbox", { name: "candidates" })).toBeChecked();
-  expect(screen.getByRole("checkbox", { name: "requisitions" })).not.toBeChecked();
-  fireEvent.click(screen.getByRole("button", { name: "Open Automation Center Report Automation" }));
-  expect(props.openReportAutomationSettings).toHaveBeenCalledTimes(1);
-  fireEvent.click(screen.getByRole("checkbox", { name: "requisitions" }));
-  expect(props.setReportInclusions).toHaveBeenCalledTimes(1);
-  expect(JSON.stringify(props.reportInclusions)).toBe(original);
+  expect(props.downloadHistoricalFacilityReport).not.toHaveBeenCalled();
+  expect(props.markSelectedFacilityReportsReviewed).not.toHaveBeenCalled();
+  expect(props.markSelectedFacilityReportsSent).not.toHaveBeenCalled();
 });
