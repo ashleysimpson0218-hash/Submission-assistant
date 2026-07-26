@@ -106,8 +106,9 @@ function baseProps(overrides = {}) {
     activePage: "reports",
     activeReportSection: "",
     allowManualCompletion: true,
-    clearAndRegenerateWeeklyReports: jest.fn(),
+    restartWeeklyReview: jest.fn(),
     clearFacilityReportSelection: jest.fn(),
+    displayDate: (value) => value,
     eligibilityForReportRows: jest.fn(() => allowedEligibility),
     excludedReportIds: [],
     expandedReportIssueCode: "",
@@ -137,10 +138,9 @@ function baseProps(overrides = {}) {
       All: 1,
     },
     facilityReadinessVisibleRows: [baseRow],
-    generateWeeklyReport: jest.fn(),
     includedReportRows: [],
     isNarrow: false,
-    markSelectedFacilityReportsComplete: jest.fn(),
+    markSelectedFacilityReportsReviewed: jest.fn(),
     noOpeningsPolicy: NO_OPENINGS_POLICIES.ASK_WEEKLY,
     noOpeningsPolicyDraft: "",
     noOpeningsPolicySelection: NO_OPENINGS_POLICIES.ASK_WEEKLY,
@@ -151,7 +151,7 @@ function baseProps(overrides = {}) {
     reportCompletionSummary: { total: 1, done: 0 },
     reportEndDate: "2026-07-24",
     reportStartDate: "2026-07-20",
-    reportsTab: "facility",
+    reportsTab: "facility-readiness",
     saveNoOpeningsPolicy: jest.fn(),
     selectAllMatchingFacilityReports: jest.fn(),
     selectAllVisibleFacilityReports: jest.fn(),
@@ -173,6 +173,12 @@ function baseProps(overrides = {}) {
     undoNoOpeningWeeklyDecision: jest.fn(),
     updateFacilityReadinessFilter: jest.fn(),
     weeklyReport: "",
+    weeklyReportingBlockerCount: 0,
+    weeklyReportingPrimaryAction: {
+      label: "View Weekly Summary",
+      targetStep: "overview",
+      disabled: false,
+    },
     ...overrides,
   };
 }
@@ -180,7 +186,7 @@ function baseProps(overrides = {}) {
 test("renders the existing Needs Action default, status counts, search, and filters", () => {
   render(<WeeklyReportingPage {...baseProps()} />);
 
-  expect(screen.getByText("Facility Readiness")).toBeInTheDocument();
+  expect(screen.getAllByText("Facility Readiness").length).toBeGreaterThan(0);
   expect(screen.getByDisplayValue("Needs Action")).toBeInTheDocument();
   expect(screen.getByPlaceholderText("Canonical name, alias, original label, or Facility ID")).toBeInTheDocument();
   expect(screen.getByDisplayValue("All Regions")).toBeInTheDocument();
@@ -211,8 +217,8 @@ test("shows hidden selections and count-specific actions without making zero sel
   render(<WeeklyReportingPage {...props} />);
 
   expect(screen.getAllByText(/1 hidden by current filters/).length).toBeGreaterThan(0);
-  expect(screen.getByRole("button", { name: "Preview 1 Selected" })).toBeEnabled();
-  expect(screen.getByRole("button", { name: "Download 1 Selected" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Preview 1 Selected Reports" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Download Combined Workbook" })).toBeEnabled();
   expect(screen.getByText("1 ineligible under the current policy")).toBeInTheDocument();
 });
 
@@ -267,8 +273,8 @@ test("keeps diagnostic issue detail available while final actions obey eligibili
 
   expect(screen.getByText("Synthetic Shared")).toBeInTheDocument();
   expect(screen.getByText("Choose a canonical facility.")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Preview 1 Selected" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Download 1 Selected" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Preview 1 Selected Reports" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Download Combined Workbook" })).toBeDisabled();
 });
 
 test("preserves session-only no-opening decisions and status labels", () => {
@@ -313,11 +319,50 @@ test("rendering and navigation do not mutate source rows or create hidden status
   });
   render(<WeeklyReportingPage {...props} />);
 
-  fireEvent.click(screen.getByRole("button", { name: "Preview 1 Selected" }));
-  fireEvent.click(screen.getByRole("button", { name: "Download 1 Selected" }));
+  fireEvent.click(screen.getByRole("button", { name: "Preview 1 Selected Reports" }));
+  fireEvent.click(screen.getByRole("button", { name: "Download Combined Workbook" }));
 
   expect(JSON.stringify(row)).toBe(original);
   expect(props.previewSelectedFacilityReports).toHaveBeenCalledTimes(1);
   expect(props.exportSelectedFacilityReports).toHaveBeenCalledTimes(1);
-  expect(props.markSelectedFacilityReportsComplete).not.toHaveBeenCalled();
+  expect(props.markSelectedFacilityReportsReviewed).not.toHaveBeenCalled();
+});
+
+test("renders the five-step workflow in order with the active step and exact scope", () => {
+  render(<WeeklyReportingPage {...baseProps()} />);
+
+  const labels = ["Overview", "Candidate & ATS Cleanup", "Facility Readiness", "Review Reports", "Send & Export"];
+  labels.forEach((label) => expect(screen.getByRole("button", { name: new RegExp(label) })).toBeInTheDocument());
+  expect(screen.getByRole("button", { name: /Facility Readiness/ })).toHaveAttribute("aria-current", "step");
+  expect(screen.getByRole("note")).toHaveTextContent("Canonical facilities with report-period activity or a required weekly reporting decision.");
+  expect(screen.getByText("Step 3 of 5")).toBeInTheDocument();
+});
+
+test("context action and step controls navigate without running report actions", () => {
+  const props = baseProps({
+    weeklyReportingPrimaryAction: {
+      label: "Continue: Fix 2 Blockers",
+      targetStep: "facility-readiness",
+      disabled: false,
+    },
+  });
+  render(<WeeklyReportingPage {...props} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Continue: Fix 2 Blockers" }));
+  fireEvent.click(screen.getByRole("button", { name: /Review Reports/ }));
+
+  expect(props.setReportsTab).toHaveBeenNthCalledWith(1, "facility-readiness");
+  expect(props.setReportsTab).toHaveBeenNthCalledWith(2, "review-reports");
+  expect(props.previewSelectedFacilityReports).not.toHaveBeenCalled();
+  expect(props.exportSelectedFacilityReports).not.toHaveBeenCalled();
+  expect(props.markSelectedFacilityReportsReviewed).not.toHaveBeenCalled();
+});
+
+test("keeps Restart Weekly Review in More and delegates the confirmed reset", () => {
+  const props = baseProps();
+  render(<WeeklyReportingPage {...props} />);
+
+  expect(screen.getByText("More")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Restart Weekly Review" }));
+  expect(props.restartWeeklyReview).toHaveBeenCalledTimes(1);
 });

@@ -39,7 +39,6 @@ export function ReportsHistoryPage({
   reportInclusions,
   reportTypeOptions,
   reportsHubTab,
-  reportsTab,
   safeCopy,
   saveReportsToHistory,
   selectedAudienceEmailBody,
@@ -54,7 +53,7 @@ export function ReportsHistoryPage({
   weeklyReport,
   weeklySubject,
 }) {
-  return activePage === "reports" && reportsTab === "hub" ? (
+  return activePage === "reporting" ? (
     <div style={{ display: "grid", gap: 18 }}>
       <Card title="Reports Hub" subtitle="Preview concise email snapshots, download detailed Excel attachments, and revisit generated report history." compact action={<Button subtle onClick={openReportAutomationSettings}>Report Settings</Button>}>
         <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "repeat(2, minmax(0, 1fr))" : "repeat(5, minmax(0, 1fr))" }}>
@@ -90,7 +89,7 @@ export function ReportsHistoryPage({
       ) : null}
 
       {reportsHubTab === "generated" || reportsHubTab === "facility" || reportsHubTab === "regional" || reportsHubTab === "csuite" ? (
-        <Card title="Generated Reports" subtitle="Report-ready audience drafts based on the current Weekly Cleanup selections." compact>
+        <Card title="Generated Reports" subtitle="Report-ready audience drafts based on the current Weekly Reporting selections." compact>
           <div style={{ display: "grid", gap: 10 }}>
             {selectedFacilityActionRows.map((row) => {
               const model = facilityReportModel(row.facilityId || row.id || row.facility);

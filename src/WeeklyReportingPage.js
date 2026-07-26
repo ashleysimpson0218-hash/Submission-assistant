@@ -1,8 +1,13 @@
 import React from "react";
 import WeeklyCleanupReportBuilder from "./WeeklyCleanupReportBuilder";
-import { FACILITY_READINESS_OPTIONS, facilityBulkActionLabel } from "./facilityReadinessNavigation";
+import { FACILITY_READINESS_OPTIONS } from "./facilityReadinessNavigation";
 import { NO_OPENINGS_POLICIES, NO_OPENINGS_POLICY_OPTIONS, NO_OPENINGS_WEEKLY_DECISIONS } from "./noOpeningFacilityPolicy";
 import { LEGACY_REPORT_STATUS_DISPLAY } from "./weeklyReportingEligibility";
+import {
+  WEEKLY_REPORTING_STEPS,
+  weeklyReportingScopeText,
+  weeklyReportingStepNumber,
+} from "./weeklyReportingWorkflow";
 
 export function WeeklyReportingPage(props) {
   const {
@@ -28,7 +33,7 @@ export function WeeklyReportingPage(props) {
     atsCleanupRows,
     atsCleanupSearch,
     candidateTimingDelayRows,
-    clearAndRegenerateWeeklyReports,
+    restartWeeklyReview,
     clearFacilityReportSelection,
     cloudStatus,
     copySelectedFacilityReports,
@@ -57,7 +62,6 @@ export function WeeklyReportingPage(props) {
     facilityReadinessStatusCounts,
     facilityReadinessVisibleRows,
     facilityReportQueueFiltered,
-    generateWeeklyReport,
     hasLoaded,
     history,
     importAtsStatusSpreadsheet,
@@ -66,7 +70,7 @@ export function WeeklyReportingPage(props) {
     isNarrow,
     labelFromKey,
     markSelectedAtsUpdated,
-    markSelectedFacilityReportsComplete,
+    markSelectedFacilityReportsReviewed,
     markSelectedFacilityReportsSent,
     noOpeningsPolicy,
     noOpeningsPolicyDraft,
@@ -121,10 +125,8 @@ export function WeeklyReportingPage(props) {
     setExpandedReportIssueCode,
     setFacilityReadinessVisibleLimit,
     setNoOpeningsPolicyDraft,
-    setReportEndDate,
     setReportInclusions,
     setReportsTab,
-    setReportStartDate,
     setSelectedFacility,
     setSelectedFacilityReports,
     setSelectedId,
@@ -143,63 +145,58 @@ export function WeeklyReportingPage(props) {
     undoNoOpeningWeeklyDecision,
     updateFacilityReadinessFilter,
     weeklyReport,
+    weeklyReportingBlockerCount,
+    weeklyReportingPrimaryAction,
     weeklySubject,
   } = props;
   return (
     <>
         {activePage === "reports" ? (
           <div style={{ display: "grid", gap: 14 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-            <div>
-              <h1 style={{ margin: 0, color: THEME.text, fontSize: 22, fontWeight: 950 }}>{"\uD83E\uDDF9"} Weekly Cleanup</h1>
-              <div style={{ color: THEME.muted, fontSize: 12, marginTop: 4 }}>Build your weekly report, clean stale records, and export leadership-ready updates.</div>
+            <div style={{ position: "sticky", top: 0, zIndex: 12 }}>
+              <Card compact>
+                <div style={{ display: "grid", gap: 12, gridTemplateColumns: isNarrow ? "1fr" : "minmax(0, 1fr) auto", alignItems: "center" }}>
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                      <h1 style={{ margin: 0, color: THEME.text, fontSize: 22, fontWeight: 950 }}>Weekly Reporting</h1>
+                      <Badge tone="Interview">Step {weeklyReportingStepNumber(reportsTab)} of 5</Badge>
+                    </div>
+                    <div style={{ color: THEME.muted, fontSize: 12, marginTop: 4 }}>{displayDate(reportStartDate)} to {displayDate(reportEndDate)}</div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                      <Badge tone={weeklyReportingBlockerCount ? "High" : "Low"}>{weeklyReportingBlockerCount} Blocked</Badge>
+                      <Badge tone="Low">{facilityReadinessStatusCounts.Ready || 0} Ready</Badge>
+                      <Badge tone="Interview">{facilityReadinessStatusCounts["No Report Required"] || 0} No Report Required</Badge>
+                      <Badge tone="Low">{facilityReadinessStatusCounts.Sent || 0} Sent</Badge>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: isNarrow ? "flex-start" : "flex-end" }}>
+                    <Button primary disabled={weeklyReportingPrimaryAction.disabled} onClick={() => setReportsTab(weeklyReportingPrimaryAction.targetStep)}>{weeklyReportingPrimaryAction.label}</Button>
+                    <details style={{ position: "relative" }}>
+                      <summary style={{ cursor: "pointer", color: THEME.primary2, fontWeight: 900, padding: "8px 10px" }}>More</summary>
+                      <div style={{ position: isNarrow ? "static" : "absolute", right: 0, marginTop: 6, minWidth: 210, padding: 8, border: `1px solid ${THEME.borderSoft}`, borderRadius: 7, background: THEME.panel, boxShadow: THEME.shadow }}>
+                        <Button subtle onClick={restartWeeklyReview}>Restart Weekly Review</Button>
+                      </div>
+                    </details>
+                  </div>
+                </div>
+              </Card>
             </div>
-          </div>
-          <Card compact>
-            <div style={{ display: "grid", gap: 16, gridTemplateColumns: isNarrow ? "1fr" : "minmax(0, 1fr) 260px", alignItems: "center" }}>
-              <div>
-                <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 14 }}>
-                  <span style={{ width: 34, height: 34, borderRadius: 999, display: "grid", placeItems: "center", background: THEME.blueBg, color: THEME.primary2, fontSize: 17 }}>{"\uD83D\uDCC5"}</span>
-                  <span><strong style={{ display: "block", color: THEME.text }}>Weekly Cleanup Command Center</strong><span style={{ color: THEME.muted, fontSize: 12 }}>Review weekly metrics, clean ATS records, then generate and export the final report.</span></span>
-                </div>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "end", marginBottom: 14 }}>
-                  <Field label="Report Start Date"><TextInput type="date" value={reportStartDate} onChange={(event) => setReportStartDate(event.target.value)} style={{ width: isNarrow ? "100%" : 168 }} /></Field>
-                  <Field label="Report End Date"><TextInput type="date" value={reportEndDate} onChange={(event) => setReportEndDate(event.target.value)} style={{ width: isNarrow ? "100%" : 168 }} /></Field>
-                </div>
-                <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : "repeat(3, minmax(0, 1fr))" }}>
-                  <MiniStat label="Included" value={includedReportRows.length} tone="Interview" compact />
-                  <MiniStat label="Removed" value={excludedReportIds.length} tone={excludedReportIds.length ? "High" : "Low"} compact />
-                  <MiniStat label={weeklyReport ? "Generated" : "Not Generated"} value={weeklyReport ? "Ready" : "Report Status"} tone={weeklyReport ? "Low" : "Medium"} compact />
-                </div>
+            <Card compact>
+              <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : "repeat(5, minmax(0, 1fr))" }}>
+                {WEEKLY_REPORTING_STEPS.map((step, index) => (
+                  <button key={step.key} type="button" onClick={() => setReportsTab(step.key)} aria-current={reportsTab === step.key ? "step" : undefined} style={{ border: `1px solid ${reportsTab === step.key ? THEME.primary2 : THEME.borderSoft}`, borderRadius: 6, padding: "10px 11px", background: reportsTab === step.key ? THEME.blueBg : THEME.panelAlt, color: THEME.text, cursor: "pointer", textAlign: "left", fontWeight: 850, fontSize: 12 }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: 999, background: reportsTab === step.key ? THEME.primary2 : THEME.panel, color: reportsTab === step.key ? "#fff" : THEME.primary2, marginRight: 8 }}>{index + 1}</span>
+                    <span>{step.label}</span>
+                    {reportsTab === step.key ? <span style={{ display: "block", height: 3, background: THEME.primary2, borderRadius: 999, marginTop: 8 }} /> : null}
+                  </button>
+                ))}
               </div>
-              <div style={{ display: "grid", gap: 10 }}>
-                <Button primary onClick={generateWeeklyReport} disabled={!selectedReportEligibility.canGenerateReport}>Generate Weekly Report</Button>
-                <Button subtle onClick={clearAndRegenerateWeeklyReports}>Clear + Regenerate Reports</Button>
-              </div>
-            </div>
-          </Card>
-          <Card compact>
-            <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : "repeat(5, minmax(0, 1fr))" }}>
-              {[
-                ["metrics", "Weekly Metrics"],
-                ["audience", "Audience Report Queue + Sender"],
-                ["facility", "Facility Completion"],
-                ["ats", "ATS Cleanup"],
-                ["exports", "Export"],
-                ["hub", "Reports Hub"],
-              ].map(([value, label], index) => (
-                <button key={value} type="button" onClick={() => setReportsTab(value)} style={{ border: `1px solid ${reportsTab === value ? THEME.primary2 : THEME.borderSoft}`, borderRadius: 6, padding: "10px 11px", background: reportsTab === value ? THEME.blueBg : THEME.panelAlt, color: THEME.text, cursor: "pointer", textAlign: "left", fontWeight: 850, fontSize: 12 }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: 999, background: reportsTab === value ? THEME.primary2 : THEME.panel, color: reportsTab === value ? "#fff" : THEME.primary2, marginRight: 8 }}>{index + 1}</span>
-                  <span>{label}</span>
-                  {reportsTab === value ? <span style={{ display: "block", height: 3, background: THEME.primary2, borderRadius: 999, marginTop: 8 }} /> : null}
-                </button>
-              ))}
-            </div>
-          </Card>
+            </Card>
+            <div role="note" style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 7, padding: "9px 11px", background: THEME.panelAlt, color: THEME.muted, fontSize: 12 }}>{weeklyReportingScopeText(reportsTab)}</div>
           </div>
         ) : null}
 
-        {activePage === "reports" && reportsTab === "ats" ? (() => {
+        {activePage === "reports" && reportsTab === "candidate-cleanup" ? (() => {
           const rows = atsCleanupRows().map((row) => ({ ...row, tracker: tracker.find((item) => item.id === row.id) }));
           const counts = {
             all: rows.length,
@@ -307,7 +304,7 @@ export function WeeklyReportingPage(props) {
           );
         })() : null}
 
-        {activePage === "reports" && reportsTab === "metrics" ? (
+        {activePage === "reports" && reportsTab === "overview" ? (
           <div style={{ display: "grid", gap: 18 }}>
             <div style={{ display: "grid", gap: 14 }}>
               <Card title="Metrics + Reporting" subtitle="Review included rows, removable candidates, and leadership-ready sections." compact>
@@ -393,7 +390,7 @@ export function WeeklyReportingPage(props) {
                 </Card>
                 <Card title="Weekly Report Preview" subtitle="Preview your weekly report before sharing." compact>
                   <div style={{ border: `1px dashed ${THEME.border}`, borderRadius: 6, minHeight: 260, padding: 16, background: THEME.panelAlt, display: "grid", placeItems: weeklyReport ? "stretch" : "center" }}>
-                    {weeklyReport ? <EmailDocument title="Weekly Report" subject={weeklySubject} body={weeklyReport} attachmentLabel="Download Excel Attachment" onDownloadAttachment={exportWeeklyFullDataWorkbook} onMarkSent={markSelectedFacilityReportsSent} attachmentNotice="Mailto opens the email body only. Download this Excel attachment, then attach it to the draft before sending. After sending, use Mark Sent to document completion." /> : <div style={{ textAlign: "center", color: THEME.muted }}><div style={{ fontSize: 36, marginBottom: 10 }}> </div><strong style={{ color: THEME.text }}>Generate the weekly report to preview it here.</strong><div style={{ marginTop: 12 }}><Button primary onClick={generateWeeklyReport} disabled={!selectedReportEligibility.canGenerateReport}>Generate Weekly Report</Button></div></div>}
+                    {weeklyReport ? <EmailDocument title="Weekly Report" subject={weeklySubject} body={weeklyReport} attachmentLabel="Download Excel Workbook" onDownloadAttachment={exportWeeklyFullDataWorkbook} onMarkSent={markSelectedFacilityReportsSent} attachmentNotice="Mailto opens the email body only. Download this Excel attachment, then attach it to the draft before sending. After sending, use Mark Sent to document completion." /> : <div style={{ textAlign: "center", color: THEME.muted }}><div style={{ fontSize: 36, marginBottom: 10 }}> </div><strong style={{ color: THEME.text }}>No weekly report preview has been created yet.</strong></div>}
                   </div>
                 </Card>
               </div>
@@ -412,11 +409,12 @@ export function WeeklyReportingPage(props) {
                 <div style={{ display: "grid", gap: 12, gridTemplateColumns: isMedium ? "1fr" : "minmax(0, 1fr) 280px", alignItems: "start" }}>
                   <div style={{ display: "grid", gap: 10 }}>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <Button primary onClick={previewSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canCreateFinalPreview}>{facilityBulkActionLabel("Preview", selectedFacilityActionRows.length)}</Button>
-                      <Button subtle onClick={copySelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail}>{facilityBulkActionLabel("Copy Email", selectedFacilityActionRows.length)}</Button>
-                      <Button subtle onClick={exportSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canDownloadWorkbook}>{facilityBulkActionLabel("Download", selectedFacilityActionRows.length)}</Button>
-                      <Button subtle onClick={markSelectedFacilityReportsComplete} disabled={!allowManualCompletion || !selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canMarkReady}>{facilityBulkActionLabel("Mark Complete", selectedFacilityActionRows.length)}</Button>
-                      <Button primary onClick={sendReadyFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail || !selectedFacilityActionEligibility.canMarkReady}>{facilityBulkActionLabel("Prepare", selectedFacilityActionRows.length)}</Button>
+                      <Button primary onClick={previewSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canCreateFinalPreview}>Preview {selectedFacilityActionRows.length} Selected Reports</Button>
+                      <Button subtle onClick={copySelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail}>Copy Email Body</Button>
+                      <Button subtle onClick={exportSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canDownloadWorkbook}>Download Combined Workbook</Button>
+                      <Button subtle onClick={markSelectedFacilityReportsReviewed} disabled={!allowManualCompletion || !selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canMarkReady}>Mark Reviewed</Button>
+                      <Button subtle onClick={markSelectedFacilityReportsSent} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail}>Mark Sent</Button>
+                      <Button primary onClick={sendReadyFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail || !selectedFacilityActionEligibility.canMarkReady}>Review {selectedFacilityActionRows.length} Ready Reports</Button>
                     </div>
                     <div style={{ overflowX: "auto" }}>
                       <div style={{ minWidth: isNarrow ? 760 : 0, display: "grid", gap: 8 }}>
@@ -461,7 +459,7 @@ export function WeeklyReportingPage(props) {
           </div>
         ) : null}
 
-        {activePage === "reports" && reportsTab === "audience" ? (
+        {activePage === "reports" && reportsTab === "review-reports" ? (
           <div style={{ display: "grid", gap: 18 }}>
             <Card title="Audience Report Queue + Sender" subtitle="Select the report audience, then preview, copy, export, send, or mark selected reports complete." compact>
               <div style={{ display: "grid", gap: 14 }}>
@@ -472,13 +470,14 @@ export function WeeklyReportingPage(props) {
                   <Field label="Status Filter"><SelectInput value={selectedStatusFilter} onChange={(event) => setSelectedStatusFilter(event.target.value)} options={reportStatusOptions} /></Field>
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <Button primary onClick={previewSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canCreateFinalPreview}>{facilityBulkActionLabel("Preview", selectedFacilityActionRows.length)}</Button>
-                  <Button subtle onClick={() => saveReportsToHistory(selectedFacilityActionRows, "Draft Generated")} disabled={!selectedFacilityActionRows.length}>{facilityBulkActionLabel("Save Draft", selectedFacilityActionRows.length)}</Button>
-                  <Button subtle onClick={copySelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail}>{facilityBulkActionLabel("Copy Email", selectedFacilityActionRows.length)}</Button>
-                  <Button subtle onClick={exportSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canDownloadWorkbook}>{facilityBulkActionLabel("Download", selectedFacilityActionRows.length)}</Button>
-                  <Button subtle onClick={exportFacilityWorkbooks} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canDownloadWorkbook}>{facilityBulkActionLabel("Download Separate", selectedFacilityActionRows.length)}</Button>
-                  <Button subtle onClick={markSelectedFacilityReportsComplete} disabled={!allowManualCompletion || !selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canMarkReady}>{facilityBulkActionLabel("Mark Complete", selectedFacilityActionRows.length)}</Button>
-                  <Button primary onClick={sendReadyFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail || !selectedFacilityActionEligibility.canMarkReady}>{facilityBulkActionLabel("Prepare", selectedFacilityActionRows.length)}</Button>
+                  <Button primary onClick={previewSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canCreateFinalPreview}>Preview {selectedFacilityActionRows.length} Selected Reports</Button>
+                  <Button subtle onClick={() => saveReportsToHistory(selectedFacilityActionRows, "Draft Generated")} disabled={!selectedFacilityActionRows.length}>Save Draft to History</Button>
+                  <Button subtle onClick={copySelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail}>Copy Email Body</Button>
+                  <Button subtle onClick={exportSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canDownloadWorkbook}>Download Combined Workbook</Button>
+                  <Button subtle onClick={exportFacilityWorkbooks} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canDownloadWorkbook}>Download Separate Facility Workbooks</Button>
+                  <Button subtle onClick={markSelectedFacilityReportsReviewed} disabled={!allowManualCompletion || !selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canMarkReady}>Mark Reviewed</Button>
+                  <Button subtle onClick={markSelectedFacilityReportsSent} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail}>Mark Sent</Button>
+                  <Button primary onClick={sendReadyFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail || !selectedFacilityActionEligibility.canMarkReady}>Review {selectedFacilityActionRows.length} Ready Reports</Button>
                 </div>
                 <Accordion title="Report Sections" subtitle="Choose what goes in the Excel attachment. Email stays concise." defaultOpen={false}>
                   <div style={{ display: "grid", gap: 8, gridTemplateColumns: isNarrow ? "1fr" : "repeat(3, minmax(0, 1fr))" }}>
@@ -510,15 +509,15 @@ export function WeeklyReportingPage(props) {
                 </div>
               </div>
             </Card>
-            <Card title="Weekly Report Preview" subtitle="Send Ready loads the selected ready reports here for final review." compact action={<Button subtle onClick={copyWeeklyReport} disabled={!weeklyReport}>Copy Weekly Report</Button>}>
+            <Card title="Weekly Report Preview" subtitle="Review Ready Reports loads the selected ready reports here without changing their status." compact action={<Button subtle onClick={copyWeeklyReport} disabled={!weeklyReport}>Copy Email Body</Button>}>
               <div style={{ border: `1px dashed ${THEME.border}`, borderRadius: 6, minHeight: 340, padding: 16, background: THEME.panelAlt, display: "grid", placeItems: weeklyReport ? "stretch" : "center" }}>
-                {weeklyReport ? <EmailDocument title="Weekly Report" subject={weeklySubject} body={weeklyReport} attachmentLabel="Download Excel Attachment" onDownloadAttachment={exportSelectedFacilityReports} onMarkSent={markSelectedFacilityReportsSent} attachmentNotice="Mailto cannot attach the Excel file automatically. This downloads the report workbook so you can attach it to the email draft. After sending, use Mark Sent to document completion." /> : <div style={{ textAlign: "center", color: THEME.muted }}><div style={{ fontSize: 36, marginBottom: 10 }}> </div><strong style={{ color: THEME.text }}>Preview or Send Ready to load report emails here.</strong></div>}
+                {weeklyReport ? <EmailDocument title="Weekly Report" subject={weeklySubject} body={weeklyReport} attachmentLabel="Download Excel Workbook" onDownloadAttachment={exportSelectedFacilityReports} onMarkSent={markSelectedFacilityReportsSent} attachmentNotice="Mailto cannot attach the Excel file automatically. This downloads the report workbook so you can attach it to the email draft. After sending, use Mark Sent to document completion." /> : <div style={{ textAlign: "center", color: THEME.muted }}><div style={{ fontSize: 36, marginBottom: 10 }}> </div><strong style={{ color: THEME.text }}>Select reports and use Review Ready Reports to load them here.</strong></div>}
               </div>
             </Card>
           </div>
         ) : null}
 
-        {activePage === "reports" && reportsTab === "facility" ? (
+        {activePage === "reports" && reportsTab === "facility-readiness" ? (
           <div style={{ display: "grid", gap: 18 }}>
             <Card title="Facility Readiness" subtitle={`${facilityReadinessStatusCounts["Needs Action"]} facilit${facilityReadinessStatusCounts["Needs Action"] === 1 ? "y needs" : "ies need"} action. Filters use AND behavior and selection remains explicit.`} compact>
               <div style={{ display: "grid", gap: 14 }}>
@@ -617,9 +616,10 @@ export function WeeklyReportingPage(props) {
                     <strong>{facilityReadinessSelection.selectedCount} selected</strong>
                     {facilityReadinessSelection.hiddenSelectedCount ? <span style={{ color: THEME.muted }}>{facilityReadinessSelection.hiddenSelectedCount} hidden by current filters</span> : null}
                     {selectedFacilityPolicyRows.length !== selectedFacilityActionRows.length ? <span style={{ color: THEME.muted }}>{selectedFacilityPolicyRows.length - selectedFacilityActionRows.length} ineligible under the current policy</span> : null}
-                    <Button primary onClick={() => previewSelectedFacilityReports()} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canCreateFinalPreview}>{facilityBulkActionLabel("Preview", selectedFacilityActionRows.length)}</Button>
-                    <Button subtle onClick={exportSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canDownloadWorkbook}>{facilityBulkActionLabel("Download", selectedFacilityActionRows.length)}</Button>
-                    <Button subtle onClick={markSelectedFacilityReportsComplete} disabled={!allowManualCompletion || !selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canMarkReady}>{facilityBulkActionLabel("Mark Complete", selectedFacilityActionRows.length)}</Button>
+                    <Button primary onClick={() => previewSelectedFacilityReports()} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canCreateFinalPreview}>Preview {selectedFacilityActionRows.length} Selected Reports</Button>
+                    <Button subtle onClick={exportSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canDownloadWorkbook}>Download Combined Workbook</Button>
+                    <Button subtle onClick={markSelectedFacilityReportsReviewed} disabled={!allowManualCompletion || !selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canMarkReady}>Mark Reviewed</Button>
+                    <Button subtle onClick={markSelectedFacilityReportsSent} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail}>Mark Sent</Button>
                     <Button subtle onClick={clearFacilityReportSelection}>Clear Selection</Button>
                   </div>
                 ) : null}
@@ -642,7 +642,7 @@ export function WeeklyReportingPage(props) {
                           </> : null}
                           {row.noOpeningOutcome?.applies && noOpeningsPolicy === NO_OPENINGS_POLICIES.ASK_WEEKLY && noOpeningWeeklyDecisions[row.facilityId] ? <Button subtle onClick={() => undoNoOpeningWeeklyDecision(row.facilityId)} style={{ padding: "6px 8px", fontSize: 11 }}>Undo Weekly Decision</Button> : null}
                           {row.readinessIssues.filter((issue) => issue.resolutionAction).slice(0, 2).map((issue, index) => <Button key={`${issue.code}-${issue.requisitionId || issue.facilityId}-${index}`} subtle onClick={() => openReportingIssueCorrection(issue)} style={{ padding: "6px 8px", fontSize: 11 }}>{issue.resolutionAction}</Button>)}
-                          {!row.readinessIssues.some((issue) => issue.resolutionAction) && row.reportActionEligible !== false ? <Button subtle disabled={!eligibilityForReportRows([row]).canCreateFinalPreview} onClick={() => { setReportsTab("audience"); setSelectedFacility(row.facility); setSelectedFacilityReports([row.id]); previewSelectedFacilityReports([row]); }} style={{ padding: "6px 8px", fontSize: 11 }}>{row.action}</Button> : null}
+                          {!row.readinessIssues.some((issue) => issue.resolutionAction) && row.reportActionEligible !== false ? <Button subtle disabled={!eligibilityForReportRows([row]).canCreateFinalPreview} onClick={() => { setReportsTab("review-reports"); setSelectedFacility(row.facility); setSelectedFacilityReports([row.id]); previewSelectedFacilityReports([row]); }} style={{ padding: "6px 8px", fontSize: 11 }}>{row.action === "Preview" ? "Review Report" : row.action}</Button> : null}
                         </div>
                       </div>
                     )) : <EmptyState>No facilities match the current Needs Action filters.</EmptyState>}
@@ -655,7 +655,7 @@ export function WeeklyReportingPage(props) {
           </div>
         ) : null}
 
-        {activePage === "reports" && reportsTab === "exports" ? (
+        {activePage === "reports" && reportsTab === "send-export" ? (
           <div style={{ display: "grid", gap: 18 }}>
             <WeeklyCleanupReportBuilder
               settings={settings}
@@ -678,12 +678,12 @@ export function WeeklyReportingPage(props) {
               </div>
               <div style={{ display: "grid", gap: 12, gridTemplateColumns: isNarrow ? "1fr" : isMedium ? "repeat(2, minmax(0, 1fr))" : "repeat(5, minmax(0, 1fr))" }}>
                 {[
-                  { title: "Export All Data Excel", detail: "Export the complete weekly report with all sections and data.", action: exportWeeklyFullDataWorkbook, button: "Export All Data Excel", icon: "", disabled: !selectedReportEligibility.canDownloadWorkbook, recommended: true, tone: THEME.primary2, bg: THEME.blueBg },
-                  { title: "Export Facility Workbooks", detail: "Download individual detailed Excel attachments by selected facility.", action: exportFacilityWorkbooks, button: "Export Facility Excel", icon: "", tone: THEME.primary2, bg: THEME.blueBg },
-                  { title: "Export Tracker CSV", detail: "Export candidate tracker data in CSV format.", action: exportTrackerCsv, button: "Export CSV", icon: "", tone: THEME.green, bg: THEME.greenBg },
-                  { title: "Export History CSV", detail: "Export your weekly cleanup history in CSV format.", action: exportHistoryCsv, button: "Export CSV", icon: "", disabled: !history.length, tone: THEME.primary2, bg: THEME.blueBg },
-                  { title: "Export History Excel", detail: "Export your weekly cleanup history in Excel format.", action: exportHistoryExcel, button: "Export Excel", icon: "X", disabled: !history.length, tone: THEME.green, bg: THEME.greenBg },
-                  { title: "Export JSON Backup", detail: "Backup all weekly cleanup data in JSON format.", action: exportFullBackup, button: "Export JSON", icon: "{}", tone: THEME.primary2, bg: THEME.blueBg },
+                  { title: "Download Combined Workbook", detail: "Download the complete weekly report with all sections and data.", action: exportWeeklyFullDataWorkbook, button: "Download Combined Workbook", icon: "", disabled: !selectedReportEligibility.canDownloadWorkbook, recommended: true, tone: THEME.primary2, bg: THEME.blueBg },
+                  { title: "Download Separate Facility Workbooks", detail: "Download individual detailed Excel attachments by selected facility.", action: exportFacilityWorkbooks, button: "Download Separate Facility Workbooks", icon: "", tone: THEME.primary2, bg: THEME.blueBg },
+                  { title: "Download Tracker CSV", detail: "Download candidate tracker data in CSV format.", action: exportTrackerCsv, button: "Download CSV", icon: "", tone: THEME.green, bg: THEME.greenBg },
+                  { title: "Download History CSV", detail: "Download your weekly reporting history in CSV format.", action: exportHistoryCsv, button: "Download CSV", icon: "", disabled: !history.length, tone: THEME.primary2, bg: THEME.blueBg },
+                  { title: "Download History Workbook", detail: "Download your weekly reporting history in Excel format.", action: exportHistoryExcel, button: "Download Excel Workbook", icon: "X", disabled: !history.length, tone: THEME.green, bg: THEME.greenBg },
+                  { title: "Download JSON Backup", detail: "Back up all weekly reporting data in JSON format.", action: exportFullBackup, button: "Download JSON", icon: "{}", tone: THEME.primary2, bg: THEME.blueBg },
                 ].map((item) => (
                   <div key={item.title} style={{ border: `1px solid ${item.recommended ? THEME.primary2 : THEME.borderSoft}`, borderRadius: 8, padding: 14, background: THEME.panel, display: "grid", gap: 12, alignContent: "space-between", minHeight: 216, boxShadow: item.recommended ? "0 12px 28px rgba(109,40,217,0.08)" : "none" }}>
                     <div>

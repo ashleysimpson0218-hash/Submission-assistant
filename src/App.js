@@ -70,6 +70,14 @@ import {
 } from "./requisitionCommunicationDetails";
 import { WeeklyReportingPage } from "./WeeklyReportingPage";
 import { ReportsHistoryPage } from "./ReportsHistoryPage";
+import {
+  createWeeklyReviewSessionReset,
+  confirmWeeklyReviewRestart,
+  normalizeWeeklyReportingStep,
+  resolveReportingNavigation,
+  selectWeeklyReportingPrimaryAction,
+  summarizeWeeklyReportingRows,
+} from "./weeklyReportingWorkflow";
 import { RecruiterWorkspacePage } from "./RecruiterWorkspacePage";
 import { applyWorkspaceTaskAction } from "./recruiterWorkspaceActions";
 import { InternalCalendarPage } from "./InternalCalendarPage";
@@ -5934,7 +5942,10 @@ function RecruiterApp() {
   const [activePage, setActivePage] = useState("home");
   const [accountTab, setAccountTab] = useState("profile");
   const [activeSettingsTab, setActiveSettingsTab] = useState("general");
-  const [reportsTab, setReportsTab] = useState("metrics");
+  const [reportsTab, setReportsTabState] = useState("overview");
+  const setReportsTab = useCallback((value) => {
+    setReportsTabState((current) => normalizeWeeklyReportingStep(typeof value === "function" ? value(current) : value));
+  }, []);
   const [reportsHubTab, setReportsHubTab] = useState("preview");
   const [expandedReportIssueCode, setExpandedReportIssueCode] = useState("");
   const [automationTab, setAutomationTab] = useState("report");
@@ -13580,15 +13591,21 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
   }
 
   function clearAndRegenerateWeeklyReports() {
-    setCompletedFacilityReports({});
-    setNoOpeningWeeklyDecisions(clearWeeklyNoOpeningDecisions());
-    setSelectedFacilityReports([]);
-    setExcludedReportIds([]);
-    setGeneratedReportPreview("");
-    setWeeklyReport("");
-    setWeeklySubject("Weekly Active Candidate Report");
-    setActiveReportSection("submitted");
+    const reset = createWeeklyReviewSessionReset();
+    setCompletedFacilityReports(reset.completedFacilityReports);
+    setNoOpeningWeeklyDecisions(clearWeeklyNoOpeningDecisions(reset.noOpeningWeeklyDecisions));
+    setSelectedFacilityReports(reset.selectedFacilityReports);
+    setExcludedReportIds(reset.excludedReportIds);
+    setGeneratedReportPreview(reset.generatedReportPreview);
+    setWeeklyReport(reset.weeklyReport);
+    setWeeklySubject(reset.weeklySubject);
+    setActiveReportSection(reset.activeReportSection);
+    setReportsTab(reset.reportsTab);
     setCopyNotice("Weekly report selections and facility completion were cleared. Regenerate from the current data when ready.");
+  }
+
+  function restartWeeklyReview() {
+    confirmWeeklyReviewRestart((message) => window.confirm(message), clearAndRegenerateWeeklyReports);
   }
 
   function saveNoOpeningsPolicy() {
@@ -14000,6 +14017,24 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
   const facilityReadinessIssueGroups = useMemo(
     () => groupReportingIssues(reportValidationIssues, { all: true }),
     [reportValidationIssues],
+  );
+  const weeklyReportingBlockerCount = useMemo(
+    () => facilityReadinessIssueGroups.filter((group) => group.blocking).reduce((total, group) => total + group.count, 0),
+    [facilityReadinessIssueGroups],
+  );
+  const weeklyReportingCandidateCleanupCount = atsCleanupRows().filter((row) => !row.atsUpdatedAt).length;
+  const weeklyReportingStatusSummary = useMemo(
+    () => summarizeWeeklyReportingRows(facilityReadinessRows),
+    [facilityReadinessRows],
+  );
+  const weeklyReportingPrimaryAction = useMemo(
+    () => selectWeeklyReportingPrimaryAction({
+      blockerCount: weeklyReportingBlockerCount,
+      candidateCleanupCount: weeklyReportingCandidateCleanupCount,
+      readyReportCount: weeklyReportingStatusSummary.ready,
+      reviewedReportCount: weeklyReportingStatusSummary.reviewed,
+    }),
+    [weeklyReportingBlockerCount, weeklyReportingCandidateCleanupCount, weeklyReportingStatusSummary],
   );
 
   const routingPreviewSummary = useMemo(() => ({
@@ -14659,14 +14694,15 @@ function rowifyCandidate(item = {}) {
     setCopyNotice(`${nextRecords.length} report record${nextRecords.length === 1 ? "" : "s"} saved to Report History.`);
   }
 
-  function markSelectedFacilityReportsComplete() {
+  function markSelectedFacilityReportsReviewed() {
     if (!selectedFacilityActionRows.length) {
-      setCopyNotice("Select at least one facility report before marking it complete.");
+      setCopyNotice("Select at least one facility report before marking it reviewed.");
       return;
     }
-    if (blockReportAction("canMarkReady", selectedFacilityActionRows, "Mark Complete")) return;
-    markFacilityReports(selectedFacilityActionRows, "Manually Completed");
-    setCopyNotice("Selected facility reports marked complete.");
+    if (blockReportAction("canMarkReady", selectedFacilityActionRows, "Mark Reviewed")) return;
+    markFacilityReports(selectedFacilityActionRows, "Reviewed");
+    saveReportsToHistory(selectedFacilityActionRows, "Reviewed");
+    setCopyNotice("Selected facility reports marked reviewed.");
   }
 
   function markSelectedFacilityReportsSent() {
@@ -14693,9 +14729,7 @@ function rowifyCandidate(item = {}) {
     setGeneratedReportPreview(body);
     setWeeklyReport(body);
     setWeeklySubject(`${selectedReportType}: Ready to Send`);
-    markFacilityReports(readyRows, "Ready to Send");
-    saveReportsToHistory(readyRows, "Ready to Send");
-    setCopyNotice(`${readyRows.length} ready report${readyRows.length === 1 ? "" : "s"} loaded into preview. Open Email downloads the Excel attachment separately so you can attach it before sending.`);
+    setCopyNotice(`${readyRows.length} ready report${readyRows.length === 1 ? "" : "s"} loaded into preview without changing report status.`);
   }
 
   function toggleFacilityReportSelection(id, checked) {
@@ -14725,13 +14759,13 @@ function rowifyCandidate(item = {}) {
     if (context?.selectedFacilityIds) setSelectedFacilityReports([...context.selectedFacilityIds]);
     if (context?.expandedIssueCode) setExpandedReportIssueCode(context.expandedIssueCode);
     setActivePage("reports");
-    setReportsTab(context?.reportsTab || "facility");
+    setReportsTab(context?.reportsTab || "facility-readiness");
     setReportCorrectionTarget(null);
   }
 
   function openReportingIssueCorrection(issue) {
     const target = buildReportingCorrectionRoute(issue, {
-      reportsTab: "facility",
+      reportsTab: "facility-readiness",
       filters: facilityReadinessFilters,
       selectedFacilityIds: selectedFacilityReports,
       expandedIssueCode: expandedReportIssueCode,
@@ -14783,22 +14817,29 @@ function rowifyCandidate(item = {}) {
     ["candidates", "Candidates", "\uD83D\uDC65"],
     ["calendar", "Calendar", "\uD83D\uDCC5"],
     ["positions", "Facility & Position Setup", "\uD83C\uDFE2"],
-    ["reports", "Weekly Cleanup", "\uD83E\uDDF9"],
-    ["reporting", "Reports", "\uD83D\uDCCA"],
+    ["reports", "Weekly Reporting", "\uD83E\uDDF9"],
+    ["reporting", "Reports & History", "\uD83D\uDCCA"],
     ["settings", "Settings", "\u2699\uFE0F"],
     ["account", "Profile & Account", "\uD83D\uDC64"],
   ];
+  function navigateToReportingValue(value) {
+    const route = resolveReportingNavigation(value);
+    setReportsTab(route.step);
+    setActivePage(route.destination);
+  }
   function navigateToPage(key) {
     if (key === "actions") {
       setActivePage("home");
       return;
     }
     if (key === "reporting") {
-      setReportsTab("hub");
-      setActivePage("reports");
+      navigateToReportingValue("reports-history");
       return;
     }
-    if (key === "reports") setReportsTab("metrics");
+    if (key === "reports") {
+      navigateToReportingValue("overview");
+      return;
+    }
     setActivePage(key);
     if (key === "hot") {
       setHotLeadDetailOpen(false);
@@ -15461,12 +15502,10 @@ function rowifyCandidate(item = {}) {
             }}
             onOpenRequisition={() => setActivePage("positions")}
             onOpenWeeklyCleanup={() => {
-              setReportsTab("metrics");
-              setActivePage("reports");
+              navigateToReportingValue("overview");
             }}
             onOpenReports={() => {
-              setReportsTab("hub");
-              setActivePage("reports");
+              navigateToReportingValue("reports-history");
             }}
             onOpenCalendar={() => setActivePage("calendar")}
             onOpenCalendarEvent={openCalendarEvent}
@@ -15528,7 +15567,7 @@ function rowifyCandidate(item = {}) {
                   ["Ready for Intake", hotLeads.filter((lead) => ["Ready for Intake", "Booked", "Responded"].includes(lead.outreachStatus)).length, "From last week", "Low", "\u2713", () => setActivePage("hot")],
                   ["Pending Actions", attentionActions.length, "Due this week", "Medium", "\u23F0", () => { setActivePage("actions"); openWorkspaceAction("attention"); }],
                   ["Interviews", actionQueues.upcomingInterviews.length, "Scheduled this week", "Interview", "\uD83D\uDCC5", () => { setActivePage("actions"); openWorkspaceAction("interviews"); }],
-                  ["Reports Generated", weeklyReport ? 1 : 0, "This week", "Clear", "\uD83D\uDCC4", () => { setActivePage("reports"); setReportsTab("hub"); }],
+                  ["Reports Generated", weeklyReport ? 1 : 0, "This week", "Clear", "\uD83D\uDCC4", () => navigateToReportingValue("reports-history")],
                 ].map(([label, value, detail, tone, icon, action]) => {
                   const colors = badgeColors(tone);
                   return (
@@ -15575,8 +15614,8 @@ function rowifyCandidate(item = {}) {
                       ["Add Candidate", "\u2795", () => setActivePage("submission")],
                       ["Hot Leads", "\uD83D\uDD25", () => setActivePage("hot")],
                       ["Position Management", "\uD83D\uDCCB", () => setActivePage("positions")],
-                      ["Weekly Cleanup", "\uD83E\uDDF9", () => { setActivePage("reports"); setReportsTab("metrics"); }],
-                      ["Reports", "\uD83D\uDCCA", () => { setActivePage("reports"); setReportsTab("exports"); }],
+                      ["Weekly Reporting", "\uD83E\uDDF9", () => navigateToReportingValue("overview")],
+                      ["Reports & History", "\uD83D\uDCCA", () => navigateToReportingValue("reports-history")],
                       ["Workspace Setup", "\u2302", () => { setActivePage("settings"); setActiveSettingsTab("general"); }],
                       ["Settings", "\u2699\uFE0F", () => setActivePage("settings")],
                     ].map(([label, icon, action]) => (
@@ -15618,7 +15657,7 @@ function rowifyCandidate(item = {}) {
                 <Card compact title="Announcements" subtitle="System reminders and updates." action={<Button subtle onClick={() => setActivePage("settings")}>View all</Button>}>
                   <div style={{ display: "grid", gap: 10 }}>
                     <div style={{ border: `1px solid ${THEME.green}`, borderRadius: 7, background: THEME.greenBg, padding: 12, display: "grid", gridTemplateColumns: "28px 1fr auto", gap: 10, alignItems: "center" }}><span style={{ color: THEME.green }}> </span><span><strong>System Update</strong><span style={{ display: "block", color: THEME.muted, fontSize: 12 }}>WelcomeFlow was updated to improve performance and reliability.</span></span><span style={{ color: THEME.muted, fontSize: 11 }}>{displayDate(todayIso())}</span></div>
-                    <div style={{ border: `1px solid ${THEME.amber}`, borderRadius: 7, background: THEME.amberBg, padding: 12, display: "grid", gridTemplateColumns: "28px 1fr auto", gap: 10, alignItems: "center" }}><span style={{ color: THEME.amber }}>!</span><span><strong>Weekly Cleanup Reminder</strong><span style={{ display: "block", color: THEME.muted, fontSize: 12 }}>{weeklyReport ? "Your weekly report is ready." : "Your weekly report has not been generated yet."}</span></span><span style={{ color: THEME.muted, fontSize: 11 }}>{displayDate(todayIso())}</span></div>
+                    <div style={{ border: `1px solid ${THEME.amber}`, borderRadius: 7, background: THEME.amberBg, padding: 12, display: "grid", gridTemplateColumns: "28px 1fr auto", gap: 10, alignItems: "center" }}><span style={{ color: THEME.amber }}>!</span><span><strong>Weekly Reporting Reminder</strong><span style={{ display: "block", color: THEME.muted, fontSize: 12 }}>{weeklyReport ? "Your weekly report is ready." : "Your weekly report has not been generated yet."}</span></span><span style={{ color: THEME.muted, fontSize: 11 }}>{displayDate(todayIso())}</span></div>
                   </div>
                 </Card>
                 <Card compact title="Upcoming Actions" subtitle="Your next tasks and follow-ups." action={<Button subtle onClick={() => setActivePage("actions")}>View all actions</Button>}>
@@ -15637,7 +15676,7 @@ function rowifyCandidate(item = {}) {
             </div>
             <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, background: THEME.panel, padding: 12, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}><span style={{ width: 30, height: 30, borderRadius: 999, display: "grid", placeItems: "center", background: THEME.blueBg, color: THEME.primary2, fontWeight: 950 }}>i</span><span><strong>Pro Tip</strong><span style={{ display: "block", color: THEME.muted, fontSize: 12 }}>Keep your weekly report up to date by reviewing metrics, cleaning ATS records, and generating your report every week.</span></span></div>
-              <Button primary onClick={() => { setActivePage("reports"); setReportsTab("metrics"); }}>Go to Weekly Cleanup</Button>
+              <Button primary onClick={() => navigateToReportingValue("overview")}>Go to Weekly Reporting</Button>
             </div>
           </div>
         ) : null}
@@ -16241,7 +16280,7 @@ function rowifyCandidate(item = {}) {
             </Card>
             {automationTab === "report" ? (
               <div style={{ display: "grid", gap: 16 }}>
-                <Card compact title={`Automation Status: ${reportAutomationEnabled ? "Active" : "Off"}`} subtitle="Report automation status lives here so Weekly Cleanup stays focused on execution.">
+                <Card compact title={`Automation Status: ${reportAutomationEnabled ? "Active" : "Off"}`} subtitle="Report automation status lives here so Weekly Reporting stays focused on execution.">
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center", border: `1px solid ${reportAutomationEnabled ? THEME.green : THEME.borderSoft}`, borderRadius: 8, padding: 12, background: reportAutomationEnabled ? THEME.greenBg : THEME.panelAlt }}>
                     <span><strong>{reportAutomationEnabled ? "Weekly report automation is active" : "Weekly report automation is off"}</strong><span style={{ display: "block", color: THEME.muted, fontSize: 12, marginTop: 3 }}>{reportAutomationDay} at {reportAutomationTime} | {reportSendMode}</span></span>
                     <Button primary onClick={() => updateSettings(["options", "reportAutomation", "enabled"], !reportAutomationEnabled)}>{reportAutomationEnabled ? "Turn Off" : "Turn On"}</Button>
@@ -16310,7 +16349,7 @@ function rowifyCandidate(item = {}) {
                     <ToggleField label="If feedback aging > 5 days, flag Regional" checked={reportAutomation.flagFeedbackAgingRegional !== false} onChange={(value) => updateSettings(["options", "reportAutomation", "flagFeedbackAgingRegional"], value)} />
                     <ToggleField label="Block missing recipients" checked={reportAutomation.blockMissingRecipients !== false} onChange={(value) => updateSettings(["options", "reportAutomation", "blockMissingRecipients"], value)} />
                     <ToggleField label="Require preview before send" checked={requirePreviewBeforeSend} onChange={(value) => updateSettings(["options", "reportAutomation", "requirePreviewBeforeSend"], value)} />
-                    <ToggleField label="Allow manual complete from Weekly Cleanup" checked={allowManualCompletion} onChange={(value) => updateSettings(["options", "reportAutomation", "allowManualCompletion"], value)} />
+                    <ToggleField label="Allow manual review from Weekly Reporting" checked={allowManualCompletion} onChange={(value) => updateSettings(["options", "reportAutomation", "allowManualCompletion"], value)} />
                   </div>
                 </Card>
               </div>
@@ -18967,7 +19006,7 @@ function rowifyCandidate(item = {}) {
             atsCleanupRows,
             atsCleanupSearch,
             candidateTimingDelayRows,
-            clearAndRegenerateWeeklyReports,
+            restartWeeklyReview,
             clearFacilityReportSelection,
             cloudStatus,
             copySelectedFacilityReports,
@@ -19005,7 +19044,7 @@ function rowifyCandidate(item = {}) {
             isNarrow,
             labelFromKey,
             markSelectedAtsUpdated,
-            markSelectedFacilityReportsComplete,
+            markSelectedFacilityReportsReviewed,
             markSelectedFacilityReportsSent,
             noOpeningsPolicy,
             noOpeningsPolicyDraft,
@@ -19082,6 +19121,8 @@ function rowifyCandidate(item = {}) {
             undoNoOpeningWeeklyDecision,
             updateFacilityReadinessFilter,
             weeklyReport,
+            weeklyReportingBlockerCount,
+            weeklyReportingPrimaryAction,
             weeklySubject,
           }}
         />

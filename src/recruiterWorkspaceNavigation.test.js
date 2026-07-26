@@ -8,7 +8,8 @@ test("Home is the canonical Recruiter Workspace and the separate Workspace nav i
   expect(navSource).toContain('["home", "Home"');
   expect(navSource).toContain('["calendar", "Calendar"');
   expect(navSource).not.toContain('["actions", "Workspace"');
-  expect(navSource).toContain('["reporting", "Reports"');
+  expect(navSource).toContain('["reports", "Weekly Reporting"');
+  expect(navSource).toContain('["reporting", "Reports & History"');
   expect(appSource).toContain('if (key === "actions")');
   expect(appSource).toMatch(/if \(key === "actions"\)[\s\S]*?setActivePage\("home"\)/);
   expect(appSource).toContain('<RecruiterWorkspacePage');

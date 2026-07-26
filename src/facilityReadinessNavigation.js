@@ -28,7 +28,7 @@ export function facilityReadinessFor(row = {}, issues = []) {
   if (row.status === "Needs Review") return "Needs Review";
   if (row.status === "Sent") return "Sent";
   if (row.status === "Scheduled") return "Scheduled";
-  if (["Ready", "Ready to Send"].includes(row.status)) return "Ready";
+  if (["Ready", "Ready to Send", "Reviewed"].includes(row.status)) return "Ready";
   return "Not Started";
 }
 
