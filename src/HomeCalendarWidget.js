@@ -1,12 +1,8 @@
 import React, { useMemo, useState } from "react";
 import { normalizeInternalCalendarEvent, upcomingRecruitingEvents } from "./internalCalendar";
+import { getLocalCalendarDateKey } from "./calendarDate";
 
 const MODES = ["My Events", "Interviews", "All Recruiting"];
-
-function dateKey(value) {
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
-}
 
 function sevenDays(now) {
   const start = new Date(now);
@@ -25,11 +21,11 @@ function timeLabel(value) {
 
 export function HomeCalendarWidget({ events = [], recruiterId = "current-recruiter", theme, onAddEvent, onOpenCalendar, onOpenEvent }) {
   const [mode, setMode] = useState("My Events");
-  const [selectedDate, setSelectedDate] = useState(dateKey(new Date()));
+  const [selectedDate, setSelectedDate] = useState(getLocalCalendarDateKey(new Date()));
   const normalized = useMemo(() => events.map(normalizeInternalCalendarEvent), [events]);
   const days = useMemo(() => sevenDays(new Date()), []);
   const upcoming = useMemo(() => upcomingRecruitingEvents(normalized, { mode, recruiterId, days: 7, limit: 20 }), [normalized, mode, recruiterId]);
-  const agenda = upcoming.filter((event) => event.startDateTime.slice(0, 10) === selectedDate).slice(0, 5);
+  const agenda = upcoming.filter((event) => getLocalCalendarDateKey(event.startDateTime) === selectedDate).slice(0, 5);
   const weekSummary = {
     interviews: upcoming.filter((event) => /interview/i.test(event.eventType)).length,
     screens: upcoming.filter((event) => /screen/i.test(event.eventType)).length,
@@ -40,8 +36,8 @@ export function HomeCalendarWidget({ events = [], recruiterId = "current-recruit
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}><div><h2 style={{ margin: 0, color: theme.text, fontSize: 15 }}>Today & Upcoming</h2><span style={{ color: theme.muted, fontSize: 10 }}>Internal recruiting calendar</span></div><button type="button" onClick={onAddEvent} aria-label="Add calendar event" style={{ width: 30, height: 30, borderRadius: "50%", border: `1px solid ${theme.primary2}`, background: theme.panel, color: theme.primary2, fontSize: 18 }}>+</button></div>
       <div role="tablist" aria-label="Home calendar filters" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 3, background: theme.panelAlt, padding: 3, borderRadius: 7, marginTop: 10 }}>{MODES.map((item) => <button key={item} type="button" role="tab" aria-selected={mode === item} onClick={() => setMode(item)} style={{ border: 0, borderRadius: 5, padding: "6px 2px", background: mode === item ? theme.primary2 : "transparent", color: mode === item ? "#fff" : theme.text, fontSize: 10, fontWeight: 850 }}>{item}</button>)}</div>
       <div aria-label="Upcoming date strip" style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3, marginTop: 10 }}>{days.map((date) => {
-        const key = dateKey(date);
-        const count = upcoming.filter((event) => event.startDateTime.slice(0, 10) === key).length;
+        const key = getLocalCalendarDateKey(date);
+        const count = upcoming.filter((event) => getLocalCalendarDateKey(event.startDateTime) === key).length;
         const selected = key === selectedDate;
         return <button key={key} type="button" onClick={() => setSelectedDate(key)} aria-pressed={selected} style={{ border: `1px solid ${selected ? theme.primary2 : "transparent"}`, borderRadius: 7, background: selected ? theme.primary2 : theme.panelAlt, color: selected ? "#fff" : theme.text, padding: "5px 1px" }}><span style={{ display: "block", fontSize: 8, fontWeight: 850 }}>{date.toLocaleDateString([], { weekday: "narrow" })}</span><strong style={{ display: "block", fontSize: 13 }}>{date.getDate()}</strong><span aria-label={`${count} events`} style={{ display: "block", height: 6, fontSize: 7 }}>{count ? "●" : ""}</span></button>;
       })}</div>
