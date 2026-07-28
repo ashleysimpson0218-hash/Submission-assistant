@@ -120,6 +120,7 @@ function baseProps(overrides = {}) {
     labelFromKey: jest.fn((key) => key),
     markSelectedFacilityReportsReviewed: jest.fn(),
     markSelectedFacilityReportsSent: jest.fn(),
+    openReportReview: jest.fn(),
     openReportingIssueCorrection: jest.fn(),
     openReportingSettingsSurface: jest.fn(),
     previewSelectedFacilityReports: jest.fn(),
@@ -227,7 +228,7 @@ test.each([
   expect(screen.getByLabelText("Attachment type")).toHaveTextContent(`${audience} recruiting workbook`);
 });
 
-test("audience controls delegate one synchronized context change and preview passes no click event as rows", () => {
+test("audience controls and Review Report preserve one synchronized stable report target", () => {
   const props = baseProps();
   render(<ReportsHistoryPage {...props} />);
 
@@ -235,7 +236,37 @@ test("audience controls delegate one synchronized context change and preview pas
   fireEvent.click(screen.getAllByRole("button", { name: "Review Report" })[0]);
 
   expect(props.setReportsReviewAudience).toHaveBeenCalledWith("Regional");
-  expect(props.previewSelectedFacilityReports).toHaveBeenCalledWith();
+  expect(props.openReportReview).toHaveBeenCalledWith([reportRow], {
+    audience: "Facility",
+    reportType: "Facility Weekly Report",
+    recipientGroup: "Facility contacts",
+  });
+  expect(props.previewSelectedFacilityReports).not.toHaveBeenCalled();
+});
+
+test("report-row Review Report delegates the exact stable row and audience context", () => {
+  const props = baseProps({
+    reportsReviewAudience: "Regional",
+    reportReviewContext: {
+      audience: "Regional",
+      reportType: "Regional Manager Summary",
+      recipientGroup: "Regional Manager",
+      body: "Regional body",
+      workbookSheets: [],
+    },
+  });
+  render(<ReportsHistoryPage {...props} />);
+
+  fireEvent.click(screen.getAllByRole("button", { name: "Review Report" })[1]);
+
+  expect(props.openReportReview).toHaveBeenCalledWith(reportRow, {
+    audience: "Regional",
+    reportType: "Regional Manager Summary",
+    recipientGroup: "Regional Manager",
+  });
+  expect(props.saveReportsToHistory).not.toHaveBeenCalled();
+  expect(props.markSelectedFacilityReportsReviewed).not.toHaveBeenCalled();
+  expect(props.markSelectedFacilityReportsSent).not.toHaveBeenCalled();
 });
 
 test("renders email and attachment details together", () => {

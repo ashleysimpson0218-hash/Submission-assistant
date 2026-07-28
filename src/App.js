@@ -74,10 +74,12 @@ import { normalizeReportsHistoryDestination } from "./reportsHistoryNavigation";
 import {
   buildCanonicalReportScope,
   buildCanonicalReportContext,
+  createReportReviewTargetId,
   policyRowsForReportAction as resolvePolicyRowsForReportAction,
   readReportReviewTarget,
   reportAudienceDefinition,
   reportReviewSearch,
+  resolveReportReviewTarget,
 } from "./reportContext";
 import { reportingPeriodFor, reportingTimeZone } from "./reportingPeriod";
 import {
@@ -5969,6 +5971,20 @@ function RecruiterApp() {
   const [reportReviewTargetId, setReportReviewTargetId] = useState(initialReportReviewTarget);
   const reportReviewTargetRestoredRef = useRef("");
   const reportReviewPreviewRestoredRef = useRef("");
+  useEffect(() => {
+    const restoreReportTargetFromLocation = () => {
+      const targetId = readReportReviewTarget(window.location.search);
+      setReportReviewTargetId(targetId);
+      reportReviewTargetRestoredRef.current = "";
+      reportReviewPreviewRestoredRef.current = "";
+      if (targetId) {
+        setActivePage("reports");
+        setReportsTab("review-reports");
+      }
+    };
+    window.addEventListener("popstate", restoreReportTargetFromLocation);
+    return () => window.removeEventListener("popstate", restoreReportTargetFromLocation);
+  }, [setReportsTab]);
   const [reportHistoryStatusView, setReportHistoryStatusView] = useState("All");
   const setReportsHubTab = useCallback((value) => {
     const normalized = normalizeReportsHistoryDestination(value);
@@ -14017,22 +14033,33 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
     }),
     [facilityReportQueue, reportValidationIssues, noOpeningsPolicy, noOpeningWeeklyDecisions, standardNoOpeningsTemplateAvailable, unresolvedOpeningRiskIds],
   );
+  const reportReviewTargetResolution = useMemo(
+    () => resolveReportReviewTarget(facilityReadinessRows, reportReviewTargetId),
+    [facilityReadinessRows, reportReviewTargetId],
+  );
+  const reportReviewTargetNotFound = Boolean(
+    hasLoaded
+    && reportReviewTargetId
+    && reportReviewTargetResolution.status === "not-found",
+  );
   useEffect(() => {
     if (!hasLoaded || !reportReviewTargetId || reportReviewTargetRestoredRef.current === reportReviewTargetId) return;
-    const target = facilityReadinessRows.find((row) => (
-      String(row.id || row.facilityId) === String(reportReviewTargetId)
-    ));
-    if (!target) return;
+    if (reportReviewTargetResolution.status !== "found") return;
+    const targets = reportReviewTargetResolution.rows;
+    const definition = reportAudienceDefinition(reportReviewTargetResolution.audience);
     reportReviewTargetRestoredRef.current = reportReviewTargetId;
-    const definition = reportAudienceDefinition("Facility");
     setActivePage("reports");
     setReportsTab("review-reports");
-    setSelectedFacility(target.facility);
-    setSelectedFacilityReports([target.id || target.facilityId]);
+    setSelectedFacility(targets.length === 1 ? targets[0].facility : "All Facilities");
+    setSelectedFacilityReports(targets.map((target) => target.id || target.facilityId).filter(Boolean));
     setReportsReviewAudience(definition.audience);
-    setSelectedReportType(target.reportType || definition.reportType);
-    setSelectedRecipientGroup(target.recipientGroup || definition.recipientGroup);
-  }, [facilityReadinessRows, hasLoaded, reportReviewTargetId, setReportsTab]);
+    setSelectedReportType(reportReviewTargetResolution.reportType || definition.reportType);
+    setSelectedRecipientGroup(
+      targets.length === 1
+        ? targets[0].recipientGroup || definition.recipientGroup
+        : definition.recipientGroup,
+    );
+  }, [hasLoaded, reportReviewTargetId, reportReviewTargetResolution, setReportsTab]);
   const selectedFacilityPolicyRows = useMemo(() => {
     const selected = new Set(selectedFacilityReports);
     return facilityReadinessRows.filter((row) => selected.has(row.id) || selected.has(row.facility));
@@ -14709,7 +14736,7 @@ function rowifyCandidate(item = {}) {
     });
   }
 
-  function previewSelectedFacilityReports(rows = selectedPreviewableReportRows) {
+  function previewSelectedFacilityReports(rows = selectedPreviewableReportRows, audience = reportsReviewAudience) {
     let sourceRows;
     try {
       sourceRows = policyRowsForReportAction(rows);
@@ -14723,35 +14750,46 @@ function rowifyCandidate(item = {}) {
       return false;
     }
     if (blockReportAction("canViewDraftPreview", sourceRows, "Diagnostic report preview")) return false;
-    const content = selectedAudienceEmailContent(sourceRows, reportsReviewAudience);
+    const definition = reportAudienceDefinition(audience);
+    const content = selectedAudienceEmailContent(sourceRows, definition.audience);
     setGeneratedReportPreview(content.body);
     setWeeklyReport(content.body);
     setWeeklySubject(content.subject);
-    setCopyNotice(`${reportAudienceDefinition(reportsReviewAudience).audience} report preview generated.`);
+    setCopyNotice(`${definition.audience} report preview generated.`);
     return true;
   }
 
-  function openReportReview(row) {
-    const id = String(row?.id || row?.facilityId || "").trim();
-    if (!id) {
+  function openReportReview(rowOrRows, context = {}) {
+    const rows = (Array.isArray(rowOrRows) ? rowOrRows : [rowOrRows]).filter(Boolean);
+    const definition = reportAudienceDefinition(context.audience || "Facility");
+    const targetId = createReportReviewTargetId({
+      audience: definition.audience,
+      reportType: context.reportType || (rows.length === 1 ? rows[0].reportType : "") || definition.reportType,
+      rows,
+    });
+    if (!targetId) {
       setCopyNotice("This report does not have a stable identifier and cannot be opened.");
       return false;
     }
-    const definition = reportAudienceDefinition("Facility");
+    const selectedIds = rows.map((row) => String(row?.id || row?.facilityId || "").trim()).filter(Boolean);
     setActivePage("reports");
     setReportsTab("review-reports");
-    setSelectedFacility(row.facility || "All Facilities");
-    setSelectedFacilityReports([id]);
-    setReportReviewTargetId(id);
+    setSelectedFacility(rows.length === 1 ? rows[0].facility || "All Facilities" : "All Facilities");
+    setSelectedFacilityReports(selectedIds);
+    setReportReviewTargetId(targetId);
+    reportReviewTargetRestoredRef.current = targetId;
+    reportReviewPreviewRestoredRef.current = "";
     setReportsReviewAudience(definition.audience);
-    setSelectedReportType(row.reportType || definition.reportType);
-    setSelectedRecipientGroup(row.recipientGroup || definition.recipientGroup);
-    window.history.replaceState(
-      window.history.state,
+    setSelectedReportType(context.reportType || (rows.length === 1 ? rows[0].reportType : "") || definition.reportType);
+    setSelectedRecipientGroup(context.recipientGroup || (rows.length === 1 ? rows[0].recipientGroup : "") || definition.recipientGroup);
+    const nextLocation = `${window.location.pathname}${reportReviewSearch(window.location.search, targetId)}${window.location.hash}`;
+    const historyMethod = readReportReviewTarget(window.location.search) === targetId ? "replaceState" : "pushState";
+    window.history[historyMethod](
+      { ...(window.history.state || {}), reportReviewTargetId: targetId },
       "",
-      `${window.location.pathname}${reportReviewSearch(window.location.search, id)}${window.location.hash}`,
+      nextLocation,
     );
-    return previewSelectedFacilityReports([row]);
+    return previewSelectedFacilityReports(rows, definition.audience);
   }
 
   function copySelectedFacilityReports() {
@@ -19292,6 +19330,8 @@ function rowifyCandidate(item = {}) {
             reportFacilityNames,
             reportInclusions,
             reportIssueGroups,
+            reportReviewTargetId,
+            reportReviewTargetNotFound,
             reportRequisitionGroups,
             reportRequisitionMetrics,
             reportSendMode,
@@ -19387,6 +19427,7 @@ function rowifyCandidate(item = {}) {
             labelFromKey,
             markSelectedFacilityReportsReviewed,
             markSelectedFacilityReportsSent,
+            openReportReview,
             openReportingIssueCorrection,
             openReportingSettingsSurface,
             previewSelectedFacilityReports,

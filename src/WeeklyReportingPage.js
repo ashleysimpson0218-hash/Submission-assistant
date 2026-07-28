@@ -130,6 +130,8 @@ export function WeeklyReportingPage(props) {
     reportFacilityNames,
     reportInclusions,
     reportIssueGroups,
+    reportReviewTargetId,
+    reportReviewTargetNotFound,
     reportRequisitionGroups,
     reportRequisitionMetrics,
     reportSendMode,
@@ -500,6 +502,14 @@ export function WeeklyReportingPage(props) {
 
         {activePage === "reports" && reportsTab === "review-reports" ? (
           <div style={{ display: "grid", gap: 18 }}>
+            {reportReviewTargetNotFound ? (
+              <Card title="Report not found" subtitle="The requested report could not be restored from the current workspace." compact>
+                <div role="alert" style={{ color: THEME.red }}>
+                  No report matches the stable identifier <strong>{reportReviewTargetId}</strong>. Return to Facility Readiness and choose Review Report again.
+                </div>
+              </Card>
+            ) : (
+              <>
             <Card title="Audience Report Queue + Sender" subtitle="Select the report audience, then preview, copy, export, send, or mark selected reports complete." compact>
               <div style={{ display: "grid", gap: 14 }}>
                 <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : "repeat(4, minmax(0, 1fr))" }}>
@@ -554,6 +564,8 @@ export function WeeklyReportingPage(props) {
                 {weeklyReport ? <EmailDocument title="Weekly Report" subject={weeklySubject} body={weeklyReport} attachmentLabel="Download Excel Workbook" onDownloadAttachment={exportSelectedFacilityReports} onMarkSent={markSelectedFacilityReportsSent} attachmentNotice="Mailto cannot attach the Excel file automatically. This downloads the report workbook so you can attach it to the email draft. After sending, use Mark Sent to document completion." /> : <div style={{ textAlign: "center", color: THEME.muted }}><div style={{ fontSize: 36, marginBottom: 10 }}> </div><strong style={{ color: THEME.text }}>Select reports and use Review Ready Reports to load them here.</strong></div>}
               </div>
             </Card>
+              </>
+            )}
           </div>
         ) : null}
 

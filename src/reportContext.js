@@ -62,6 +62,63 @@ export function reportAudienceDefinition(value) {
 }
 
 const unique = (values = []) => Array.from(new Set(values.map(text).filter(Boolean)));
+const REPORT_REVIEW_TARGET_VERSION = "wf-report-v1";
+
+export function createReportReviewTargetId({
+  audience,
+  reportType,
+  rows,
+} = {}) {
+  const selectedRows = normalizeReportRows(rows, "Report review target rows");
+  const definition = reportAudienceDefinition(audience);
+  const reportIds = unique(selectedRows.map((row) => row?.id || row?.facilityId)).sort();
+  if (!reportIds.length) return "";
+  return [
+    REPORT_REVIEW_TARGET_VERSION,
+    encodeURIComponent(definition.audience),
+    encodeURIComponent(text(reportType) || definition.reportType),
+    reportIds.map((id) => encodeURIComponent(id)).join(","),
+  ].join("|");
+}
+
+export function parseReportReviewTargetId(value = "") {
+  const targetId = text(value);
+  if (!targetId) return { targetId: "", reportIds: [], audience: "", reportType: "", legacy: false };
+  const parts = targetId.split("|");
+  if (parts.length !== 4 || parts[0] !== REPORT_REVIEW_TARGET_VERSION) {
+    return {
+      targetId,
+      reportIds: [targetId],
+      audience: REPORT_AUDIENCE_CONTEXT.Facility.audience,
+      reportType: REPORT_AUDIENCE_CONTEXT.Facility.reportType,
+      legacy: true,
+    };
+  }
+  try {
+    return {
+      targetId,
+      reportIds: parts[3].split(",").filter(Boolean).map((id) => decodeURIComponent(id)),
+      audience: decodeURIComponent(parts[1]),
+      reportType: decodeURIComponent(parts[2]),
+      legacy: false,
+    };
+  } catch {
+    return { targetId, reportIds: [], audience: "", reportType: "", legacy: false };
+  }
+}
+
+export function resolveReportReviewTarget(rows = [], targetId = "") {
+  const availableRows = normalizeReportRows(rows, "Report review lookup rows");
+  const parsed = parseReportReviewTargetId(targetId);
+  if (!parsed.targetId) return { status: "missing", ...parsed, rows: [], missingReportIds: [] };
+  const byId = new Map(availableRows.map((row) => [text(row?.id || row?.facilityId), row]).filter(([id]) => id));
+  const resolvedRows = parsed.reportIds.map((id) => byId.get(id)).filter(Boolean);
+  const missingReportIds = parsed.reportIds.filter((id) => !byId.has(id));
+  if (!parsed.reportIds.length || missingReportIds.length) {
+    return { status: "not-found", ...parsed, rows: resolvedRows, missingReportIds };
+  }
+  return { status: "found", ...parsed, rows: resolvedRows, missingReportIds: [] };
+}
 
 export function buildCanonicalReportScope({
   audience,
@@ -125,7 +182,11 @@ export function buildCanonicalReportContext({
     : definition.attachmentPrefix;
   return {
     ...reportScope,
-    reportId: selectedRows.length === 1 ? text(selectedRows[0]?.id || selectedRows[0]?.facilityId) : "",
+    reportId: createReportReviewTargetId({
+      audience: reportScope.audience || audience,
+      reportType: reportScope.reportType || reportType,
+      rows: selectedRows,
+    }),
     subject: text(content?.subject) || `${definition.reportType}: ${reportStartDate} to ${reportEndDate}`,
     body: String(content?.body ?? ""),
     attachmentName: `welcomeflow-${attachmentStem}-${reportStartDate || "report"}.xls`,

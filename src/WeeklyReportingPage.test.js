@@ -182,6 +182,8 @@ function baseProps(overrides = {}) {
     reportFacilityNames: [],
     reportInclusions: {},
     reportIssueGroups: [],
+    reportReviewTargetId: "",
+    reportReviewTargetNotFound: false,
     reportStartDate: "2026-07-20",
     reportStatusOptions: ["All"],
     reportTypeOptions: ["Facility Weekly Report"],
@@ -433,6 +435,18 @@ test("Review Report delegates the exact stable report row for deterministic deep
 
   expect(props.openReportReview).toHaveBeenCalledWith(baseRow);
   expect(props.previewSelectedFacilityReports).not.toHaveBeenCalled();
+});
+
+test("an invalid stable report identifier shows Report not found instead of the general queue", () => {
+  render(<WeeklyReportingPage {...baseProps({
+    reportsTab: "review-reports",
+    reportReviewTargetId: "wf-report-v1|Facility|Facility%20Weekly%20Report|missing-facility",
+    reportReviewTargetNotFound: true,
+  })} />);
+
+  expect(screen.getByRole("alert")).toHaveTextContent("No report matches the stable identifier");
+  expect(screen.getByText("Report not found")).toBeInTheDocument();
+  expect(screen.queryByText("Audience Report Queue + Sender")).not.toBeInTheDocument();
 });
 
 test("uses plural preview wording when two eligible reports are selected", () => {

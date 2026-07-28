@@ -80,9 +80,9 @@ export function ReportsHistoryPage({
   labelFromKey,
   markSelectedFacilityReportsReviewed,
   markSelectedFacilityReportsSent,
+  openReportReview,
   openReportingIssueCorrection,
   openReportingSettingsSurface,
-  previewSelectedFacilityReports,
   regionalEmailBody,
   reportEndDate,
   reportFacilityNames,
@@ -210,7 +210,17 @@ export function ReportsHistoryPage({
               ) : null}
 
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <Button primary onClick={() => previewSelectedFacilityReports()} disabled={!reportingActionState.selectedPreviewableReportIds.length}>Review Report</Button>
+                <Button
+                  primary
+                  onClick={() => openReportReview?.(selectedFacilityActionRows, {
+                    audience: activeAudience,
+                    reportType: reportReviewContext?.reportType || selectedReportType,
+                    recipientGroup: reportReviewContext?.recipientGroup || selectedRecipientGroup,
+                  })}
+                  disabled={!reportingActionState.selectedPreviewableReportIds.length}
+                >
+                  Review Report
+                </Button>
                 <Button subtle onClick={() => copyReportEmailContent(reviewBody, "Email body")} disabled={!reportingActionState.selectedEmailReportIds.length || reportingActionState.selectedEmailReportIds.length !== selectedFacilityActionRows.length}>Copy Email Body</Button>
                 <Button subtle onClick={downloadReportReviewWorkbook} disabled={!reportingActionState.selectedDownloadableReportIds.length || reportingActionState.selectedDownloadableReportIds.length !== selectedFacilityActionRows.length}>Download Workbook</Button>
                 <Button subtle disabled={!selectedFacilityActionRows.length} onClick={() => saveReportsToHistory(selectedFacilityActionRows, "Draft Generated")}>Save Draft to History</Button>
@@ -232,7 +242,7 @@ export function ReportsHistoryPage({
                     <Badge tone={model.missingContact ? "High" : row.status === "Needs Review" ? "Medium" : "Low"}>{model.missingContact ? "Blocked, Missing Contact" : (LEGACY_REPORT_STATUS_DISPLAY[row.status] || row.status)}</Badge>
                     <span style={{ color: THEME.muted }}>{facilityWorkbookSheets(model).length} attachment tabs</span>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <Button subtle disabled={!rowEligibility.canViewDraftPreview} onClick={() => { setWeeklySubject(content.subject); setWeeklyReport(content.body); }}>Review Report</Button>
+                      <Button subtle disabled={!rowEligibility.canViewDraftPreview} onClick={() => openReportReview?.(row, { audience: activeAudience, reportType: reportReviewContext?.reportType || row.reportType || selectedReportType, recipientGroup: reportReviewContext?.recipientGroup || selectedRecipientGroup })}>Review Report</Button>
                       <Button subtle disabled={!rowEligibility.canDownloadWorkbook} onClick={() => downloadGeneratedFacilityReport(row)}>Download Workbook</Button>
                     </div>
                   </div>

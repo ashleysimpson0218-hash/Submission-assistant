@@ -2,12 +2,15 @@ import {
   ReportRowContractError,
   buildCanonicalReportContext,
   buildCanonicalReportScope,
+  createReportReviewTargetId,
   normalizeReportRows,
+  parseReportReviewTargetId,
   policyRowsForReportAction,
   previewSelectedReportsLabel,
   readReportReviewTarget,
   reportAudienceDefinition,
   reportReviewSearch,
+  resolveReportReviewTarget,
 } from "./reportContext";
 
 const rows = [
@@ -176,11 +179,63 @@ test("one facility context uses that facility attachment without mutating source
   expect(JSON.stringify(source)).toBe(before);
 });
 
-test("deep links retain the stable report target and preserve unrelated query values", () => {
-  const search = reportReviewSearch("?workspace=synthetic", "facility-2");
-  expect(readReportReviewTarget(search)).toBe("facility-2");
+test("deep links retain the exact stable report target and preserve unrelated query values", () => {
+  const targetId = createReportReviewTargetId({
+    audience: "Regional",
+    reportType: "Regional Manager Summary",
+    rows,
+  });
+  const search = reportReviewSearch("?workspace=synthetic", targetId);
+  expect(readReportReviewTarget(search)).toBe(targetId);
   expect(search).toContain("workspace=synthetic");
   expect(readReportReviewTarget(reportReviewSearch(search, ""))).toBe("");
+  expect(parseReportReviewTargetId(targetId)).toEqual({
+    targetId,
+    reportIds: ["facility-1", "facility-2"],
+    audience: "Regional",
+    reportType: "Regional Manager Summary",
+    legacy: false,
+  });
+});
+
+test("stable report targets restore the exact rows after reload and reject unavailable IDs", () => {
+  const targetId = createReportReviewTargetId({
+    audience: "Executive",
+    reportType: "C-Suite Leadership Report",
+    rows: [rows[1]],
+  });
+
+  expect(resolveReportReviewTarget(rows, targetId)).toMatchObject({
+    status: "found",
+    targetId,
+    reportIds: ["facility-2"],
+    audience: "Executive",
+    reportType: "C-Suite Leadership Report",
+    rows: [rows[1]],
+    missingReportIds: [],
+  });
+
+  const invalidTarget = createReportReviewTargetId({
+    audience: "Facility",
+    reportType: "Facility Weekly Report",
+    rows: [{ id: "missing-report" }],
+  });
+  expect(resolveReportReviewTarget(rows, invalidTarget)).toMatchObject({
+    status: "not-found",
+    rows: [],
+    missingReportIds: ["missing-report"],
+  });
+});
+
+test("legacy facility-only report targets remain readable without changing report-history identity", () => {
+  expect(resolveReportReviewTarget(rows, "facility-2")).toMatchObject({
+    status: "found",
+    reportIds: ["facility-2"],
+    audience: "Facility",
+    reportType: "Facility Weekly Report",
+    rows: [rows[1]],
+    legacy: true,
+  });
 });
 
 test("selected preview wording uses correct singular and plural grammar", () => {
