@@ -38,6 +38,12 @@ const STRUCTURAL_BLOCKER_CODES = new Set([
   "MISSING_REQUISITION_ID",
   "AMBIGUOUS_REQUISITION",
 ]);
+const GENUINE_SOURCE_BLOCKER_CODES = new Set([
+  ...STRUCTURAL_BLOCKER_CODES,
+  "MISSING_REQUIRED_FTE",
+  "MISSING_REQUIRED_SHIFT",
+  "MISSING_REQUIRED_CONTACT",
+]);
 
 export function hasStandardNoOpeningsTemplate(settings = {}) {
   const automation = settings.options?.reportAutomation || {};
@@ -102,6 +108,13 @@ function structuralBlockers(issues = []) {
   return values(issues).filter((issue) => STRUCTURAL_BLOCKER_CODES.has(text(issue?.code)));
 }
 
+function genuineSourceBlockers(issues = []) {
+  return values(issues).filter((issue) => (
+    issue?.blocking === true
+    || GENUINE_SOURCE_BLOCKER_CODES.has(text(issue?.code))
+  ));
+}
+
 function autoStandardOutcome({ eligibility, hasTemplate }) {
   if (!hasTemplate) {
     return {
@@ -159,6 +172,7 @@ export function deriveNoOpeningFacilityOutcome({
   }
 
   const structuralIssues = structuralBlockers(eligibility.scopedIssues);
+  const sourceBlockers = genuineSourceBlockers(eligibility.scopedIssues);
   const structurallyUnsafe = !text(row.facilityId)
     || row.canonicalResolutionComplete === false
     || row.requisitionStatusReliable === false
@@ -172,6 +186,16 @@ export function deriveNoOpeningFacilityOutcome({
       reportRequired: true,
       actionEligible: false,
       reason: "No-opening automation is paused until facility and requisition identity is reliable.",
+    };
+  }
+  if (sourceBlockers.length) {
+    return {
+      applies: true,
+      readiness: "Blocked",
+      outcomeLabel: "Blocked",
+      reportRequired: true,
+      actionEligible: true,
+      reason: "Resolve the scoped reporting blocker before completing the weekly no-openings decision.",
     };
   }
 

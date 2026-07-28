@@ -226,7 +226,7 @@ export function reportingActionEligibility(issues = [], scope = {}) {
 }
 
 const READY_STATUSES = new Set(["Ready", "Ready to Send"]);
-const NON_ACTIONABLE_READINESS = new Set(["Blocked", "No Report Required", "Scheduled", "Sent"]);
+const NON_ACTIONABLE_READINESS = new Set(["No Report Required", "Scheduled", "Sent"]);
 
 function reportRowId(row = {}) {
   return asText(row.id || row.facilityId);
@@ -250,7 +250,6 @@ function rowTransitionState(row = {}, issues = []) {
   const readiness = asText(row.readiness);
   const effectiveReadiness = readiness || status;
   const policyEligible = row.reportRequired !== false && row.reportActionEligible !== false;
-  const blocked = effectiveReadiness === "Blocked" || status === "Blocked";
   const actionSuppressed = NON_ACTIONABLE_READINESS.has(effectiveReadiness);
   const ready = policyEligible
     && READY_STATUSES.has(effectiveReadiness)
@@ -266,8 +265,8 @@ function rowTransitionState(row = {}, issues = []) {
   return {
     eligibility,
     previewable: policyEligible && eligibility.canViewDraftPreview,
-    downloadable: policyEligible && !blocked && !actionSuppressed && eligibility.canDownloadWorkbook,
-    emailAvailable: policyEligible && !blocked && !actionSuppressed && eligibility.canPrepareEmail,
+    downloadable: policyEligible && !actionSuppressed && eligibility.canDownloadWorkbook,
+    emailAvailable: policyEligible && !actionSuppressed && eligibility.canPrepareEmail,
     ready,
     markReviewed,
     markSent,

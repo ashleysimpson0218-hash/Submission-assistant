@@ -264,3 +264,31 @@ test("missing contact keeps workbook inspection available but removes Ready and 
   expect(state.selectedMarkReviewedReportIds).toEqual([]);
   expect(state.selectedMarkSentReportIds).toEqual([]);
 });
+
+test("a contact-blocked readiness row remains diagnostically previewable and downloadable", () => {
+  const blockedForContact = {
+    id: "contact-blocked",
+    facilityId: "contact-blocked",
+    readiness: "Blocked",
+    status: "Blocked",
+    reportRequired: true,
+    reportActionEligible: true,
+    activeReqs: [],
+    candidates: [],
+  };
+  const state = deriveReportingActionState({
+    rows: [blockedForContact],
+    selectedReportIds: [blockedForContact.id],
+    issues: [{
+      code: REPORTING_ISSUE_CODES.MISSING_REQUIRED_CONTACT,
+      facilityId: blockedForContact.facilityId,
+    }],
+  });
+
+  expect(state.selectedPreviewableReportIds).toEqual(["contact-blocked"]);
+  expect(state.selectedDownloadableReportIds).toEqual(["contact-blocked"]);
+  expect(state.selectedEmailReportIds).toEqual([]);
+  expect(state.selectedReadyReportIds).toEqual([]);
+  expect(state.selectedMarkReviewedReportIds).toEqual([]);
+  expect(state.selectedMarkSentReportIds).toEqual([]);
+});

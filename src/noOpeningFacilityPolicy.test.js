@@ -77,10 +77,76 @@ test("missing contact permits report inspection but prevents automatic Ready", (
   const outcome = deriveNoOpeningFacilityOutcome({
     row: noOpeningRow,
     policy: NO_OPENINGS_POLICIES.AUTO_STANDARD_REPORT,
-    eligibility: { ...eligible, canPrepareEmail: false, canMarkReady: false },
+    eligibility: {
+      ...eligible,
+      canPrepareEmail: false,
+      canMarkReady: false,
+      scopedIssues: [{ code: "MISSING_REQUIRED_CONTACT", blocking: true, facilityId: "facility-1" }],
+    },
     hasTemplate: true,
   });
-  expect(outcome).toMatchObject({ readiness: "Needs Review", reportRequired: true, actionEligible: true });
+  expect(outcome).toMatchObject({ readiness: "Blocked", reportRequired: true, actionEligible: true });
+});
+
+test("a genuine contact blocker takes precedence over Ask Weekly before and after a weekly decision", () => {
+  const contactBlocked = {
+    ...eligible,
+    canPrepareEmail: false,
+    canMarkReady: false,
+    scopedIssues: [{
+      code: "MISSING_REQUIRED_CONTACT",
+      blocking: true,
+      facilityId: "facility-1",
+    }],
+  };
+
+  expect(deriveNoOpeningFacilityOutcome({
+    row: noOpeningRow,
+    policy: NO_OPENINGS_POLICIES.ASK_WEEKLY,
+    eligibility: contactBlocked,
+    hasTemplate: true,
+  })).toMatchObject({
+    readiness: "Blocked",
+    outcomeLabel: "Blocked",
+    reportRequired: true,
+  });
+  expect(deriveNoOpeningFacilityOutcome({
+    row: noOpeningRow,
+    policy: NO_OPENINGS_POLICIES.ASK_WEEKLY,
+    weeklyDecision: NO_OPENINGS_WEEKLY_DECISIONS.CREATE_STANDARD_REPORT,
+    eligibility: contactBlocked,
+    hasTemplate: true,
+  }).readiness).toBe("Blocked");
+  expect(deriveNoOpeningFacilityOutcome({
+    row: noOpeningRow,
+    policy: NO_OPENINGS_POLICIES.ASK_WEEKLY,
+    weeklyDecision: NO_OPENINGS_WEEKLY_DECISIONS.NO_REPORT_NEEDED,
+    eligibility: contactBlocked,
+    hasTemplate: true,
+  }).readiness).toBe("Blocked");
+});
+
+test("resolving a genuine blocker reveals the unresolved Ask Weekly Needs Review state", () => {
+  const blocked = deriveNoOpeningFacilityOutcome({
+    row: noOpeningRow,
+    policy: NO_OPENINGS_POLICIES.ASK_WEEKLY,
+    eligibility: {
+      ...eligible,
+      canPrepareEmail: false,
+      canMarkReady: false,
+      scopedIssues: [{ code: "MISSING_REQUIRED_CONTACT", blocking: true }],
+    },
+    hasTemplate: true,
+  });
+  const resolved = deriveNoOpeningFacilityOutcome({
+    row: noOpeningRow,
+    policy: NO_OPENINGS_POLICIES.ASK_WEEKLY,
+    eligibility: eligible,
+    hasTemplate: true,
+  });
+
+  expect(blocked.readiness).toBe("Blocked");
+  expect(resolved).toMatchObject({ readiness: "Needs Review", outcomeLabel: "Weekly Decision Needed" });
 });
 
 test.each([

@@ -83,6 +83,29 @@ test("Ask Weekly is Needs Review unless a genuine scoped source blocker exists",
   }]).readiness).toBe("Blocked");
 });
 
+test("a genuine blocker wins even when a no-report weekly decision was recorded", () => {
+  const decidedRow = {
+    id: "facility-ask-weekly",
+    facilityId: "facility-ask-weekly",
+    facility: "Synthetic Ask Weekly Facility",
+    status: "No Report Required",
+    policyReadiness: "No Report Required",
+    reportRequired: false,
+  };
+  const result = withFacilityReadiness(decidedRow, [{
+    code: "MISSING_REQUIRED_CONTACT",
+    blocking: true,
+    facilityId: "facility-ask-weekly",
+  }]);
+
+  expect(result.readiness).toBe("Blocked");
+  expect(facilityReadinessCounts([result])).toMatchObject({
+    Blocked: 1,
+    "Needs Review": 0,
+    "No Report Required": 0,
+  });
+});
+
 test.each([
   ["Burruss Correctional", "facility-burruss"],
   ["Burruss CTC", "facility-burruss"],

@@ -21,8 +21,8 @@ export const FACILITY_READINESS_OPTIONS = [
 ];
 
 export function facilityReadinessFor(row = {}, issues = []) {
-  if (row.policyReadiness === "No Report Required") return "No Report Required";
   if (values(issues).some((issue) => issue?.blocking)) return "Blocked";
+  if (row.policyReadiness === "No Report Required") return "No Report Required";
   if (row.policyReadiness) return row.policyReadiness;
   if (row.status === "Missing Contact") return "Blocked";
   if (row.status === "Needs Review") return "Needs Review";
