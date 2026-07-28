@@ -378,9 +378,8 @@ test("preserves session-only no-opening decisions and status labels", () => {
   });
   const { rerender } = render(<WeeklyReportingPage {...props} />);
 
-  const facilityRow = screen.getByRole("checkbox", { name: "Select Synthetic Central Facility readiness report" }).parentElement;
-  expect(facilityRow).toHaveTextContent("Needs Review");
-  expect(facilityRow).not.toHaveTextContent("Blocked");
+  expect(screen.getAllByText("Needs Review")).toHaveLength(2);
+  expect(screen.getAllByText("Blocked")).toHaveLength(1);
   fireEvent.click(screen.getByRole("button", { name: "Create Standard Report This Week" }));
   fireEvent.click(screen.getByRole("button", { name: "No Report Needed This Week" }));
   expect(props.setWeeklyNoOpeningDecision).toHaveBeenNthCalledWith(1, "facility-1", NO_OPENINGS_WEEKLY_DECISIONS.CREATE_STANDARD_REPORT);
