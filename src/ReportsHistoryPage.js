@@ -1,5 +1,5 @@
 import React from "react";
-import { LEGACY_REPORT_STATUS_DISPLAY } from "./weeklyReportingEligibility";
+import { LEGACY_REPORT_STATUS_DISPLAY, reportingIssueContextRows } from "./weeklyReportingEligibility";
 import {
   REPORTS_HISTORY_AUDIENCES,
   REPORTS_HISTORY_DESTINATIONS,
@@ -14,6 +14,28 @@ function issueLabel(issue) {
   if (typeof issue === "string") return issue;
   const label = issue?.message || issue?.label || issue?.issue || issue?.reason || issue?.code || "Reporting issue";
   return issue?.detail ? `${label}: ${issue.detail}` : label;
+}
+
+function ReportingIssueReview({ Button, issue, onCorrect, THEME }) {
+  const contextRows = reportingIssueContextRows(issue);
+  return (
+    <div style={{ borderTop: `1px solid ${THEME.borderSoft}`, marginTop: 8, paddingTop: 8, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
+      <div>
+        <strong>{issueLabel(issue)}</strong>
+        {contextRows.length ? (
+          <dl style={{ display: "grid", gap: 3, margin: "6px 0 0", fontSize: 11 }}>
+            {contextRows.map(({ label, value }) => (
+              <div key={label} style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                <dt style={{ color: THEME.muted, fontWeight: 850 }}>{label}:</dt>
+                <dd style={{ margin: 0, color: THEME.text }}>{value}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
+      </div>
+      {issue?.resolutionAction && onCorrect ? <Button subtle onClick={() => onCorrect(issue)}>{issue.resolutionAction}</Button> : null}
+    </div>
+  );
 }
 
 function settingSurfaceCard(Button, title, description, actionLabel, onClick) {
@@ -58,6 +80,7 @@ export function ReportsHistoryPage({
   labelFromKey,
   markSelectedFacilityReportsReviewed,
   markSelectedFacilityReportsSent,
+  openReportingIssueCorrection,
   openReportingSettingsSurface,
   previewSelectedFacilityReports,
   regionalEmailBody,
@@ -180,7 +203,7 @@ export function ReportsHistoryPage({
               {blockers.length || warnings.length ? (
                 <div style={{ border: `1px solid ${blockers.length ? THEME.red : THEME.borderSoft}`, borderRadius: 6, padding: 12, background: THEME.panelAlt }}>
                   <strong>{blockers.length ? "Blocking issues" : "Warnings"}</strong>
-                  {blockers.map((issue, index) => <div key={`blocker-${index}`} style={{ marginTop: 6 }}>{issueLabel(issue)}</div>)}
+                  {blockers.map((issue, index) => <ReportingIssueReview key={`blocker-${index}`} Button={Button} issue={issue} onCorrect={(targetIssue) => openReportingIssueCorrection?.(targetIssue, { reportsTab: "review-reports", audience: activeAudience, recipientGroup: reportReviewContext?.recipientGroup || selectedRecipientGroup })} THEME={THEME} />)}
                   {warnings.map((issue, index) => <div key={`warning-${index}`} style={{ marginTop: 6 }}>{issueLabel(issue)}</div>)}
                   <div style={{ color: THEME.muted, fontSize: 12, marginTop: 8 }}>Diagnostic details remain available even when final actions are blocked.</div>
                 </div>

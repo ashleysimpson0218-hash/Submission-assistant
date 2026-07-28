@@ -276,10 +276,10 @@ test("shows hidden selections and count-specific actions without making zero sel
 
 test("renders complete grouped issues, including missing shift, and passes exact correction targets", () => {
   const issues = [
-    { code: "ambiguous-facility", facilityName: "Synthetic Central", originalFacilityLabel: "Central", resolutionAction: "Resolve Facility" },
-    { code: "missing-fte", facilityName: "Synthetic Central", requisitionId: "req-fte", requisitionNumber: "SYN-1", position: "RN", missingField: "FTE", resolutionAction: "Add FTE" },
-    { code: "missing-shift", facilityName: "Synthetic Central", requisitionId: "req-shift", requisitionNumber: "SYN-2", position: "LPN", missingField: "Shift", resolutionAction: "Add Shift" },
-    { code: "missing-contact", facilityName: "Synthetic Central", facilityId: "facility-1", missingField: "Contact", resolutionAction: "Add Contact" },
+    { code: "AMBIGUOUS_FACILITY", facilityName: "Synthetic Central", originalFacilityLabel: "Central", candidateName: "Synthetic Candidate 004", candidateId: "candidate-4", competingFacilityNames: ["Synthetic Central", "Synthetic East"], competingFacilityIds: ["facility-1", "facility-2"], reason: "Choose the correct canonical facility.", resolutionAction: "Resolve Facility" },
+    { code: "MISSING_REQUIRED_FTE", facilityName: "Synthetic Central", canonicalFacilityName: "Synthetic Central", facilityId: "facility-1", regionName: "Central", requisitionId: "req-fte", requisitionNumber: "SYN-1", position: "RN", currentFte: "", missingField: "FTE", reason: "FTE is required.", resolutionAction: "Add FTE" },
+    { code: "MISSING_REQUIRED_SHIFT", facilityName: "Synthetic Central", canonicalFacilityName: "Synthetic Central", facilityId: "facility-1", regionName: "Central", requisitionId: "req-shift", requisitionNumber: "SYN-2", position: "LPN", currentShift: "", missingField: "Shift", reason: "Shift is required.", resolutionAction: "Add Shift" },
+    { code: "MISSING_REQUIRED_CONTACT", facilityName: "Synthetic Central", canonicalFacilityName: "Synthetic Central", facilityId: "facility-1", regionName: "Central", currentContactStatus: "No active facility contact configured", missingField: "Contact", reason: "A contact is required.", resolutionAction: "Add Contact" },
   ];
   const props = baseProps({
     expandedReportIssueCode: "blockers",
@@ -294,10 +294,37 @@ test("renders complete grouped issues, including missing shift, and passes exact
   render(<WeeklyReportingPage {...props} />);
 
   expect(screen.getByText(/Req SYN-2.*Shift/)).toBeInTheDocument();
+  expect(screen.getByText("Synthetic Candidate 004")).toBeInTheDocument();
+  expect(screen.getByText("candidate-4")).toBeInTheDocument();
+  expect(screen.getByText("Synthetic Central, Synthetic East")).toBeInTheDocument();
+  expect(screen.getByText("req-fte")).toBeInTheDocument();
+  expect(screen.getAllByText("Not set").length).toBeGreaterThanOrEqual(2);
+  expect(screen.getByText("No active facility contact configured")).toBeInTheDocument();
   for (const issue of issues) {
     fireEvent.click(screen.getByRole("button", { name: issue.resolutionAction }));
   }
   expect(props.openReportingIssueCorrection.mock.calls.map(([issue]) => issue)).toEqual(issues);
+});
+
+test("row remediation actions do not truncate Add Contact behind FTE and shift issues", () => {
+  const readinessIssues = [
+    { code: "MISSING_REQUIRED_FTE", resolutionAction: "Add FTE", requisitionId: "req-1" },
+    { code: "MISSING_REQUIRED_SHIFT", resolutionAction: "Add Shift", requisitionId: "req-1" },
+    { code: "MISSING_REQUIRED_CONTACT", resolutionAction: "Add Contact", facilityId: "facility-1" },
+  ];
+  const row = { ...baseRow, readinessIssues, readiness: "Blocked" };
+  const props = baseProps({
+    facilityReadinessRows: [row],
+    facilityReadinessVisibleRows: [row],
+    facilityReadinessMatchingRows: [row],
+  });
+  render(<WeeklyReportingPage {...props} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Add FTE" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add Shift" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add Contact" }));
+
+  expect(props.openReportingIssueCorrection.mock.calls.map(([issue]) => issue)).toEqual(readinessIssues);
 });
 
 test("keeps diagnostic issue detail available while final actions obey eligibility", () => {
@@ -329,8 +356,8 @@ test("keeps diagnostic issue detail available while final actions obey eligibili
   });
   render(<WeeklyReportingPage {...props} />);
 
-  expect(screen.getByText("Synthetic Shared")).toBeInTheDocument();
-  expect(screen.getByText("Choose a canonical facility.")).toBeInTheDocument();
+  expect(screen.getAllByText("Synthetic Shared").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("Choose a canonical facility.").length).toBeGreaterThan(0);
   expect(screen.getByRole("button", { name: "Preview 1 Selected Report" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Download Combined Workbook" })).toBeDisabled();
 });

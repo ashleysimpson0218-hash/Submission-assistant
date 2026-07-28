@@ -89,10 +89,55 @@ export function createReportingIssue(issue = {}) {
     originalFacilityLabel: asText(issue.originalFacilityLabel),
     requisitionNumber: asText(issue.requisitionNumber),
     position: asText(issue.position),
+    candidateName: asText(issue.candidateName),
+    canonicalFacilityName: asText(issue.canonicalFacilityName || issue.facilityName),
+    regionName: asText(issue.regionName),
+    currentFte: asText(issue.currentFte),
+    currentShift: asText(issue.currentShift),
+    currentContact: asText(issue.currentContact),
+    currentContactStatus: asText(issue.currentContactStatus),
+    sourceValue: asText(issue.sourceValue || issue.originalFacilityLabel),
+    reason: asText(issue.reason || issue.detail),
+    competingFacilityNames: asArray(issue.competingFacilityNames),
+    competingFacilityIds: asArray(issue.competingFacilityIds || issue.facilityIds),
     missingField: asText(issue.missingField),
     resolutionAction: asText(issue.resolutionAction),
     blocking: Object.values(ISSUE_RULES[code]).some((value) => value === false),
   };
+}
+
+export function reportingIssueContextRows(issue = {}) {
+  const normalized = createReportingIssue(issue);
+  const isFteIssue = normalized.code === REPORTING_ISSUE_CODES.MISSING_REQUIRED_FTE;
+  const isShiftIssue = normalized.code === REPORTING_ISSUE_CODES.MISSING_REQUIRED_SHIFT;
+  const isContactIssue = normalized.code === REPORTING_ISSUE_CODES.MISSING_REQUIRED_CONTACT;
+  const rows = [
+    ["Candidate name", normalized.candidateName],
+    ["Candidate ID", normalized.candidateId],
+    ["Requisition title", normalized.position],
+    ["Requisition number", normalized.requisitionNumber],
+    ["Requisition ID", normalized.requisitionId],
+    ["Facility as entered", normalized.originalFacilityLabel],
+    ["Canonical facility", normalized.canonicalFacilityName],
+    ["Facility ID", normalized.facilityId],
+    ["Region", normalized.regionName],
+    ["Current FTE value", isFteIssue ? normalized.currentFte || "Not set" : normalized.currentFte],
+    ["Current shift value", isShiftIssue ? normalized.currentShift || "Not set" : normalized.currentShift],
+    ["Current contact", normalized.currentContact],
+    ["Contact status", isContactIssue ? normalized.currentContactStatus || "Not configured" : normalized.currentContactStatus],
+    ["Alias or unresolved source value", normalized.sourceValue],
+    ["Canonical facility choices", normalized.competingFacilityNames.join(", ")],
+    ["Canonical facility IDs", normalized.competingFacilityIds.join(", ")],
+    ["Blocking reason", normalized.reason || normalized.issue],
+  ];
+  const seen = new Set();
+  return rows.filter(([label, value]) => {
+    const displayValue = asText(value);
+    const key = `${label}|${displayValue}`;
+    if (!displayValue || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).map(([label, value]) => ({ label, value: asText(value) }));
 }
 
 function intersects(left = [], right = []) {

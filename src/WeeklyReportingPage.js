@@ -3,12 +3,48 @@ import WeeklyCleanupReportBuilder from "./WeeklyCleanupReportBuilder";
 import { FACILITY_READINESS_OPTIONS } from "./facilityReadinessNavigation";
 import { NO_OPENINGS_POLICIES, NO_OPENINGS_POLICY_OPTIONS, NO_OPENINGS_WEEKLY_DECISIONS } from "./noOpeningFacilityPolicy";
 import { previewSelectedReportsLabel } from "./reportContext";
-import { LEGACY_REPORT_STATUS_DISPLAY } from "./weeklyReportingEligibility";
+import { LEGACY_REPORT_STATUS_DISPLAY, reportingIssueContextRows } from "./weeklyReportingEligibility";
 import {
   WEEKLY_REPORTING_STEPS,
   weeklyReportingScopeText,
   weeklyReportingStepNumber,
 } from "./weeklyReportingWorkflow";
+
+function ReportingIssueDetails({ issue, THEME }) {
+  const contextRows = reportingIssueContextRows(issue);
+  return (
+    <div>
+      <strong>{issue.facilityName || issue.originalFacilityLabel || issue.issue || "Unmapped Facility"}</strong>
+      <div style={{ color: THEME.muted, fontSize: 12 }}>
+        {[issue.position, issue.requisitionNumber && `Req ${issue.requisitionNumber}`, issue.missingField].filter(Boolean).join(" | ") || issue.detail || issue.identifier}
+      </div>
+      {contextRows.length ? (
+        <dl style={{ display: "grid", gap: 3, margin: "7px 0 0", fontSize: 11 }}>
+          {contextRows.map(({ label, value }) => (
+            <div key={label} style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+              <dt style={{ color: THEME.muted, fontWeight: 850 }}>{label}:</dt>
+              <dd style={{ margin: 0, color: THEME.text }}>{value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+    </div>
+  );
+}
+
+function actionableReportingIssues(issues = []) {
+  const seen = new Set();
+  return (Array.isArray(issues) ? issues : []).filter((issue) => {
+    if (!issue?.resolutionAction) return false;
+    const targetId = issue.resolutionAction === "Add Contact"
+      ? issue.facilityId
+      : issue.requisitionId || issue.candidateId || issue.facilityId || issue.identifier;
+    const key = `${issue.resolutionAction}|${targetId || ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
 export function WeeklyReportingPage(props) {
   const {
@@ -488,7 +524,7 @@ export function WeeklyReportingPage(props) {
                     {Object.entries(reportInclusions).map(([key, value]) => <ToggleField key={key} label={labelFromKey(key)} checked={Boolean(value)} onChange={(checked) => setReportInclusions((prev) => ({ ...prev, [key]: checked }))} />)}
                   </div>
                 </Accordion>
-                {reportIssueGroups.length ? <Card compact title="Reporting Issues" subtitle={`${selectedReportEligibility.blockingReasons.length} blocker${selectedReportEligibility.blockingReasons.length === 1 ? "" : "s"} in the selected scope. Diagnostic details remain available even when final output is blocked.`}><div style={{ display: "grid", gap: 8 }}>{reportIssueGroups.map((group) => <div key={group.code} style={{ border: `1px solid ${group.blocking ? THEME.red : THEME.amber}`, borderRadius: 6, background: group.blocking ? THEME.coralBg : THEME.amberBg }}><button type="button" aria-expanded={expandedReportIssueCode === group.code} onClick={() => setExpandedReportIssueCode((current) => current === group.code ? "" : group.code)} style={{ width: "100%", border: 0, background: "transparent", padding: 10, display: "flex", justifyContent: "space-between", gap: 10, color: THEME.text, fontWeight: 900, cursor: "pointer", textAlign: "left" }}><span>{group.label}</span><span>{group.count}</span></button>{expandedReportIssueCode === group.code ? <div style={{ display: "grid", gap: 7, padding: "0 10px 10px" }}>{group.issues.map((issue, index) => <div key={`${group.code}-${issue.identifier || issue.candidateId || issue.requisitionId || issue.facilityId}-${index}`} style={{ borderTop: `1px solid ${THEME.borderSoft}`, paddingTop: 8 }}><strong>{issue.facilityName || issue.originalFacilityLabel || "Unmapped Facility"}</strong><div style={{ color: THEME.muted, fontSize: 12 }}>{[issue.position, issue.requisitionNumber && `Req ${issue.requisitionNumber}`, issue.missingField].filter(Boolean).join(" | ") || issue.detail || issue.identifier}</div>{issue.originalFacilityLabel ? <div style={{ color: THEME.muted, fontSize: 12 }}>Original label: {issue.originalFacilityLabel}</div> : null}{issue.resolutionAction ? <div style={{ color: THEME.primary2, fontSize: 12, fontWeight: 850 }}>Next action: {issue.resolutionAction}</div> : null}</div>)}</div> : null}</div>)}</div></Card> : null}
+                {reportIssueGroups.length ? <Card compact title="Reporting Issues" subtitle={`${selectedReportEligibility.blockingReasons.length} blocker${selectedReportEligibility.blockingReasons.length === 1 ? "" : "s"} in the selected scope. Diagnostic details remain available even when final output is blocked.`}><div style={{ display: "grid", gap: 8 }}>{reportIssueGroups.map((group) => <div key={group.code} style={{ border: `1px solid ${group.blocking ? THEME.red : THEME.amber}`, borderRadius: 6, background: group.blocking ? THEME.coralBg : THEME.amberBg }}><button type="button" aria-expanded={expandedReportIssueCode === group.code} onClick={() => setExpandedReportIssueCode((current) => current === group.code ? "" : group.code)} style={{ width: "100%", border: 0, background: "transparent", padding: 10, display: "flex", justifyContent: "space-between", gap: 10, color: THEME.text, fontWeight: 900, cursor: "pointer", textAlign: "left" }}><span>{group.label}</span><span>{group.count}</span></button>{expandedReportIssueCode === group.code ? <div style={{ display: "grid", gap: 7, padding: "0 10px 10px" }}>{group.issues.map((issue, index) => <div key={`${group.code}-${issue.identifier || issue.candidateId || issue.requisitionId || issue.facilityId}-${index}`} style={{ borderTop: `1px solid ${THEME.borderSoft}`, paddingTop: 8, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}><ReportingIssueDetails issue={issue} THEME={THEME} />{issue.resolutionAction ? <Button subtle onClick={() => openReportingIssueCorrection(issue)}>{issue.resolutionAction}</Button> : null}</div>)}</div> : null}</div>)}</div></Card> : null}
                 <div style={{ overflowX: "auto" }}>
                   <div style={{ minWidth: isNarrow ? 760 : 0, display: "grid", gap: 8 }}>
                     <div style={{ display: "grid", gridTemplateColumns: "34px 1.2fr 120px 140px 1fr 90px", gap: 10, padding: "0 10px", color: THEME.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>
@@ -601,13 +637,7 @@ export function WeeklyReportingPage(props) {
                           <div style={{ display: "grid", gap: 8, padding: "0 10px 10px" }}>
                             {group.issues.map((issue, index) => (
                               <div key={`${group.code}-${issue.identifier || issue.candidateId || issue.requisitionId || issue.facilityId}-${index}`} style={{ borderTop: `1px solid ${THEME.borderSoft}`, paddingTop: 9, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                                <div>
-                                  <strong>{issue.facilityName || issue.originalFacilityLabel || "Unmapped Facility"}</strong>
-                                  <div style={{ color: THEME.muted, fontSize: 12 }}>{[issue.position, issue.requisitionNumber && `Req ${issue.requisitionNumber}`, issue.missingField].filter(Boolean).join(" | ") || issue.detail || issue.identifier}</div>
-                                  {issue.originalFacilityLabel ? <div style={{ color: THEME.muted, fontSize: 11 }}>Original label: {issue.originalFacilityLabel}</div> : null}
-                                  {(issue.recordType || issue.identifier) ? <div style={{ color: THEME.muted, fontSize: 11 }}>Affected source: {[issue.recordType, issue.identifier].filter(Boolean).join(" ")}</div> : null}
-                                  {issue.facilityIds?.length > 1 ? <div style={{ color: THEME.muted, fontSize: 11 }}>Canonical choices: {issue.facilityIds.join(", ")}</div> : null}
-                                </div>
+                                <ReportingIssueDetails issue={issue} THEME={THEME} />
                                 {issue.resolutionAction ? <Button subtle onClick={() => openReportingIssueCorrection(issue)}>{issue.resolutionAction}</Button> : null}
                               </div>
                             ))}
@@ -648,7 +678,7 @@ export function WeeklyReportingPage(props) {
                             <Button subtle onClick={() => setWeeklyNoOpeningDecision(row.facilityId, NO_OPENINGS_WEEKLY_DECISIONS.NO_REPORT_NEEDED)} style={{ padding: "6px 8px", fontSize: 11 }}>No Report Needed This Week</Button>
                           </> : null}
                           {row.noOpeningOutcome?.applies && noOpeningsPolicy === NO_OPENINGS_POLICIES.ASK_WEEKLY && noOpeningWeeklyDecisions[row.facilityId] ? <Button subtle onClick={() => undoNoOpeningWeeklyDecision(row.facilityId)} style={{ padding: "6px 8px", fontSize: 11 }}>Undo Weekly Decision</Button> : null}
-                          {row.readinessIssues.filter((issue) => issue.resolutionAction).slice(0, 2).map((issue, index) => <Button key={`${issue.code}-${issue.requisitionId || issue.facilityId}-${index}`} subtle onClick={() => openReportingIssueCorrection(issue)} style={{ padding: "6px 8px", fontSize: 11 }}>{issue.resolutionAction}</Button>)}
+                          {actionableReportingIssues(row.readinessIssues).map((issue, index) => <Button key={`${issue.code}-${issue.requisitionId || issue.candidateId || issue.facilityId}-${index}`} subtle onClick={() => openReportingIssueCorrection(issue)} style={{ padding: "6px 8px", fontSize: 11 }}>{issue.resolutionAction}</Button>)}
                           {!row.readinessIssues.some((issue) => issue.resolutionAction) && row.reportActionEligible !== false ? <Button subtle disabled={!eligibilityForReportRows([row]).canCreateFinalPreview} onClick={() => openReportReview(row)} style={{ padding: "6px 8px", fontSize: 11 }}>{row.action === "Preview" ? "Review Report" : row.action}</Button> : null}
                         </div>
                       </div>

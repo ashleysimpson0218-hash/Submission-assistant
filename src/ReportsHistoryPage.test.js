@@ -120,6 +120,7 @@ function baseProps(overrides = {}) {
     labelFromKey: jest.fn((key) => key),
     markSelectedFacilityReportsReviewed: jest.fn(),
     markSelectedFacilityReportsSent: jest.fn(),
+    openReportingIssueCorrection: jest.fn(),
     openReportingSettingsSurface: jest.fn(),
     previewSelectedFacilityReports: jest.fn(),
     regionalEmailBody: jest.fn(() => "Synthetic regional body"),
@@ -285,9 +286,21 @@ test("missing contact blocks email actions but permits workbook review", () => {
     ...allowedEligibility,
     canPrepareEmail: false,
     canMarkReady: false,
-    blockingReasons: [{ message: "Missing facility contact." }],
+    blockingReasons: [{
+      code: "MISSING_REQUIRED_CONTACT",
+      issue: "Missing facility contact",
+      facilityName: "Synthetic Central Facility",
+      facilityId: "facility-1",
+      regionName: "Central",
+      requisitionNumber: "SYN-1",
+      requisitionId: "req-1",
+      position: "Registered Nurse",
+      currentContactStatus: "No active facility contact configured",
+      reason: "A facility contact is required before email preparation or Ready status.",
+      resolutionAction: "Add Contact",
+    }],
   };
-  render(<ReportsHistoryPage {...baseProps({
+  const props = baseProps({
     selectedReportEligibility: eligibility,
     reportingActionState: {
       ...allowedActionState,
@@ -296,11 +309,26 @@ test("missing contact blocks email actions but permits workbook review", () => {
       selectedMarkReviewedReportIds: [],
       selectedMarkSentReportIds: [],
     },
-  })} />);
+  });
+  render(<ReportsHistoryPage {...props} />);
 
   expect(screen.getByRole("button", { name: "Copy Email Body" })).toBeDisabled();
   expect(screen.getAllByRole("button", { name: "Download Workbook" })[0]).toBeEnabled();
   expect(screen.getByRole("button", { name: "Mark Sent" })).toBeDisabled();
+  expect(screen.getByText("Registered Nurse")).toBeInTheDocument();
+  expect(screen.getByText("SYN-1")).toBeInTheDocument();
+  expect(screen.getByText("req-1")).toBeInTheDocument();
+  expect(screen.getByText("No active facility contact configured")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Add Contact" }));
+  expect(props.openReportingIssueCorrection).toHaveBeenCalledWith(
+    eligibility.blockingReasons[0],
+    {
+      reportsTab: "review-reports",
+      audience: "Facility",
+      recipientGroup: "Facility contacts",
+    },
+  );
 });
 
 test("mixed downloadable and blocked selections cannot produce a partially scoped workbook", () => {

@@ -4,6 +4,7 @@ import {
   deriveReportingActionState,
   explicitReportStatusForAction,
   groupReportingIssues,
+  reportingIssueContextRows,
   reportingActionEligibility,
   reportStatusCountsAsComplete,
 } from "./weeklyReportingEligibility";
@@ -93,6 +94,43 @@ test("grouped issues preserve every missing-shift record without rendering one f
     "shift-req-2",
     "shift-req-3",
   ]);
+});
+
+test("blocker context exposes exact affected source details without changing eligibility", () => {
+  const rows = reportingIssueContextRows({
+    code: REPORTING_ISSUE_CODES.MISSING_REQUIRED_FTE,
+    issue: "Missing FTE",
+    candidateName: "Synthetic Candidate 001",
+    candidateId: "candidate-1",
+    position: "Registered Nurse",
+    requisitionNumber: "SYN-1001",
+    requisitionId: "req-1",
+    originalFacilityLabel: "Synthetic North CTC",
+    canonicalFacilityName: "Synthetic Facility 01",
+    facilityId: "synthetic-facility-001",
+    regionName: "Region Alpha",
+    currentFte: "",
+    sourceValue: "Synthetic North CTC",
+    reason: "Required FTE is missing from this active requisition.",
+  });
+
+  expect(Object.fromEntries(rows.map(({ label, value }) => [label, value]))).toMatchObject({
+    "Candidate name": "Synthetic Candidate 001",
+    "Candidate ID": "candidate-1",
+    "Requisition title": "Registered Nurse",
+    "Requisition number": "SYN-1001",
+    "Requisition ID": "req-1",
+    "Facility as entered": "Synthetic North CTC",
+    "Canonical facility": "Synthetic Facility 01",
+    "Facility ID": "synthetic-facility-001",
+    Region: "Region Alpha",
+    "Current FTE value": "Not set",
+    "Blocking reason": "Required FTE is missing from this active requisition.",
+  });
+  expect(reportingActionEligibility([{
+    code: REPORTING_ISSUE_CODES.MISSING_REQUIRED_FTE,
+    facilityId: "synthetic-facility-001",
+  }], { facilityIds: ["synthetic-facility-001"] }).canCreateFinalPreview).toBe(false);
 });
 
 test("preview, copy, and download actions have no implicit status mutation", () => {

@@ -14957,17 +14957,21 @@ function rowifyCandidate(item = {}) {
     if (context?.filters) setFacilityReadinessFilters({ ...context.filters });
     if (context?.selectedFacilityIds) setSelectedFacilityReports([...context.selectedFacilityIds]);
     if (context?.expandedIssueCode) setExpandedReportIssueCode(context.expandedIssueCode);
+    if (context?.audience) selectReportsReviewAudience(context.audience);
+    else if (context?.recipientGroup) setSelectedRecipientGroup(context.recipientGroup);
     setActivePage("reports");
     setReportsTab(context?.reportsTab || "facility-readiness");
     setReportCorrectionTarget(null);
   }
 
-  function openReportingIssueCorrection(issue) {
+  function openReportingIssueCorrection(issue, contextOverrides = {}) {
     const target = buildReportingCorrectionRoute(issue, {
-      reportsTab: "facility-readiness",
+      reportsTab: contextOverrides.reportsTab || "facility-readiness",
       filters: facilityReadinessFilters,
       selectedFacilityIds: selectedFacilityReports,
       expandedIssueCode: expandedReportIssueCode,
+      audience: contextOverrides.audience || reportsReviewAudience,
+      recipientGroup: contextOverrides.recipientGroup || selectedRecipientGroup,
     });
     if (!target.recordId) {
       setCopyNotice(`${target.action || "Correction"} could not open because the affected record has no stable ID.`);
@@ -19381,6 +19385,7 @@ function rowifyCandidate(item = {}) {
             labelFromKey,
             markSelectedFacilityReportsReviewed,
             markSelectedFacilityReportsSent,
+            openReportingIssueCorrection,
             openReportingSettingsSurface,
             previewSelectedFacilityReports,
             regionalEmailBody,

@@ -110,12 +110,15 @@ export function facilityBulkActionLabel(action, selectedCount) {
 }
 
 function cloneReportingContext(context = {}) {
-  return {
+  const preserved = {
     reportsTab: context.reportsTab || "facility",
     filters: { ...(context.filters || DEFAULT_FACILITY_READINESS_FILTERS) },
     selectedFacilityIds: [...values(context.selectedFacilityIds)],
     expandedIssueCode: text(context.expandedIssueCode),
   };
+  if (text(context.audience)) preserved.audience = text(context.audience);
+  if (text(context.recipientGroup)) preserved.recipientGroup = text(context.recipientGroup);
+  return preserved;
 }
 
 export function buildReportingCorrectionRoute(issue = {}, context = {}) {

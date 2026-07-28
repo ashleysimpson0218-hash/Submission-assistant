@@ -168,3 +168,28 @@ test("building a correction route does not modify the issue or reporting context
   buildReportingCorrectionRoute(issue, context);
   expect(JSON.stringify({ issue, context })).toBe(before);
 });
+
+test("contact correction preserves the exact facility and report audience context", () => {
+  const route = buildReportingCorrectionRoute({
+    resolutionAction: "Add Contact",
+    facilityId: "facility-1",
+    facilityName: "Synthetic Central",
+  }, {
+    reportsTab: "review-reports",
+    selectedFacilityIds: ["facility-1"],
+    audience: "Regional",
+    recipientGroup: "Regional Manager",
+  });
+
+  expect(route).toMatchObject({
+    recordType: "facility",
+    recordId: "facility-1",
+    field: "facilityContact",
+    reportingContext: {
+      reportsTab: "review-reports",
+      selectedFacilityIds: ["facility-1"],
+      audience: "Regional",
+      recipientGroup: "Regional Manager",
+    },
+  });
+});

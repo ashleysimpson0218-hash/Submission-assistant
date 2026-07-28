@@ -116,7 +116,18 @@ describe("configurable Weekly Cleanup reporting", () => {
     expect(record.originalFacilityLabel).toBe("Shared Alias");
     expect(record.facilityResolutionStatus).toBe("ambiguous");
     expect(model.dataQuality).toEqual(expect.arrayContaining([
-      expect.objectContaining({ recordType: "Candidate", identifier: "candidate-ambiguous", issue: "Ambiguous Facility" }),
+      expect.objectContaining({
+        recordType: "Candidate",
+        identifier: "candidate-ambiguous",
+        candidateName: "Synthetic Ambiguous",
+        candidateId: "candidate-ambiguous",
+        originalFacilityLabel: "Shared Alias",
+        sourceValue: "Shared Alias",
+        competingFacilityIds: ["facility-north", "facility-east"],
+        competingFacilityNames: ["North Center", "East Center"],
+        issue: "Ambiguous Facility",
+        resolutionAction: "Resolve Facility",
+      }),
       expect.objectContaining({ recordType: "Candidate", identifier: "candidate-ambiguous", issue: "Missing Facility ID" }),
     ]));
   });
@@ -184,16 +195,24 @@ describe("configurable Weekly Cleanup reporting", () => {
     expect(fte).toMatchObject({
       facilityId: "facility-burruss",
       facilityName: "Burruss Training Center",
+      canonicalFacilityName: "Burruss Training Center",
+      regionName: "South",
       requisitionId: "req-1",
       requisitionNumber: "1001",
       position: "Registered Nurse",
+      currentFte: "",
       missingField: "FTE",
+      reason: "Required FTE is missing from this active requisition.",
       resolutionAction: "Add FTE",
     });
     expect(shift).toMatchObject({
       facilityId: "facility-burruss",
+      canonicalFacilityName: "Burruss Training Center",
+      regionName: "South",
       requisitionId: "req-1",
+      currentShift: "",
       missingField: "Shift",
+      reason: "Required shift is missing from this active requisition.",
       resolutionAction: "Add Shift",
     });
     expect(result.canCreateFinalPreview).toBe(false);
@@ -212,7 +231,10 @@ describe("configurable Weekly Cleanup reporting", () => {
       requisitionId: "req-1",
       requisitionNumber: "1001",
       position: "Registered Nurse",
+      regionName: "South",
+      currentContactStatus: "No active facility contact configured",
       missingField: "Facility recipient",
+      reason: "A facility contact is required before email preparation or Ready status.",
       resolutionAction: "Add Contact",
     });
     expect(result.canCreateFinalPreview).toBe(true);
