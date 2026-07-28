@@ -1,5 +1,7 @@
 import {
   ReportRowContractError,
+  buildReportReviewNavigation,
+  buildReportingNavigation,
   buildCanonicalReportContext,
   buildCanonicalReportScope,
   createReportReviewTargetId,
@@ -195,6 +197,52 @@ test("deep links retain the exact stable report target and preserve unrelated qu
     audience: "Regional",
     reportType: "Regional Manager Summary",
     legacy: false,
+  });
+});
+
+test("Facility Readiness and Reports & History share one versioned review navigation contract", () => {
+  const fromFacilityReadiness = buildReportReviewNavigation({
+    search: "?workspace=synthetic",
+    audience: "Facility",
+    reportType: "Facility Weekly Report",
+    rows: [rows[0]],
+  });
+  const fromReportsHistory = buildReportReviewNavigation({
+    search: "?workspace=synthetic",
+    audience: "Facility",
+    reportType: "Facility Weekly Report",
+    rows: [rows[0]],
+  });
+
+  expect(fromFacilityReadiness).toEqual(fromReportsHistory);
+  expect(fromFacilityReadiness.reportId).toMatch(/^wf-report-v1\|/);
+  expect(readReportReviewTarget(fromFacilityReadiness.search)).toBe(fromFacilityReadiness.reportId);
+  expect(fromFacilityReadiness.state).toEqual({
+    activePage: "reports",
+    reportsTab: "review-reports",
+    reportReviewTargetId: fromFacilityReadiness.reportId,
+  });
+});
+
+test("reporting navigation removes only the stable target and preserves a deterministic history destination", () => {
+  const target = buildReportReviewNavigation({
+    search: "?workspace=synthetic&view=compact",
+    audience: "Regional",
+    rows,
+  });
+  const away = buildReportingNavigation({
+    search: target.search,
+    activePage: "reporting",
+    reportsTab: "reports-history",
+  });
+
+  expect(readReportReviewTarget(away.search)).toBe("");
+  expect(away.search).toContain("workspace=synthetic");
+  expect(away.search).toContain("view=compact");
+  expect(away.state).toEqual({
+    activePage: "reporting",
+    reportsTab: "reports-history",
+    reportReviewTargetId: "",
   });
 });
 

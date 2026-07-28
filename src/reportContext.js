@@ -216,3 +216,36 @@ export function reportReviewSearch(search = "", reportId = "") {
   const query = params.toString();
   return query ? `?${query}` : "";
 }
+
+export function buildReportReviewNavigation({
+  search = "",
+  audience,
+  reportType,
+  rows,
+} = {}) {
+  const reportId = createReportReviewTargetId({ audience, reportType, rows });
+  return {
+    reportId,
+    search: reportReviewSearch(search, reportId),
+    state: {
+      activePage: "reports",
+      reportsTab: "review-reports",
+      reportReviewTargetId: reportId,
+    },
+  };
+}
+
+export function buildReportingNavigation({
+  search = "",
+  activePage = "reports",
+  reportsTab = "overview",
+} = {}) {
+  return {
+    search: reportReviewSearch(search, ""),
+    state: {
+      activePage: text(activePage) || "reports",
+      reportsTab: text(reportsTab) || "overview",
+      reportReviewTargetId: "",
+    },
+  };
+}

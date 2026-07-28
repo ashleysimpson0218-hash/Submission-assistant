@@ -432,7 +432,11 @@ test("Review Report delegates the exact stable report row for deterministic deep
 
   fireEvent.click(screen.getByRole("button", { name: "Review Report" }));
 
-  expect(props.openReportReview).toHaveBeenCalledWith(baseRow);
+  expect(props.openReportReview).toHaveBeenCalledWith(baseRow, {
+    audience: "Facility",
+    reportType: "Facility Weekly Report",
+    recipientGroup: "Facility Contacts",
+  });
   expect(props.previewSelectedFacilityReports).not.toHaveBeenCalled();
 });
 

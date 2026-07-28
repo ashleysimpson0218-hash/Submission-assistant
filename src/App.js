@@ -72,13 +72,13 @@ import { WeeklyReportingPage } from "./WeeklyReportingPage";
 import { ReportsHistoryPage } from "./ReportsHistoryPage";
 import { normalizeReportsHistoryDestination } from "./reportsHistoryNavigation";
 import {
+  buildReportingNavigation,
+  buildReportReviewNavigation,
   buildCanonicalReportScope,
   buildCanonicalReportContext,
-  createReportReviewTargetId,
   policyRowsForReportAction as resolvePolicyRowsForReportAction,
   readReportReviewTarget,
   reportAudienceDefinition,
-  reportReviewSearch,
   resolveReportReviewTarget,
 } from "./reportContext";
 import { reportingPeriodFor, reportingTimeZone } from "./reportingPeriod";
@@ -5981,6 +5981,9 @@ function RecruiterApp() {
       if (targetId) {
         setActivePage("reports");
         setReportsTab("review-reports");
+      } else if (window.history.state?.activePage) {
+        setActivePage(window.history.state.activePage);
+        if (window.history.state.reportsTab) setReportsTab(window.history.state.reportsTab);
       }
     };
     window.addEventListener("popstate", restoreReportTargetFromLocation);
@@ -14783,11 +14786,13 @@ function rowifyCandidate(item = {}) {
   function openReportReview(rowOrRows, context = {}) {
     const rows = (Array.isArray(rowOrRows) ? rowOrRows : [rowOrRows]).filter(Boolean);
     const definition = reportAudienceDefinition(context.audience || "Facility");
-    const targetId = createReportReviewTargetId({
+    const navigation = buildReportReviewNavigation({
+      search: window.location.search,
       audience: definition.audience,
       reportType: context.reportType || (rows.length === 1 ? rows[0].reportType : "") || definition.reportType,
       rows,
     });
+    const targetId = navigation.reportId;
     if (!targetId) {
       setCopyNotice("This report does not have a stable identifier and cannot be opened.");
       return false;
@@ -14803,10 +14808,22 @@ function rowifyCandidate(item = {}) {
     setReportsReviewAudience(definition.audience);
     setSelectedReportType(context.reportType || (rows.length === 1 ? rows[0].reportType : "") || definition.reportType);
     setSelectedRecipientGroup(context.recipientGroup || (rows.length === 1 ? rows[0].recipientGroup : "") || definition.recipientGroup);
-    const nextLocation = `${window.location.pathname}${reportReviewSearch(window.location.search, targetId)}${window.location.hash}`;
+    const nextLocation = `${window.location.pathname}${navigation.search}${window.location.hash}`;
     const historyMethod = readReportReviewTarget(window.location.search) === targetId ? "replaceState" : "pushState";
+    if (historyMethod === "pushState") {
+      window.history.replaceState(
+        {
+          ...(window.history.state || {}),
+          activePage,
+          reportsTab,
+          reportReviewTargetId: readReportReviewTarget(window.location.search),
+        },
+        "",
+        `${window.location.pathname}${window.location.search}${window.location.hash}`,
+      );
+    }
     window.history[historyMethod](
-      { ...(window.history.state || {}), reportReviewTargetId: targetId },
+      { ...(window.history.state || {}), ...navigation.state },
       "",
       nextLocation,
     );
@@ -15108,6 +15125,25 @@ function rowifyCandidate(item = {}) {
   ];
   function navigateToReportingValue(value) {
     const route = resolveReportingNavigation(value);
+    const navigation = buildReportingNavigation({
+      search: window.location.search,
+      activePage: route.destination,
+      reportsTab: route.step,
+    });
+    const nextLocation = `${window.location.pathname}${navigation.search}${window.location.hash}`;
+    const currentState = window.history.state || {};
+    if (
+      readReportReviewTarget(window.location.search)
+      || currentState.activePage !== route.destination
+      || currentState.reportsTab !== route.step
+    ) {
+      window.history.pushState({ ...currentState, ...navigation.state }, "", nextLocation);
+    } else {
+      window.history.replaceState({ ...currentState, ...navigation.state }, "", nextLocation);
+    }
+    setReportReviewTargetId("");
+    reportReviewTargetRestoredRef.current = "";
+    reportReviewPreviewRestoredRef.current = "";
     setReportsTab(route.step);
     setActivePage(route.destination);
   }
@@ -19389,7 +19425,7 @@ function rowifyCandidate(item = {}) {
             setNoOpeningsPolicyDraft,
             setReportEndDate,
             setReportInclusions,
-            setReportsTab,
+            setReportsTab: navigateToReportingValue,
             setReportStartDate,
             setSelectedFacility,
             setSelectedFacilityReports,
