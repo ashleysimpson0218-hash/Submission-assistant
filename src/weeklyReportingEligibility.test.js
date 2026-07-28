@@ -1,6 +1,7 @@
 import {
   LEGACY_REPORT_STATUS_DISPLAY,
   REPORTING_ISSUE_CODES,
+  createMissingContactReportingIssue,
   deriveReportingActionState,
   explicitReportStatusForAction,
   groupReportingIssues,
@@ -47,6 +48,43 @@ test("a missing contact permits report inspection and workbook download but bloc
     canMarkReady: false,
     canMarkSent: false,
   });
+});
+
+test("a queue-level missing contact becomes one detailed canonical correction issue", () => {
+  const row = {
+    id: "facility-32",
+    facilityId: "facility-32",
+    facility: "Synthetic Facility 32",
+    originalFacilityLabel: "Synthetic Facility Thirty Two",
+    regionId: "south",
+    regionName: "South",
+    reportType: "No Openings Update",
+    recipientGroup: "Facility Contacts",
+    missingContact: true,
+    activeReqs: [],
+  };
+  const issue = createMissingContactReportingIssue(row);
+  const context = Object.fromEntries(reportingIssueContextRows(issue).map(({ label, value }) => [label, value]));
+
+  expect(issue).toMatchObject({
+    code: REPORTING_ISSUE_CODES.MISSING_REQUIRED_CONTACT,
+    facilityId: "facility-32",
+    resolutionAction: "Add Contact",
+    blocking: true,
+  });
+  expect(context).toMatchObject({
+    "Facility as entered": "Synthetic Facility Thirty Two",
+    "Canonical facility": "Synthetic Facility 32",
+    "Facility ID": "facility-32",
+    Region: "South",
+    Audience: "Facility",
+    "Recipient group": "Facility Contacts",
+    "Missing contact role": "Facility Contacts",
+    "Affected report scope": "No Openings Update for Synthetic Facility 32",
+    "Contact status": "No active facility contact configured",
+    "Blocking reason": "A facility contact is required before email preparation or Ready status.",
+  });
+  expect(row).toEqual(expect.objectContaining({ missingContact: true, activeReqs: [] }));
 });
 
 test("issues outside the selected scope do not block its final outputs", () => {

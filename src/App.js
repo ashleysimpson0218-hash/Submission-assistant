@@ -107,6 +107,7 @@ import {
   normalizeReportingSettings,
 } from "./weeklyCleanupReporting";
 import {
+  createMissingContactReportingIssue,
   createReportingIssue,
   deriveReportingActionState,
   groupReportingIssues,
@@ -13987,8 +13988,28 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
       if ((item.status === "Hired" || item.archiveOutcome === "Hired") && !tentativeStartDateFor(item)) issues.push(createReportingIssue({ ...shared, type: "Missing tentative start date", issue: "Missing tentative start date", missingField: "Tentative start date" }));
       if ((item.archived || item.status === "Archived") && !archivedOutcomeApplies(item)) issues.push(createReportingIssue({ ...shared, type: "Archived candidate missing outcome", issue: "Archived candidate missing outcome", missingField: "Archive outcome" }));
     });
+    facilityReportQueue.filter((row) => row.missingContact).forEach((row) => {
+      const contactIssue = createMissingContactReportingIssue(row);
+      const existingIndex = issues.findIndex((issue) => (
+        issue.code === contactIssue.code
+        && issue.facilityIds.includes(contactIssue.facilityId)
+      ));
+      if (existingIndex < 0) {
+        issues.push(contactIssue);
+        return;
+      }
+      issues[existingIndex] = createReportingIssue({
+        ...contactIssue,
+        ...issues[existingIndex],
+        audienceContext: issues[existingIndex].audienceContext || contactIssue.audienceContext,
+        recipientGroup: issues[existingIndex].recipientGroup || contactIssue.recipientGroup,
+        missingContactRole: issues[existingIndex].missingContactRole || contactIssue.missingContactRole,
+        affectedReportScope: issues[existingIndex].affectedReportScope || contactIssue.affectedReportScope,
+        resolutionAction: issues[existingIndex].resolutionAction || contactIssue.resolutionAction,
+      });
+    });
     return issues;
-  }, [canonicalReportingModel]);
+  }, [canonicalReportingModel, facilityReportQueue]);
   const unresolvedOpeningRiskIds = useMemo(() => new Set(unresolvedOpeningRiskFacilityIds(
     canonicalReportingModel.dataQuality.filter((issue) => {
       if (issue.recordType !== "Requisition" || !["Ambiguous Facility", "Unmapped Facility"].includes(issue.issue)) return false;
@@ -22181,7 +22202,21 @@ export function FacilityPositionSetupPage({ settings, setSettings, activeRoles =
     <div style={{ display: "grid", gap: 16 }}>
       {correctionTarget ? (
         <div role="status" data-testid="reporting-correction-target" style={{ border: `1px solid ${THEME.primary2}`, borderRadius: 8, padding: 12, background: THEME.blueBg, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          <div><strong>{correctionTarget.action}: {correctionTarget.label || "reporting record"}</strong><div style={{ color: THEME.muted, fontSize: 12, marginTop: 3 }}>The exact saved record is open. Make the correction and save explicitly; navigation alone changes nothing.</div></div>
+          <div>
+            <strong>{correctionTarget.action}: {correctionTarget.label || "reporting record"}</strong>
+            <div style={{ color: THEME.muted, fontSize: 12, marginTop: 3 }}>The exact saved record is open. Make the correction and save explicitly; navigation alone changes nothing.</div>
+            {correctionTarget.sourceContext ? (
+              <div data-testid="reporting-correction-source-context" style={{ color: THEME.muted, fontSize: 11, marginTop: 5 }}>
+                {[
+                  correctionTarget.sourceContext.facilityId && `Facility ID: ${correctionTarget.sourceContext.facilityId}`,
+                  correctionTarget.sourceContext.regionName && `Region: ${correctionTarget.sourceContext.regionName}`,
+                  correctionTarget.sourceContext.audience && `Audience: ${correctionTarget.sourceContext.audience}`,
+                  correctionTarget.sourceContext.missingContactRole && `Missing role: ${correctionTarget.sourceContext.missingContactRole}`,
+                  correctionTarget.sourceContext.affectedReportScope && `Scope: ${correctionTarget.sourceContext.affectedReportScope}`,
+                ].filter(Boolean).join(" | ")}
+              </div>
+            ) : null}
+          </div>
           <Button subtle onClick={onReturnToFacilityReadiness}>Return to Facility Readiness</Button>
         </div>
       ) : null}

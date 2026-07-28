@@ -91,11 +91,16 @@ export function createReportingIssue(issue = {}) {
     position: asText(issue.position),
     candidateName: asText(issue.candidateName),
     canonicalFacilityName: asText(issue.canonicalFacilityName || issue.facilityName),
+    regionId: asText(issue.regionId),
     regionName: asText(issue.regionName),
     currentFte: asText(issue.currentFte),
     currentShift: asText(issue.currentShift),
     currentContact: asText(issue.currentContact),
     currentContactStatus: asText(issue.currentContactStatus),
+    audienceContext: asText(issue.audienceContext || issue.audience),
+    recipientGroup: asText(issue.recipientGroup),
+    missingContactRole: asText(issue.missingContactRole),
+    affectedReportScope: asText(issue.affectedReportScope),
     sourceValue: asText(issue.sourceValue || issue.originalFacilityLabel),
     reason: asText(issue.reason || issue.detail),
     competingFacilityNames: asArray(issue.competingFacilityNames),
@@ -104,6 +109,41 @@ export function createReportingIssue(issue = {}) {
     resolutionAction: asText(issue.resolutionAction),
     blocking: Object.values(ISSUE_RULES[code]).some((value) => value === false),
   };
+}
+
+export function createMissingContactReportingIssue(row = {}) {
+  const activeReqs = Array.isArray(row.activeReqs) ? row.activeReqs : [];
+  const firstReq = activeReqs[0] || {};
+  const facilityName = asText(row.facilityName || row.facility);
+  const reportType = asText(row.reportType || row.report) || "Facility report";
+  const recipientGroup = asText(row.recipientGroup) || "Facility Contacts";
+  return createReportingIssue({
+    code: REPORTING_ISSUE_CODES.MISSING_REQUIRED_CONTACT,
+    issue: "Missing facility contact",
+    type: "Missing facility contact",
+    recordType: activeReqs.length ? "Requisition" : "Facility",
+    identifier: asText(firstReq.id || firstReq.requisitionId || row.facilityId || row.id),
+    facilityId: asText(row.facilityId || row.id),
+    facilityName,
+    canonicalFacilityName: facilityName,
+    originalFacilityLabel: asText(row.originalFacilityLabel || facilityName),
+    regionId: asText(row.regionId),
+    regionName: asText(row.regionName),
+    requisitionId: asText(firstReq.id || firstReq.requisitionId),
+    requisitionIds: activeReqs.map((requisition) => requisition?.id || requisition?.requisitionId),
+    requisitionNumber: asText(firstReq.requisitionNumber || firstReq.reqNumber),
+    position: asText(firstReq.position || firstReq.positionTitle),
+    audienceContext: "Facility",
+    recipientGroup,
+    missingContactRole: recipientGroup,
+    affectedReportScope: `${reportType} for ${facilityName || asText(row.facilityId || row.id)}`,
+    currentContactStatus: "No active facility contact configured",
+    missingField: "Facility recipient",
+    sourceValue: asText(row.originalFacilityLabel || facilityName),
+    reason: "A facility contact is required before email preparation or Ready status.",
+    resolutionAction: "Add Contact",
+    source: "Facility report queue",
+  });
 }
 
 export function reportingIssueContextRows(issue = {}) {
@@ -121,6 +161,10 @@ export function reportingIssueContextRows(issue = {}) {
     ["Canonical facility", normalized.canonicalFacilityName],
     ["Facility ID", normalized.facilityId],
     ["Region", normalized.regionName],
+    ["Audience", normalized.audienceContext],
+    ["Recipient group", normalized.recipientGroup],
+    ["Missing contact role", normalized.missingContactRole],
+    ["Affected report scope", normalized.affectedReportScope],
     ["Current FTE value", isFteIssue ? normalized.currentFte || "Not set" : normalized.currentFte],
     ["Current shift value", isShiftIssue ? normalized.currentShift || "Not set" : normalized.currentShift],
     ["Current contact", normalized.currentContact],

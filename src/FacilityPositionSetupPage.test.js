@@ -90,11 +90,22 @@ test("Add Contact opens the exact facility contact section without changing sour
     recordId: "facility-1",
     field: "facilityContact",
     label: "Synthetic Central Facility",
+    sourceContext: {
+      facilityId: "facility-1",
+      regionName: "Central",
+      audience: "Regional",
+      missingContactRole: "Regional Manager",
+      affectedReportScope: "Regional Manager Summary for Synthetic Central Facility",
+    },
   });
 
   expect(await screen.findByRole("heading", { name: "Edit Facility" })).toBeInTheDocument();
   expect(await screen.findByTestId("correction-field-facilityContact")).toBeInTheDocument();
   expect(screen.getByTestId("reporting-correction-target")).toHaveTextContent("Add Contact: Synthetic Central Facility");
+  expect(screen.getByTestId("reporting-correction-source-context")).toHaveTextContent("Facility ID: facility-1");
+  expect(screen.getByTestId("reporting-correction-source-context")).toHaveTextContent("Region: Central");
+  expect(screen.getByTestId("reporting-correction-source-context")).toHaveTextContent("Audience: Regional");
+  expect(screen.getByTestId("reporting-correction-source-context")).toHaveTextContent("Missing role: Regional Manager");
   expect(setSettings).not.toHaveBeenCalled();
   expect(JSON.stringify(settings)).toBe(original);
 });

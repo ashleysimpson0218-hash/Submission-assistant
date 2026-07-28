@@ -191,6 +191,14 @@ test("contact correction preserves the exact facility and report audience contex
     resolutionAction: "Add Contact",
     facilityId: "facility-1",
     facilityName: "Synthetic Central",
+    originalFacilityLabel: "Synthetic Central CTC",
+    regionId: "central",
+    regionName: "Central",
+    audienceContext: "Regional",
+    recipientGroup: "Regional Manager",
+    missingContactRole: "Regional Manager",
+    affectedReportScope: "Regional Manager Summary for Synthetic Central",
+    currentContactStatus: "No active regional contact configured",
   }, {
     reportsTab: "review-reports",
     selectedFacilityIds: ["facility-1"],
@@ -207,6 +215,18 @@ test("contact correction preserves the exact facility and report audience contex
       selectedFacilityIds: ["facility-1"],
       audience: "Regional",
       recipientGroup: "Regional Manager",
+    },
+    sourceContext: {
+      facilityId: "facility-1",
+      facilityName: "Synthetic Central",
+      originalFacilityLabel: "Synthetic Central CTC",
+      regionId: "central",
+      regionName: "Central",
+      audience: "Regional",
+      recipientGroup: "Regional Manager",
+      missingContactRole: "Regional Manager",
+      affectedReportScope: "Regional Manager Summary for Synthetic Central",
+      currentContactStatus: "No active regional contact configured",
     },
   });
 });

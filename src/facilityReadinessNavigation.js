@@ -124,6 +124,18 @@ function cloneReportingContext(context = {}) {
 export function buildReportingCorrectionRoute(issue = {}, context = {}) {
   const action = text(issue.resolutionAction);
   const preservedContext = cloneReportingContext(context);
+  const sourceContext = {
+    facilityId: text(issue.facilityId),
+    facilityName: text(issue.canonicalFacilityName || issue.facilityName || issue.originalFacilityLabel),
+    originalFacilityLabel: text(issue.originalFacilityLabel),
+    regionId: text(issue.regionId),
+    regionName: text(issue.regionName),
+    audience: text(issue.audienceContext || issue.audience || context.audience),
+    recipientGroup: text(issue.recipientGroup || context.recipientGroup),
+    missingContactRole: text(issue.missingContactRole),
+    affectedReportScope: text(issue.affectedReportScope),
+    currentContactStatus: text(issue.currentContactStatus),
+  };
   const base = {
     action,
     field: "",
@@ -133,6 +145,7 @@ export function buildReportingCorrectionRoute(issue = {}, context = {}) {
     recordId: text(issue.facilityId),
     label: text(issue.facilityName || issue.originalFacilityLabel || issue.identifier),
     reportingContext: preservedContext,
+    sourceContext,
   };
 
   if (action === "Add FTE" || action === "Add Shift") {
