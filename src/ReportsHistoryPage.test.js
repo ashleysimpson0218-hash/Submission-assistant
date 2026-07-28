@@ -69,12 +69,22 @@ const historyRecord = {
 };
 
 const allowedEligibility = {
+  canViewDraftPreview: true,
   canCreateFinalPreview: true,
   canDownloadWorkbook: true,
   canPrepareEmail: true,
   canMarkReady: true,
   blockingReasons: [],
   warnings: [],
+};
+
+const allowedActionState = {
+  selectedPreviewableReportIds: ["facility-1"],
+  selectedDownloadableReportIds: ["facility-1"],
+  selectedEmailReportIds: ["facility-1"],
+  selectedReadyReportIds: ["facility-1"],
+  selectedMarkReviewedReportIds: ["facility-1"],
+  selectedMarkSentReportIds: ["facility-1"],
 };
 
 function baseProps(overrides = {}) {
@@ -123,6 +133,7 @@ function baseProps(overrides = {}) {
     reportTypeOptions: ["Facility Weekly Report"],
     reportsHubTab: "ready-review",
     reportsReviewAudience: "Facility",
+    reportingActionState: allowedActionState,
     safeCopy: jest.fn(),
     saveReportsToHistory: jest.fn(),
     selectedAudienceEmailBody: jest.fn(() => "Synthetic audience body"),
@@ -247,11 +258,21 @@ test("keeps diagnostic details visible while blocking affected final actions", (
     blockingReasons: [{ message: "Ambiguous facility must be resolved." }],
     warnings: [],
   };
-  render(<ReportsHistoryPage {...baseProps({ selectedReportEligibility: eligibility })} />);
+  render(<ReportsHistoryPage {...baseProps({
+    selectedReportEligibility: eligibility,
+    reportingActionState: {
+      ...allowedActionState,
+      selectedDownloadableReportIds: [],
+      selectedEmailReportIds: [],
+      selectedReadyReportIds: [],
+      selectedMarkReviewedReportIds: [],
+      selectedMarkSentReportIds: [],
+    },
+  })} />);
 
   expect(screen.getByText("Ambiguous facility must be resolved.")).toBeInTheDocument();
   expect(screen.getByText(/Diagnostic details remain available/)).toBeInTheDocument();
-  expect(screen.getAllByRole("button", { name: "Review Report" })[0]).toBeDisabled();
+  expect(screen.getAllByRole("button", { name: "Review Report" })[0]).toBeEnabled();
   expect(screen.getByRole("button", { name: "Copy Email Body" })).toBeDisabled();
   expect(screen.getAllByRole("button", { name: "Download Workbook" })[0]).toBeDisabled();
   expect(screen.getByRole("button", { name: "Mark Reviewed" })).toBeDisabled();
@@ -265,7 +286,16 @@ test("missing contact blocks email actions but permits workbook review", () => {
     canMarkReady: false,
     blockingReasons: [{ message: "Missing facility contact." }],
   };
-  render(<ReportsHistoryPage {...baseProps({ selectedReportEligibility: eligibility })} />);
+  render(<ReportsHistoryPage {...baseProps({
+    selectedReportEligibility: eligibility,
+    reportingActionState: {
+      ...allowedActionState,
+      selectedEmailReportIds: [],
+      selectedReadyReportIds: [],
+      selectedMarkReviewedReportIds: [],
+      selectedMarkSentReportIds: [],
+    },
+  })} />);
 
   expect(screen.getByRole("button", { name: "Copy Email Body" })).toBeDisabled();
   expect(screen.getAllByRole("button", { name: "Download Workbook" })[0]).toBeEnabled();

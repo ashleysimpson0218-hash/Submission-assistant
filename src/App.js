@@ -85,7 +85,6 @@ import {
   normalizeWeeklyReportingStep,
   resolveReportingNavigation,
   selectWeeklyReportingPrimaryAction,
-  summarizeWeeklyReportingRows,
 } from "./weeklyReportingWorkflow";
 import { RecruiterWorkspacePage } from "./RecruiterWorkspacePage";
 import { applyWorkspaceTaskAction } from "./recruiterWorkspaceActions";
@@ -106,6 +105,7 @@ import {
 } from "./weeklyCleanupReporting";
 import {
   createReportingIssue,
+  deriveReportingActionState,
   groupReportingIssues,
   reportingActionEligibility,
   reportStatusCountsAsComplete,
@@ -14034,10 +14034,29 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
     const selected = new Set(selectedFacilityReports);
     return facilityReadinessRows.filter((row) => selected.has(row.id) || selected.has(row.facility));
   }, [selectedFacilityReports, facilityReadinessRows]);
+  const reportingActionState = useMemo(
+    () => deriveReportingActionState({
+      rows: facilityReadinessRows,
+      selectedReportIds: selectedFacilityReports,
+      issues: reportValidationIssues,
+    }),
+    [facilityReadinessRows, selectedFacilityReports, reportValidationIssues],
+  );
+  const facilityReadinessRowsById = useMemo(
+    () => new Map(facilityReadinessRows.map((row) => [String(row.id || row.facilityId), row])),
+    [facilityReadinessRows],
+  );
+  const reportRowsForActionIds = (ids = []) => ids.map((id) => facilityReadinessRowsById.get(String(id))).filter(Boolean);
   const selectedFacilityActionRows = useMemo(
     () => reportActionEligibleRows(selectedFacilityPolicyRows),
     [selectedFacilityPolicyRows],
   );
+  const selectedPreviewableReportRows = reportRowsForActionIds(reportingActionState.selectedPreviewableReportIds);
+  const selectedDownloadableReportRows = reportRowsForActionIds(reportingActionState.selectedDownloadableReportIds);
+  const selectedEmailReportRows = reportRowsForActionIds(reportingActionState.selectedEmailReportIds);
+  const selectedReadyReportRows = reportRowsForActionIds(reportingActionState.selectedReadyReportIds);
+  const selectedMarkReviewedReportRows = reportRowsForActionIds(reportingActionState.selectedMarkReviewedReportIds);
+  const selectedMarkSentReportRows = reportRowsForActionIds(reportingActionState.selectedMarkSentReportIds);
   const selectedFacilityActionEligibility = useMemo(
     () => reportingActionEligibility(reportValidationIssues, {
       facilityIds: selectedFacilityActionRows.map((row) => row.facilityId).filter(Boolean),
@@ -14081,18 +14100,14 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
     [facilityReadinessIssueGroups],
   );
   const weeklyReportingCandidateCleanupCount = atsCleanupRows().filter((row) => !row.atsUpdatedAt).length;
-  const weeklyReportingStatusSummary = useMemo(
-    () => summarizeWeeklyReportingRows(facilityReadinessRows),
-    [facilityReadinessRows],
-  );
   const weeklyReportingPrimaryAction = useMemo(
     () => selectWeeklyReportingPrimaryAction({
       blockerCount: weeklyReportingBlockerCount,
       candidateCleanupCount: weeklyReportingCandidateCleanupCount,
-      readyReportCount: weeklyReportingStatusSummary.ready,
-      reviewedReportCount: weeklyReportingStatusSummary.reviewed,
+      readyReportCount: reportingActionState.totalReadyReportIds.length,
+      reviewedReportCount: reportingActionState.totalMarkSentReportIds.length,
     }),
-    [weeklyReportingBlockerCount, weeklyReportingCandidateCleanupCount, weeklyReportingStatusSummary],
+    [weeklyReportingBlockerCount, weeklyReportingCandidateCleanupCount, reportingActionState],
   );
 
   const routingPreviewSummary = useMemo(() => ({
@@ -14666,7 +14681,7 @@ function rowifyCandidate(item = {}) {
     });
   }
 
-  function previewSelectedFacilityReports(rows = selectedFacilityActionRows) {
+  function previewSelectedFacilityReports(rows = selectedPreviewableReportRows) {
     let sourceRows;
     try {
       sourceRows = policyRowsForReportAction(rows);
@@ -14679,7 +14694,7 @@ function rowifyCandidate(item = {}) {
       setCopyNotice("Select at least one facility report before previewing.");
       return false;
     }
-    if (blockReportAction("canCreateFinalPreview", sourceRows, "Final report preview")) return false;
+    if (blockReportAction("canViewDraftPreview", sourceRows, "Diagnostic report preview")) return false;
     const content = selectedAudienceEmailContent(sourceRows, reportsReviewAudience);
     setGeneratedReportPreview(content.body);
     setWeeklyReport(content.body);
@@ -14712,7 +14727,7 @@ function rowifyCandidate(item = {}) {
   }
 
   function copySelectedFacilityReports() {
-    const rows = selectedFacilityActionRows;
+    const rows = selectedEmailReportRows;
     if (!rows.length) {
       setCopyNotice("Select at least one facility report before copying.");
       return;
@@ -14730,7 +14745,7 @@ function rowifyCandidate(item = {}) {
   }
 
   function exportSelectedFacilityReports() {
-    const rows = selectedFacilityActionRows;
+    const rows = selectedDownloadableReportRows;
     if (!rows.length) {
       setCopyNotice("Select at least one facility report before downloading.");
       return;
@@ -14774,7 +14789,7 @@ function rowifyCandidate(item = {}) {
   }
 
   function exportFacilityWorkbooks() {
-    const rows = selectedFacilityActionRows;
+    const rows = selectedDownloadableReportRows;
     if (!rows.length) {
       setCopyNotice("Select at least one facility report before downloading.");
       return;
@@ -14831,30 +14846,31 @@ function rowifyCandidate(item = {}) {
   }
 
   function markSelectedFacilityReportsReviewed() {
-    if (!selectedFacilityActionRows.length) {
-      setCopyNotice("Select at least one facility report before marking it reviewed.");
+    const rows = selectedMarkReviewedReportRows;
+    if (!rows.length) {
+      setCopyNotice("No selected Ready reports are eligible to be marked reviewed.");
       return;
     }
-    if (blockReportAction("canMarkReady", selectedFacilityActionRows, "Mark Reviewed")) return;
-    markFacilityReports(selectedFacilityActionRows, "Reviewed");
-    saveReportsToHistory(selectedFacilityActionRows, "Reviewed");
+    if (blockReportAction("canMarkReady", rows, "Mark Reviewed")) return;
+    markFacilityReports(rows, "Reviewed");
+    saveReportsToHistory(rows, "Reviewed");
     setCopyNotice("Selected facility reports marked reviewed.");
   }
 
   function markSelectedFacilityReportsSent() {
-    const rows = selectedFacilityActionRows;
+    const rows = selectedMarkSentReportRows;
     if (!rows.length) {
-      setCopyNotice("No ready facility reports selected to mark sent.");
+      setCopyNotice("No selected Reviewed reports are eligible to be marked sent.");
       return;
     }
-    if (blockReportAction("canPrepareEmail", rows, "Mark Sent")) return;
+    if (blockReportAction("canMarkSent", rows, "Mark Sent")) return;
     markFacilityReports(rows, "Sent");
     saveReportsToHistory(rows, "Sent");
     setCopyNotice(`${rows.length} report${rows.length === 1 ? "" : "s"} marked sent and complete. Attach/send confirmation has been documented.`);
   }
 
   function sendReadyFacilityReports() {
-    const readyRows = selectedFacilityActionRows.filter((row) => !["Missing Contact", "Needs Review", "Blocked", "No Report Required"].includes(row.status));
+    const readyRows = selectedReadyReportRows;
     if (!readyRows.length) {
       setCopyNotice("No ready reports to send. Resolve missing contacts or review items first.");
       return;
@@ -19243,6 +19259,7 @@ function rowifyCandidate(item = {}) {
             selectedFacilityActionRows,
             selectedFacilityPolicyRows,
             selectedFacilityReports,
+            reportingActionState,
             selectedRecipientGroup,
             selectedReportEligibility,
             selectedReportType,
@@ -19331,6 +19348,7 @@ function rowifyCandidate(item = {}) {
             reportsHubTab,
             reportsReviewAudience,
             reportReviewContext,
+            reportingActionState,
             safeCopy,
             saveReportsToHistory,
             selectedAudienceEmailBody,

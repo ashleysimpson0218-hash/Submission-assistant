@@ -1,6 +1,7 @@
 import {
   LEGACY_REPORT_STATUS_DISPLAY,
   REPORTING_ISSUE_CODES,
+  deriveReportingActionState,
   explicitReportStatusForAction,
   groupReportingIssues,
   reportingActionEligibility,
@@ -43,6 +44,7 @@ test("a missing contact permits report inspection and workbook download but bloc
     canDownloadWorkbook: true,
     canPrepareEmail: false,
     canMarkReady: false,
+    canMarkSent: false,
   });
 });
 
@@ -116,4 +118,73 @@ test("legacy statuses remain descriptive rather than being reinterpreted", () =>
   expect(reportStatusCountsAsComplete("Exported")).toBe(false);
   expect(reportStatusCountsAsComplete("Manually Completed")).toBe(true);
   expect(reportStatusCountsAsComplete("Sent")).toBe(true);
+});
+
+const actionRows = [
+  { id: "ready", facilityId: "ready", readiness: "Ready", status: "Ready", activeReqs: [], candidates: [] },
+  { id: "blocked", facilityId: "blocked", readiness: "Blocked", status: "Blocked", activeReqs: [], candidates: [] },
+  { id: "needs-review", facilityId: "needs-review", readiness: "Needs Review", status: "Needs Review", activeReqs: [], candidates: [] },
+  { id: "not-started", facilityId: "not-started", readiness: "Not Started", status: "Not Started", activeReqs: [], candidates: [] },
+  { id: "no-report", facilityId: "no-report", readiness: "No Report Required", status: "No Report Required", reportRequired: false, activeReqs: [], candidates: [] },
+  { id: "reviewed", facilityId: "reviewed", readiness: "Ready", status: "Reviewed", activeReqs: [], candidates: [] },
+];
+
+test("canonical action state keeps selected, previewable, Ready, reviewable, and sendable reports distinct", () => {
+  const state = deriveReportingActionState({
+    rows: actionRows,
+    selectedReportIds: actionRows.map((row) => row.id),
+    issues: [{ code: REPORTING_ISSUE_CODES.AMBIGUOUS_FACILITY, facilityId: "blocked" }],
+  });
+
+  expect(state.selectedReportIds).toEqual(["ready", "blocked", "needs-review", "not-started", "no-report", "reviewed"]);
+  expect(state.selectedPreviewableReportIds).toEqual(["ready", "blocked", "needs-review", "not-started", "reviewed"]);
+  expect(state.totalReadyReportIds).toEqual(["ready"]);
+  expect(state.selectedReadyReportIds).toEqual(["ready"]);
+  expect(state.selectedDownloadableReportIds).toEqual(["ready", "needs-review", "not-started", "reviewed"]);
+  expect(state.selectedMarkReviewedReportIds).toEqual(["ready"]);
+  expect(state.selectedMarkSentReportIds).toEqual(["reviewed"]);
+  expect(state.blockerCount).toBe(1);
+});
+
+test.each(["Blocked", "Needs Review", "Not Started", "No Report Required"])("%s never counts as Ready", (status) => {
+  const row = {
+    id: status,
+    facilityId: status,
+    status,
+    readiness: status,
+    reportRequired: status !== "No Report Required",
+  };
+  const state = deriveReportingActionState({ rows: [row], selectedReportIds: [status] });
+  expect(state.totalReadyReportIds).toEqual([]);
+  expect(state.selectedMarkReviewedReportIds).toEqual([]);
+});
+
+test("hidden and mixed selections use the same transition eligibility", () => {
+  const state = deriveReportingActionState({
+    rows: actionRows,
+    selectedReportIds: ["ready", "blocked", "not-started"],
+    issues: [{ code: REPORTING_ISSUE_CODES.MISSING_REQUIRED_SHIFT, facilityId: "blocked" }],
+  });
+
+  expect(state.selectedCount).toBe(3);
+  expect(state.selectedPreviewableReportIds).toEqual(["ready", "blocked", "not-started"]);
+  expect(state.selectedReadyReportIds).toEqual(["ready"]);
+  expect(state.selectedMarkReviewedReportIds).toEqual(["ready"]);
+  expect(state.selectedMarkSentReportIds).toEqual([]);
+});
+
+test("missing contact keeps workbook inspection available but removes Ready and sent transitions", () => {
+  const state = deriveReportingActionState({
+    rows: [actionRows[0], actionRows[5]],
+    selectedReportIds: ["ready", "reviewed"],
+    issues: [
+      { code: REPORTING_ISSUE_CODES.MISSING_REQUIRED_CONTACT, facilityId: "ready" },
+      { code: REPORTING_ISSUE_CODES.MISSING_REQUIRED_CONTACT, facilityId: "reviewed" },
+    ],
+  });
+
+  expect(state.selectedDownloadableReportIds).toEqual(["ready", "reviewed"]);
+  expect(state.totalReadyReportIds).toEqual([]);
+  expect(state.selectedMarkReviewedReportIds).toEqual([]);
+  expect(state.selectedMarkSentReportIds).toEqual([]);
 });

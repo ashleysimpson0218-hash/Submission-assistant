@@ -6,6 +6,7 @@ const ACTION_KEYS = [
   "canDownloadWorkbook",
   "canPrepareEmail",
   "canMarkReady",
+  "canMarkSent",
 ];
 
 export const REPORTING_ISSUE_CODES = {
@@ -26,6 +27,7 @@ const FINAL_OUTPUT_BLOCK = {
   canDownloadWorkbook: false,
   canPrepareEmail: false,
   canMarkReady: false,
+  canMarkSent: false,
 };
 
 const ISSUE_RULES = {
@@ -39,6 +41,7 @@ const ISSUE_RULES = {
   [REPORTING_ISSUE_CODES.MISSING_REQUIRED_CONTACT]: {
     canPrepareEmail: false,
     canMarkReady: false,
+    canMarkSent: false,
   },
   [REPORTING_ISSUE_CODES.WARNING]: {},
 };
@@ -130,6 +133,102 @@ export function reportingActionEligibility(issues = [], scope = {}) {
     scopedIssues,
     blockingReasons: scopedIssues.filter((issue) => issue.blocking),
     reasonsByAction,
+  };
+}
+
+const READY_STATUSES = new Set(["Ready", "Ready to Send"]);
+const NON_ACTIONABLE_READINESS = new Set(["Blocked", "No Report Required", "Scheduled", "Sent"]);
+
+function reportRowId(row = {}) {
+  return asText(row.id || row.facilityId);
+}
+
+function reportingScopeForRow(row = {}) {
+  return {
+    facilityIds: [asText(row.facilityId || row.id)].filter(Boolean),
+    requisitionIds: (Array.isArray(row.activeReqs) ? row.activeReqs : [])
+      .map((requisition) => asText(requisition?.id || requisition?.requisitionId))
+      .filter(Boolean),
+    candidateIds: (Array.isArray(row.candidates) ? row.candidates : [])
+      .map((candidate) => asText(candidate?.id || candidate?.candidateId))
+      .filter(Boolean),
+  };
+}
+
+function rowTransitionState(row = {}, issues = []) {
+  const eligibility = reportingActionEligibility(issues, reportingScopeForRow(row));
+  const status = asText(row.status);
+  const readiness = asText(row.readiness);
+  const effectiveReadiness = readiness || status;
+  const policyEligible = row.reportRequired !== false && row.reportActionEligible !== false;
+  const blocked = effectiveReadiness === "Blocked" || status === "Blocked";
+  const actionSuppressed = NON_ACTIONABLE_READINESS.has(effectiveReadiness);
+  const ready = policyEligible
+    && READY_STATUSES.has(effectiveReadiness)
+    && !["Reviewed", "Sent"].includes(status)
+    && eligibility.canMarkReady
+    && eligibility.canPrepareEmail;
+  const markReviewed = ready;
+  const markSent = policyEligible
+    && status === "Reviewed"
+    && eligibility.canPrepareEmail
+    && eligibility.canMarkSent;
+
+  return {
+    eligibility,
+    previewable: policyEligible && eligibility.canViewDraftPreview,
+    downloadable: policyEligible && !blocked && !actionSuppressed && eligibility.canDownloadWorkbook,
+    emailAvailable: policyEligible && !blocked && !actionSuppressed && eligibility.canPrepareEmail,
+    ready,
+    markReviewed,
+    markSent,
+  };
+}
+
+export function deriveReportingActionState({
+  rows = [],
+  selectedReportIds = [],
+  issues = [],
+} = {}) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const selectedIds = Array.from(new Set(asArray(selectedReportIds)));
+  const selected = new Set(selectedIds);
+  const states = safeRows.map((row) => ({
+    id: reportRowId(row),
+    row,
+    ...rowTransitionState(row, issues),
+  })).filter((entry) => entry.id);
+  const selectedStates = states.filter((entry) => selected.has(entry.id));
+  const idsFor = (entries, predicate) => entries.filter(predicate).map((entry) => entry.id);
+
+  const totalReadyReportIds = idsFor(states, (entry) => entry.ready);
+  const totalMarkReviewedReportIds = idsFor(states, (entry) => entry.markReviewed);
+  const totalMarkSentReportIds = idsFor(states, (entry) => entry.markSent);
+  const selectedPreviewableReportIds = idsFor(selectedStates, (entry) => entry.previewable);
+  const selectedDownloadableReportIds = idsFor(selectedStates, (entry) => entry.downloadable);
+  const selectedEmailReportIds = idsFor(selectedStates, (entry) => entry.emailAvailable);
+  const selectedReadyReportIds = idsFor(selectedStates, (entry) => entry.ready);
+  const selectedMarkReviewedReportIds = idsFor(selectedStates, (entry) => entry.markReviewed);
+  const selectedMarkSentReportIds = idsFor(selectedStates, (entry) => entry.markSent);
+
+  return {
+    scopeFacilityIds: selectedStates.map((entry) => asText(entry.row.facilityId || entry.row.id)).filter(Boolean),
+    totalReadyReportIds,
+    totalMarkReviewedReportIds,
+    totalMarkSentReportIds,
+    selectedReportIds: selectedIds,
+    selectedPreviewableReportIds,
+    selectedDownloadableReportIds,
+    selectedEmailReportIds,
+    selectedReadyReportIds,
+    selectedMarkReviewedReportIds,
+    selectedMarkSentReportIds,
+    selectedCount: selectedIds.length,
+    blockerCount: selectedStates.filter((entry) => (
+      entry.row.readiness === "Blocked"
+      || entry.row.status === "Blocked"
+      || entry.eligibility.blockingReasons.length > 0
+    )).length,
   };
 }
 

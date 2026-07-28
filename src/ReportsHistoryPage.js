@@ -72,6 +72,7 @@ export function ReportsHistoryPage({
   reportsHubTab,
   reportsReviewAudience,
   reportReviewContext,
+  reportingActionState,
   safeCopy,
   saveReportsToHistory,
   selectedAudienceEmailBody,
@@ -185,12 +186,12 @@ export function ReportsHistoryPage({
               ) : null}
 
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <Button primary onClick={() => previewSelectedFacilityReports()} disabled={!selectedReportEligibility.canCreateFinalPreview}>Review Report</Button>
-                <Button subtle onClick={() => copyReportEmailContent(reviewBody, "Email body")} disabled={!selectedReportEligibility.canPrepareEmail}>Copy Email Body</Button>
-                <Button subtle onClick={exportWeeklyFullDataWorkbook} disabled={!selectedReportEligibility.canDownloadWorkbook}>Download Workbook</Button>
+                <Button primary onClick={() => previewSelectedFacilityReports()} disabled={!reportingActionState.selectedPreviewableReportIds.length}>Review Report</Button>
+                <Button subtle onClick={() => copyReportEmailContent(reviewBody, "Email body")} disabled={!reportingActionState.selectedEmailReportIds.length}>Copy Email Body</Button>
+                <Button subtle onClick={exportWeeklyFullDataWorkbook} disabled={!reportingActionState.selectedDownloadableReportIds.length}>Download Workbook</Button>
                 <Button subtle disabled={!selectedFacilityActionRows.length} onClick={() => saveReportsToHistory(selectedFacilityActionRows, "Draft Generated")}>Save Draft to History</Button>
-                <Button subtle disabled={!selectedFacilityActionRows.length || !selectedReportEligibility.canMarkReady} onClick={markSelectedFacilityReportsReviewed}>Mark Reviewed</Button>
-                <Button subtle disabled={!selectedFacilityActionRows.length || !selectedReportEligibility.canPrepareEmail || !selectedReportEligibility.canMarkReady} onClick={markSelectedFacilityReportsSent}>Mark Sent</Button>
+                <Button subtle disabled={!reportingActionState.selectedMarkReviewedReportIds.length} onClick={markSelectedFacilityReportsReviewed}>Mark Reviewed</Button>
+                <Button subtle disabled={!reportingActionState.selectedMarkSentReportIds.length} onClick={markSelectedFacilityReportsSent}>Mark Sent</Button>
               </div>
             </div>
           </Card>
@@ -207,7 +208,7 @@ export function ReportsHistoryPage({
                     <Badge tone={model.missingContact ? "High" : row.status === "Needs Review" ? "Medium" : "Low"}>{model.missingContact ? "Blocked, Missing Contact" : (LEGACY_REPORT_STATUS_DISPLAY[row.status] || row.status)}</Badge>
                     <span style={{ color: THEME.muted }}>{facilityWorkbookSheets(model).length} attachment tabs</span>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <Button subtle disabled={!rowEligibility.canCreateFinalPreview} onClick={() => { setWeeklySubject(content.subject); setWeeklyReport(content.body); }}>Review Report</Button>
+                      <Button subtle disabled={!rowEligibility.canViewDraftPreview} onClick={() => { setWeeklySubject(content.subject); setWeeklyReport(content.body); }}>Review Report</Button>
                       <Button subtle disabled={!rowEligibility.canDownloadWorkbook} onClick={() => downloadGeneratedFacilityReport(row)}>Download Workbook</Button>
                     </div>
                   </div>

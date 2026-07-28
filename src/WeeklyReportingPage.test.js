@@ -65,12 +65,32 @@ function EmptyState({ children }) {
 }
 
 const allowedEligibility = {
+  canViewDraftPreview: true,
   canCreateFinalPreview: true,
   canDownloadWorkbook: true,
   canMarkReady: true,
   canPrepareEmail: true,
   canGenerateReport: true,
 };
+
+const emptyActionState = {
+  totalReadyReportIds: [],
+  totalMarkReviewedReportIds: [],
+  totalMarkSentReportIds: [],
+  selectedReportIds: [],
+  selectedPreviewableReportIds: [],
+  selectedDownloadableReportIds: [],
+  selectedEmailReportIds: [],
+  selectedReadyReportIds: [],
+  selectedMarkReviewedReportIds: [],
+  selectedMarkSentReportIds: [],
+  selectedCount: 0,
+  blockerCount: 0,
+};
+
+function actionState(overrides = {}) {
+  return { ...emptyActionState, ...overrides };
+}
 
 const baseRow = {
   id: "facility-1",
@@ -108,11 +128,15 @@ function baseProps(overrides = {}) {
     allowManualCompletion: true,
     restartWeeklyReview: jest.fn(),
     clearFacilityReportSelection: jest.fn(),
+    copySelectedFacilityReports: jest.fn(),
+    copyWeeklyReport: jest.fn(),
     displayDate: (value) => value,
     eligibilityForReportRows: jest.fn(() => allowedEligibility),
     excludedReportIds: [],
     expandedReportIssueCode: "",
+    exportFacilityWorkbooks: jest.fn(),
     exportSelectedFacilityReports: jest.fn(),
+    facilityReportQueueFiltered: [],
     facilityReadinessFilters: {
       search: "",
       regionId: "All Regions",
@@ -140,7 +164,9 @@ function baseProps(overrides = {}) {
     facilityReadinessVisibleRows: [baseRow],
     includedReportRows: [],
     isNarrow: false,
+    labelFromKey: (value) => value,
     markSelectedFacilityReportsReviewed: jest.fn(),
+    markSelectedFacilityReportsSent: jest.fn(),
     noOpeningsPolicy: NO_OPENINGS_POLICIES.ASK_WEEKLY,
     noOpeningsPolicyDraft: "",
     noOpeningsPolicySelection: NO_OPENINGS_POLICIES.ASK_WEEKLY,
@@ -148,11 +174,19 @@ function baseProps(overrides = {}) {
     openReportReview: jest.fn(),
     openReportingIssueCorrection: jest.fn(),
     previewSelectedFacilityReports: jest.fn(),
+    recipientGroupOptions: ["Facility Contacts"],
     reportAutomation: {},
     reportCompletionSummary: { total: 1, done: 0 },
+    reportingActionState: emptyActionState,
     reportEndDate: "2026-07-24",
+    reportFacilityNames: [],
+    reportInclusions: {},
+    reportIssueGroups: [],
     reportStartDate: "2026-07-20",
+    reportStatusOptions: ["All"],
+    reportTypeOptions: ["Facility Weekly Report"],
     reportsTab: "facility-readiness",
+    saveReportsToHistory: jest.fn(),
     saveNoOpeningsPolicy: jest.fn(),
     selectAllMatchingFacilityReports: jest.fn(),
     selectAllVisibleFacilityReports: jest.fn(),
@@ -160,20 +194,30 @@ function baseProps(overrides = {}) {
     selectedFacilityActionRows: [],
     selectedFacilityPolicyRows: [],
     selectedFacilityReports: [],
+    selectedFacility: "All Facilities",
+    selectedRecipientGroup: "Facility Contacts",
     selectedReportEligibility: allowedEligibility,
+    selectedReportType: "Facility Weekly Report",
+    selectedStatusFilter: "All",
+    sendReadyFacilityReports: jest.fn(),
     setExpandedReportIssueCode: jest.fn(),
     setFacilityReadinessVisibleLimit: jest.fn(),
     setNoOpeningsPolicyDraft: jest.fn(),
     setReportEndDate: jest.fn(),
+    setReportInclusions: jest.fn(),
     setReportStartDate: jest.fn(),
     setReportsTab: jest.fn(),
     setSelectedFacility: jest.fn(),
     setSelectedFacilityReports: jest.fn(),
+    setSelectedRecipientGroup: jest.fn(),
+    setSelectedReportType: jest.fn(),
+    setSelectedStatusFilter: jest.fn(),
     setWeeklyNoOpeningDecision: jest.fn(),
     toggleFacilityReportSelection: jest.fn(),
     undoNoOpeningWeeklyDecision: jest.fn(),
     updateFacilityReadinessFilter: jest.fn(),
     weeklyReport: "",
+    weeklySubject: "",
     weeklyReportingBlockerCount: 0,
     weeklyReportingPrimaryAction: {
       label: "View Weekly Summary",
@@ -214,6 +258,13 @@ test("shows hidden selections and count-specific actions without making zero sel
     selectedFacilityReports: ["facility-1", "facility-hidden"],
     selectedFacilityPolicyRows: [baseRow, { ...baseRow, id: "facility-hidden" }],
     selectedFacilityActionRows: [baseRow],
+    reportingActionState: actionState({
+      selectedReportIds: ["facility-1", "facility-hidden"],
+      selectedPreviewableReportIds: ["facility-1"],
+      selectedDownloadableReportIds: ["facility-1"],
+      selectedEmailReportIds: ["facility-1"],
+      selectedCount: 2,
+    }),
   });
   render(<WeeklyReportingPage {...props} />);
 
@@ -269,12 +320,18 @@ test("keeps diagnostic issue detail available while final actions obey eligibili
     selectedFacilityActionRows: [baseRow],
     selectedFacilityPolicyRows: [baseRow],
     selectedFacilityReports: ["facility-1"],
+    reportingActionState: actionState({
+      selectedReportIds: ["facility-1"],
+      selectedPreviewableReportIds: ["facility-1"],
+      selectedCount: 1,
+      blockerCount: 1,
+    }),
   });
   render(<WeeklyReportingPage {...props} />);
 
   expect(screen.getByText("Synthetic Shared")).toBeInTheDocument();
   expect(screen.getByText("Choose a canonical facility.")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Preview 1 Selected Report" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Preview 1 Selected Report" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Download Combined Workbook" })).toBeDisabled();
 });
 
@@ -354,6 +411,11 @@ test("uses plural preview wording when two eligible reports are selected", () =>
     selectedFacilityPolicyRows: [baseRow, second],
     selectedFacilityActionRows: [baseRow, second],
     facilityReadinessSelection: { selectedCount: 2, hiddenSelectedCount: 0 },
+    reportingActionState: actionState({
+      selectedReportIds: [baseRow.id, second.id],
+      selectedPreviewableReportIds: [baseRow.id, second.id],
+      selectedCount: 2,
+    }),
   })} />);
 
   expect(screen.getByRole("button", { name: "Preview 2 Selected Reports" })).toBeInTheDocument();
@@ -369,6 +431,13 @@ test("rendering and navigation do not mutate source rows or create hidden status
     selectedFacilityActionRows: [row],
     selectedFacilityPolicyRows: [row],
     selectedFacilityReports: [row.id],
+    reportingActionState: actionState({
+      selectedReportIds: [row.id],
+      selectedPreviewableReportIds: [row.id],
+      selectedDownloadableReportIds: [row.id],
+      selectedEmailReportIds: [row.id],
+      selectedCount: 1,
+    }),
   });
   render(<WeeklyReportingPage {...props} />);
 
@@ -379,6 +448,52 @@ test("rendering and navigation do not mutate source rows or create hidden status
   expect(props.previewSelectedFacilityReports).toHaveBeenCalledTimes(1);
   expect(props.exportSelectedFacilityReports).toHaveBeenCalledTimes(1);
   expect(props.markSelectedFacilityReportsReviewed).not.toHaveBeenCalled();
+});
+
+test("header and Ready action use the same canonical Ready set", () => {
+  render(<WeeklyReportingPage {...baseProps({
+    reportsTab: "review-reports",
+    selectedFacilityReports: [baseRow.id],
+    selectedFacilityPolicyRows: [baseRow],
+    selectedFacilityActionRows: [baseRow],
+    reportingActionState: actionState({
+      selectedReportIds: [baseRow.id],
+      selectedPreviewableReportIds: [baseRow.id],
+      selectedDownloadableReportIds: [baseRow.id],
+      selectedCount: 1,
+    }),
+  })} />);
+
+  expect(screen.getByText("0 Ready")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Review 0 Ready Reports" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Preview 1 Selected Report" })).toBeEnabled();
+});
+
+test("mixed selections expose exact transition counts without making ineligible rows Ready", () => {
+  const ready = { ...baseRow, id: "facility-ready", facilityId: "facility-ready", readiness: "Ready", status: "Ready" };
+  const blocked = { ...baseRow, id: "facility-blocked", facilityId: "facility-blocked", readiness: "Blocked", status: "Blocked" };
+  render(<WeeklyReportingPage {...baseProps({
+    reportsTab: "review-reports",
+    selectedFacilityReports: [ready.id, blocked.id],
+    selectedFacilityPolicyRows: [ready, blocked],
+    selectedFacilityActionRows: [ready, blocked],
+    reportingActionState: actionState({
+      totalReadyReportIds: [ready.id],
+      totalMarkReviewedReportIds: [ready.id],
+      selectedReportIds: [ready.id, blocked.id],
+      selectedPreviewableReportIds: [ready.id, blocked.id],
+      selectedDownloadableReportIds: [ready.id],
+      selectedEmailReportIds: [ready.id],
+      selectedReadyReportIds: [ready.id],
+      selectedMarkReviewedReportIds: [ready.id],
+      selectedCount: 2,
+      blockerCount: 1,
+    }),
+  })} />);
+
+  expect(screen.getByText("1 Ready")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Review 1 Ready Reports" })).toBeEnabled();
+  expect(screen.getByText(/2 selected · 2 available for diagnostic preview · 1 ready · 1 eligible to mark reviewed · 0 eligible to mark sent/)).toBeInTheDocument();
 });
 
 test("renders the five-step workflow in order with the active step and exact scope", () => {

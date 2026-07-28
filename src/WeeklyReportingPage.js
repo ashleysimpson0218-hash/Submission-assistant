@@ -114,6 +114,7 @@ export function WeeklyReportingPage(props) {
     selectedFacilityActionRows,
     selectedFacilityPolicyRows,
     selectedFacilityReports,
+    reportingActionState,
     selectedRecipientGroup,
     selectedReportEligibility,
     selectedReportType,
@@ -166,7 +167,7 @@ export function WeeklyReportingPage(props) {
                     <div style={{ color: THEME.muted, fontSize: 12, marginTop: 4 }}>{displayDate(reportStartDate)} to {displayDate(reportEndDate)}</div>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
                       <Badge tone={weeklyReportingBlockerCount ? "High" : "Low"}>{weeklyReportingBlockerCount} Blocked</Badge>
-                      <Badge tone="Low">{facilityReadinessStatusCounts.Ready || 0} Ready</Badge>
+                      <Badge tone="Low">{reportingActionState.totalReadyReportIds.length} Ready</Badge>
                       <Badge tone="Interview">{facilityReadinessStatusCounts["No Report Required"] || 0} No Report Required</Badge>
                       <Badge tone="Low">{facilityReadinessStatusCounts.Sent || 0} Sent</Badge>
                     </div>
@@ -411,12 +412,12 @@ export function WeeklyReportingPage(props) {
                 <div style={{ display: "grid", gap: 12, gridTemplateColumns: isMedium ? "1fr" : "minmax(0, 1fr) 280px", alignItems: "start" }}>
                   <div style={{ display: "grid", gap: 10 }}>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <Button primary onClick={() => previewSelectedFacilityReports()} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canCreateFinalPreview}>{previewSelectedReportsLabel(selectedFacilityActionRows.length)}</Button>
-                      <Button subtle onClick={copySelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail}>Copy Email Body</Button>
-                      <Button subtle onClick={exportSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canDownloadWorkbook}>Download Combined Workbook</Button>
-                      <Button subtle onClick={markSelectedFacilityReportsReviewed} disabled={!allowManualCompletion || !selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canMarkReady}>Mark Reviewed</Button>
-                      <Button subtle onClick={markSelectedFacilityReportsSent} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail}>Mark Sent</Button>
-                      <Button primary onClick={sendReadyFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail || !selectedFacilityActionEligibility.canMarkReady}>Review {selectedFacilityActionRows.length} Ready Reports</Button>
+                      <Button primary onClick={() => previewSelectedFacilityReports()} disabled={!reportingActionState.selectedPreviewableReportIds.length}>{previewSelectedReportsLabel(reportingActionState.selectedPreviewableReportIds.length)}</Button>
+                      <Button subtle onClick={copySelectedFacilityReports} disabled={!reportingActionState.selectedEmailReportIds.length}>Copy Email Body</Button>
+                      <Button subtle onClick={exportSelectedFacilityReports} disabled={!reportingActionState.selectedDownloadableReportIds.length}>Download Combined Workbook</Button>
+                      <Button subtle onClick={markSelectedFacilityReportsReviewed} disabled={!allowManualCompletion || !reportingActionState.selectedMarkReviewedReportIds.length}>Mark Reviewed</Button>
+                      <Button subtle onClick={markSelectedFacilityReportsSent} disabled={!reportingActionState.selectedMarkSentReportIds.length}>Mark Sent</Button>
+                      <Button primary onClick={sendReadyFacilityReports} disabled={!reportingActionState.selectedReadyReportIds.length}>Review {reportingActionState.selectedReadyReportIds.length} Ready Reports</Button>
                     </div>
                     <div style={{ overflowX: "auto" }}>
                       <div style={{ minWidth: isNarrow ? 760 : 0, display: "grid", gap: 8 }}>
@@ -472,15 +473,16 @@ export function WeeklyReportingPage(props) {
                   <Field label="Status Filter"><SelectInput value={selectedStatusFilter} onChange={(event) => setSelectedStatusFilter(event.target.value)} options={reportStatusOptions} /></Field>
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <Button primary onClick={() => previewSelectedFacilityReports()} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canCreateFinalPreview}>{previewSelectedReportsLabel(selectedFacilityActionRows.length)}</Button>
+                  <Button primary onClick={() => previewSelectedFacilityReports()} disabled={!reportingActionState.selectedPreviewableReportIds.length}>{previewSelectedReportsLabel(reportingActionState.selectedPreviewableReportIds.length)}</Button>
                   <Button subtle onClick={() => saveReportsToHistory(selectedFacilityActionRows, "Draft Generated")} disabled={!selectedFacilityActionRows.length}>Save Draft to History</Button>
-                  <Button subtle onClick={copySelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail}>Copy Email Body</Button>
-                  <Button subtle onClick={exportSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canDownloadWorkbook}>Download Combined Workbook</Button>
-                  <Button subtle onClick={exportFacilityWorkbooks} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canDownloadWorkbook}>Download Separate Facility Workbooks</Button>
-                  <Button subtle onClick={markSelectedFacilityReportsReviewed} disabled={!allowManualCompletion || !selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canMarkReady}>Mark Reviewed</Button>
-                  <Button subtle onClick={markSelectedFacilityReportsSent} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail}>Mark Sent</Button>
-                  <Button primary onClick={sendReadyFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail || !selectedFacilityActionEligibility.canMarkReady}>Review {selectedFacilityActionRows.length} Ready Reports</Button>
+                  <Button subtle onClick={copySelectedFacilityReports} disabled={!reportingActionState.selectedEmailReportIds.length}>Copy Email Body</Button>
+                  <Button subtle onClick={exportSelectedFacilityReports} disabled={!reportingActionState.selectedDownloadableReportIds.length}>Download Combined Workbook</Button>
+                  <Button subtle onClick={exportFacilityWorkbooks} disabled={!reportingActionState.selectedDownloadableReportIds.length}>Download Separate Facility Workbooks</Button>
+                  <Button subtle onClick={markSelectedFacilityReportsReviewed} disabled={!allowManualCompletion || !reportingActionState.selectedMarkReviewedReportIds.length}>Mark Reviewed</Button>
+                  <Button subtle onClick={markSelectedFacilityReportsSent} disabled={!reportingActionState.selectedMarkSentReportIds.length}>Mark Sent</Button>
+                  <Button primary onClick={sendReadyFacilityReports} disabled={!reportingActionState.selectedReadyReportIds.length}>Review {reportingActionState.selectedReadyReportIds.length} Ready Reports</Button>
                 </div>
+                {selectedFacilityReports.length ? <div style={{ color: THEME.muted, fontSize: 12 }}>{reportingActionState.selectedCount} selected · {reportingActionState.selectedPreviewableReportIds.length} available for diagnostic preview · {reportingActionState.selectedReadyReportIds.length} ready · {reportingActionState.selectedMarkReviewedReportIds.length} eligible to mark reviewed · {reportingActionState.selectedMarkSentReportIds.length} eligible to mark sent</div> : null}
                 <Accordion title="Report Sections" subtitle="Choose what goes in the Excel attachment. Email stays concise." defaultOpen={false}>
                   <div style={{ display: "grid", gap: 8, gridTemplateColumns: isNarrow ? "1fr" : "repeat(3, minmax(0, 1fr))" }}>
                     {Object.entries(reportInclusions).map(([key, value]) => <ToggleField key={key} label={labelFromKey(key)} checked={Boolean(value)} onChange={(checked) => setReportInclusions((prev) => ({ ...prev, [key]: checked }))} />)}
@@ -620,10 +622,11 @@ export function WeeklyReportingPage(props) {
                     <strong>{facilityReadinessSelection.selectedCount} selected</strong>
                     {facilityReadinessSelection.hiddenSelectedCount ? <span style={{ color: THEME.muted }}>{facilityReadinessSelection.hiddenSelectedCount} hidden by current filters</span> : null}
                     {selectedFacilityPolicyRows.length !== selectedFacilityActionRows.length ? <span style={{ color: THEME.muted }}>{selectedFacilityPolicyRows.length - selectedFacilityActionRows.length} ineligible under the current policy</span> : null}
-                    <Button primary onClick={() => previewSelectedFacilityReports()} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canCreateFinalPreview}>{previewSelectedReportsLabel(selectedFacilityActionRows.length)}</Button>
-                    <Button subtle onClick={exportSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canDownloadWorkbook}>Download Combined Workbook</Button>
-                    <Button subtle onClick={markSelectedFacilityReportsReviewed} disabled={!allowManualCompletion || !selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canMarkReady}>Mark Reviewed</Button>
-                    <Button subtle onClick={markSelectedFacilityReportsSent} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail}>Mark Sent</Button>
+                    <span style={{ color: THEME.muted }}>{reportingActionState.selectedPreviewableReportIds.length} previewable · {reportingActionState.selectedReadyReportIds.length} ready</span>
+                    <Button primary onClick={() => previewSelectedFacilityReports()} disabled={!reportingActionState.selectedPreviewableReportIds.length}>{previewSelectedReportsLabel(reportingActionState.selectedPreviewableReportIds.length)}</Button>
+                    <Button subtle onClick={exportSelectedFacilityReports} disabled={!reportingActionState.selectedDownloadableReportIds.length}>Download Combined Workbook</Button>
+                    <Button subtle onClick={markSelectedFacilityReportsReviewed} disabled={!allowManualCompletion || !reportingActionState.selectedMarkReviewedReportIds.length}>Mark Reviewed</Button>
+                    <Button subtle onClick={markSelectedFacilityReportsSent} disabled={!reportingActionState.selectedMarkSentReportIds.length}>Mark Sent</Button>
                     <Button subtle onClick={clearFacilityReportSelection}>Clear Selection</Button>
                   </div>
                 ) : null}
