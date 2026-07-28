@@ -307,6 +307,32 @@ test("preserves session-only no-opening decisions and status labels", () => {
   expect(props.undoNoOpeningWeeklyDecision).toHaveBeenCalledWith("facility-1");
 });
 
+test("keeps weekly no-opening decisions visible when another blocker still wins", () => {
+  const blockedNoOpeningRow = {
+    ...baseRow,
+    readiness: "Blocked",
+    noOpeningOutcome: { applies: true },
+    noOpeningOutcomeLabel: "Weekly Decision Needed",
+    readinessIssues: [{
+      code: "missing-contact",
+      message: "Missing facility contact",
+      resolutionAction: "Add Contact",
+      facilityId: "facility-1",
+    }],
+  };
+  const props = baseProps({
+    facilityReadinessRows: [blockedNoOpeningRow],
+    facilityReadinessVisibleRows: [blockedNoOpeningRow],
+    facilityReadinessMatchingRows: [blockedNoOpeningRow],
+  });
+  render(<WeeklyReportingPage {...props} />);
+
+  expect(screen.getByText("Weekly Decision Needed")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Create Standard Report This Week" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "No Report Needed This Week" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Add Contact" })).toBeInTheDocument();
+});
+
 test("Review Report delegates the exact stable report row for deterministic deep linking", () => {
   const props = baseProps({
     facilityReadinessRows: [baseRow],

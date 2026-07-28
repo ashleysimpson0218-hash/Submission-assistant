@@ -640,7 +640,7 @@ export function WeeklyReportingPage(props) {
                         <Badge tone={row.readiness === "Blocked" ? "High" : row.readiness === "Needs Review" ? "Medium" : ["Ready", "Sent"].includes(row.readiness) ? "Low" : "Interview"}>{row.readiness}</Badge>
                         <span style={{ color: THEME.muted }}>{row.lastAction}</span>
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                          {row.noOpeningOutcome?.applies && row.readiness !== "Blocked" && noOpeningsPolicy === NO_OPENINGS_POLICIES.ASK_WEEKLY && !noOpeningWeeklyDecisions[row.facilityId] ? <>
+                          {row.noOpeningOutcome?.applies && noOpeningsPolicy === NO_OPENINGS_POLICIES.ASK_WEEKLY && !noOpeningWeeklyDecisions[row.facilityId] ? <>
                             <Button subtle onClick={() => setWeeklyNoOpeningDecision(row.facilityId, NO_OPENINGS_WEEKLY_DECISIONS.CREATE_STANDARD_REPORT)} style={{ padding: "6px 8px", fontSize: 11 }}>Create Standard Report This Week</Button>
                             <Button subtle onClick={() => setWeeklyNoOpeningDecision(row.facilityId, NO_OPENINGS_WEEKLY_DECISIONS.NO_REPORT_NEEDED)} style={{ padding: "6px 8px", fontSize: 11 }}>No Report Needed This Week</Button>
                           </> : null}
