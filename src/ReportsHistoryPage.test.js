@@ -55,6 +55,51 @@ const reportRow = {
   status: "Ready",
 };
 
+function audienceListRow(audience = "Facility", overrides = {}) {
+  const definitions = {
+    Facility: {
+      key: "facility:facility-1",
+      title: "Synthetic Central Facility",
+      reportType: "Facility Weekly Report",
+      recipientGroup: "Facility Contacts",
+      attachmentName: "welcomeflow-synthetic-central-2026-07-20.xls",
+      workbookTabs: ["Facility Summary"],
+    },
+    Regional: {
+      key: "region:region-central",
+      title: "Central",
+      reportType: "Regional Manager Summary",
+      recipientGroup: "Regional Manager",
+      attachmentName: "welcomeflow-regional-summary-2026-07-20.xls",
+      workbookTabs: ["Report Scope Summary", "Synthetic Central Facility"],
+    },
+    Executive: {
+      key: "executive:all-selected",
+      title: "C-Suite Leadership Report",
+      reportType: "C-Suite Leadership Report",
+      recipientGroup: "C-Suite",
+      attachmentName: "welcomeflow-executive-summary-2026-07-20.xls",
+      workbookTabs: ["All Facilities Summary", "Synthetic Central Facility"],
+    },
+  };
+  const definition = definitions[audience];
+  return {
+    ...definition,
+    audience,
+    reportId: `wf-report-v1|${audience}|${encodeURIComponent(definition.reportType)}|facility-1`,
+    reportIds: ["facility-1"],
+    includedFacilityIds: ["facility-1"],
+    facilityNames: ["Synthetic Central Facility"],
+    facilities: [{ facilityId: "facility-1", facilityName: "Synthetic Central Facility" }],
+    regionIds: ["region-central"],
+    regionNames: ["Central"],
+    status: "Ready",
+    subject: `${audience} subject`,
+    sourceRows: [reportRow],
+    ...overrides,
+  };
+}
+
 const historyRecord = {
   id: "history-1",
   reportWeek: "2026-07-20 to 2026-07-24",
@@ -105,6 +150,7 @@ function baseProps(overrides = {}) {
     copyReportEmailContent: jest.fn(),
     displayDate: jest.fn((value) => value),
     downloadGeneratedFacilityReport: jest.fn(),
+    downloadAudienceReportListEntry: jest.fn(),
     downloadHistoricalFacilityReport: jest.fn(),
     downloadReportReviewWorkbook: jest.fn(),
     eligibilityForReportRows: jest.fn(() => allowedEligibility),
@@ -132,6 +178,7 @@ function baseProps(overrides = {}) {
     reportHistoryFilters: { facility: "All", reportType: "All", status: "All", audience: "All", start: "", end: "" },
     reportHistoryStatusView: "All",
     reportInclusions: { candidates: true, requisitions: false },
+    reportReviewListRows: [audienceListRow()],
     reportStartDate: "2026-07-20",
     reportTypeOptions: ["Facility Weekly Report"],
     reportsHubTab: "ready-review",
@@ -218,6 +265,7 @@ test.each([
       workbookSheets: [{ name: `${audience} Summary` }],
       generatedAt: "2026-07-24T12:00:00.000Z",
     },
+    reportReviewListRows: [audienceListRow(audience)],
   })} />);
 
   expect(screen.getByLabelText("Report audience metadata")).toHaveTextContent(audience);
@@ -244,7 +292,7 @@ test("audience controls and Review Report preserve one synchronized stable repor
   expect(props.previewSelectedFacilityReports).not.toHaveBeenCalled();
 });
 
-test("report-row Review Report delegates the exact stable row and audience context", () => {
+test("report-row Review Report delegates the exact stable scope and audience context", () => {
   const props = baseProps({
     reportsReviewAudience: "Regional",
     reportReviewContext: {
@@ -254,12 +302,13 @@ test("report-row Review Report delegates the exact stable row and audience conte
       body: "Regional body",
       workbookSheets: [],
     },
+    reportReviewListRows: [audienceListRow("Regional")],
   });
   render(<ReportsHistoryPage {...props} />);
 
   fireEvent.click(screen.getAllByRole("button", { name: "Review Report" })[1]);
 
-  expect(props.openReportReview).toHaveBeenCalledWith(reportRow, {
+  expect(props.openReportReview).toHaveBeenCalledWith([reportRow], {
     audience: "Regional",
     reportType: "Regional Manager Summary",
     recipientGroup: "Regional Manager",
@@ -267,6 +316,50 @@ test("report-row Review Report delegates the exact stable row and audience conte
   expect(props.saveReportsToHistory).not.toHaveBeenCalled();
   expect(props.markSelectedFacilityReportsReviewed).not.toHaveBeenCalled();
   expect(props.markSelectedFacilityReportsSent).not.toHaveBeenCalled();
+});
+
+test("Regional and Executive report lists replace facility rows with their canonical audience scope", () => {
+  const { rerender } = render(<ReportsHistoryPage {...baseProps()} />);
+  expect(screen.getByTestId("audience-report-row-facility:facility-1")).toHaveTextContent("Synthetic Central Facility");
+
+  rerender(<ReportsHistoryPage {...baseProps({
+    reportsReviewAudience: "Regional",
+    reportReviewListRows: [audienceListRow("Regional")],
+  })} />);
+  const regional = screen.getByTestId("audience-report-row-region:region-central");
+  expect(regional).toHaveTextContent("Central");
+  expect(regional).toHaveTextContent("Regional subject");
+  expect(regional).toHaveTextContent("Regional Manager");
+  expect(regional).toHaveTextContent("welcomeflow-regional-summary");
+  expect(screen.queryByTestId("audience-report-row-facility:facility-1")).not.toBeInTheDocument();
+
+  rerender(<ReportsHistoryPage {...baseProps({
+    reportsReviewAudience: "Executive",
+    reportReviewListRows: [audienceListRow("Executive")],
+  })} />);
+  const executive = screen.getByTestId("audience-report-row-executive:all-selected");
+  expect(executive).toHaveTextContent("C-Suite Leadership Report");
+  expect(executive).toHaveTextContent("Executive subject");
+  expect(executive).toHaveTextContent("C-Suite");
+  expect(executive).toHaveTextContent("welcomeflow-executive-summary");
+  expect(screen.queryByTestId("audience-report-row-region:region-central")).not.toBeInTheDocument();
+});
+
+test("repeated audience switching restores Facility rows without stale Regional or Executive metadata", () => {
+  const { rerender } = render(<ReportsHistoryPage {...baseProps()} />);
+  ["Regional", "Executive", "Regional", "Facility"].forEach((audience) => {
+    rerender(<ReportsHistoryPage {...baseProps({
+      reportsReviewAudience: audience,
+      reportReviewListRows: [audienceListRow(audience)],
+    })} />);
+  });
+
+  const facility = screen.getByTestId("audience-report-row-facility:facility-1");
+  expect(facility).toHaveTextContent("Facility subject");
+  expect(facility).toHaveTextContent("Facility Contacts");
+  expect(facility).toHaveTextContent("welcomeflow-synthetic-central");
+  expect(facility).not.toHaveTextContent("Regional Manager");
+  expect(facility).not.toHaveTextContent("C-Suite");
 });
 
 test("renders email and attachment details together", () => {

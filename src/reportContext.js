@@ -145,6 +145,78 @@ export function buildCanonicalReportScope({
   };
 }
 
+function reportGroupStatus(rows = []) {
+  const statuses = rows.map((row) => text(row?.readiness || row?.status)).filter(Boolean);
+  if (statuses.some((status) => ["Blocked", "Missing Contact"].includes(status))) return "Blocked";
+  if (statuses.some((status) => status === "Needs Review")) return "Needs Review";
+  const distinctStatuses = unique(statuses);
+  if (distinctStatuses.length === 1) {
+    return distinctStatuses[0] === "Ready to Send" ? "Ready" : distinctStatuses[0];
+  }
+  if (statuses.length && statuses.every((status) => status === "No Report Required")) return "No Report Required";
+  if (statuses.length && statuses.every((status) => ["Ready", "Ready to Send", "Reviewed"].includes(status))) return "Ready";
+  return "Not Started";
+}
+
+export function buildAudienceReportGroups({
+  audience,
+  rows,
+} = {}) {
+  const definition = reportAudienceDefinition(audience);
+  const selectedRows = normalizeReportRows(rows, "Audience report-list rows");
+  let groups;
+
+  if (definition.audience === "Facility") {
+    groups = selectedRows.map((row) => ({
+      key: `facility:${text(row?.facilityId || row?.id)}`,
+      title: text(row?.facility) || text(row?.facilityName) || "Facility report",
+      rows: [row],
+    }));
+  } else if (definition.audience === "Regional") {
+    const byRegion = new Map();
+    selectedRows.forEach((row) => {
+      const regionId = text(row?.regionId);
+      const regionName = text(row?.regionName);
+      const key = regionId || regionName || `unassigned:${text(row?.facilityId || row?.id)}`;
+      if (!byRegion.has(key)) {
+        byRegion.set(key, {
+          key: `region:${key}`,
+          title: regionName || regionId || "Unassigned region",
+          rows: [],
+        });
+      }
+      byRegion.get(key).rows.push(row);
+    });
+    groups = Array.from(byRegion.values());
+  } else {
+    groups = [{
+      key: "executive:all-selected",
+      title: definition.reportType,
+      rows: selectedRows,
+    }];
+  }
+
+  return groups.map((group) => ({
+    ...group,
+    audience: definition.audience,
+    reportType: definition.reportType,
+    recipientGroup: definition.recipientGroup,
+    reportIds: unique(group.rows.map((row) => row?.id || row?.facilityId)),
+    includedFacilityIds: unique(group.rows.map((row) => row?.facilityId || row?.id)),
+    facilityNames: unique(group.rows.map((row) => row?.facility || row?.facilityName)),
+    facilities: Array.from(new Map(group.rows.map((row) => {
+      const facilityId = text(row?.facilityId || row?.id);
+      return [facilityId, {
+        facilityId,
+        facilityName: text(row?.facility || row?.facilityName) || facilityId || "Unmapped facility",
+      }];
+    }).filter(([facilityId]) => facilityId)).values()),
+    regionIds: unique(group.rows.map((row) => row?.regionId)),
+    regionNames: unique(group.rows.map((row) => row?.regionName)),
+    status: reportGroupStatus(group.rows),
+  }));
+}
+
 function safeFilePart(value, fallback) {
   const normalized = text(value)
     .toLowerCase()

@@ -72,6 +72,7 @@ import { WeeklyReportingPage } from "./WeeklyReportingPage";
 import { ReportsHistoryPage } from "./ReportsHistoryPage";
 import { normalizeReportsHistoryDestination } from "./reportsHistoryNavigation";
 import {
+  buildAudienceReportGroups,
   buildReportingNavigation,
   buildReportReviewNavigation,
   buildCanonicalReportScope,
@@ -14706,6 +14707,35 @@ function rowifyCandidate(item = {}) {
     workbookSheets: reportReviewWorkbookSheets,
     generatedAt: (reportHistory || [])[0]?.generatedDate || "",
   });
+  const reportReviewListRows = buildAudienceReportGroups({
+    audience: reportReviewScope.audience,
+    rows: selectedFacilityActionRows,
+  }).map((group) => {
+    const scope = buildCanonicalReportScope({
+      audience: group.audience,
+      rows: group.rows,
+      reportType: group.reportType,
+      recipientGroup: group.recipientGroup,
+    });
+    const content = selectedAudienceEmailContent(group.rows, group.audience);
+    const workbookSheets = group.audience === "Facility" && group.rows.length === 1
+      ? facilityWorkbookSheets(facilityReportModel(group.rows[0].facilityId || group.rows[0].id || group.rows[0].facility))
+      : buildFacilityScopeWorkbookSheets(scope.includedFacilityIds);
+    return {
+      ...group,
+      ...buildCanonicalReportContext({
+        audience: group.audience,
+        rows: group.rows,
+        scope,
+        reportStartDate,
+        reportEndDate,
+        content,
+        workbookSheets,
+        generatedAt: (reportHistory || [])[0]?.generatedDate || "",
+      }),
+      sourceRows: group.rows,
+    };
+  });
   useEffect(() => {
     if (
       !reportReviewTargetId
@@ -14884,6 +14914,17 @@ function rowifyCandidate(item = {}) {
     if (blockReportAction("canDownloadWorkbook", rows, "Report review workbook download")) return;
     downloadExcelWorkbook(reportReviewContext.attachmentName, reportReviewContext.workbookSheets);
     setCopyNotice(`${reportReviewContext.audience} workbook downloaded for ${reportReviewContext.includedFacilityIds.length} facilit${reportReviewContext.includedFacilityIds.length === 1 ? "y" : "ies"}. Report status was not changed.`);
+  }
+
+  function downloadAudienceReportListEntry(entry) {
+    const rows = Array.isArray(entry?.sourceRows) ? entry.sourceRows : [];
+    if (!rows.length || !Array.isArray(entry?.workbookSheets) || !entry.workbookSheets.length) {
+      setCopyNotice("No report-list workbook is available for this audience scope.");
+      return;
+    }
+    if (blockReportAction("canDownloadWorkbook", rows, `${entry.audience || "Report"} workbook download`)) return;
+    downloadExcelWorkbook(entry.attachmentName, entry.workbookSheets);
+    setCopyNotice(`${entry.audience} workbook downloaded for the canonical report-list scope. Report status was not changed.`);
   }
 
   function downloadGeneratedFacilityReport(row) {
@@ -19469,6 +19510,7 @@ function rowifyCandidate(item = {}) {
             copyReportEmailContent,
             displayDate,
             downloadGeneratedFacilityReport,
+            downloadAudienceReportListEntry,
             downloadHistoricalFacilityReport,
             downloadReportReviewWorkbook,
             eligibilityForReportRows,
@@ -19501,6 +19543,7 @@ function rowifyCandidate(item = {}) {
             reportsHubTab,
             reportsReviewAudience,
             reportReviewContext,
+            reportReviewListRows,
             reportingActionState,
             safeCopy,
             saveReportsToHistory,

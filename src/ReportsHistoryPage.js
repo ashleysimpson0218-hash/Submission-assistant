@@ -64,7 +64,7 @@ export function ReportsHistoryPage({
   cSuiteEmailBody,
   copyReportEmailContent,
   displayDate,
-  downloadGeneratedFacilityReport,
+  downloadAudienceReportListEntry,
   downloadHistoricalFacilityReport,
   downloadReportReviewWorkbook,
   eligibilityForReportRows,
@@ -72,9 +72,6 @@ export function ReportsHistoryPage({
   exportFacilityWorkbooks,
   exportHistoryExcel,
   exportWeeklyFullDataWorkbook,
-  facilityEmailContent,
-  facilityReportModel,
-  facilityWorkbookSheets,
   history,
   isNarrow,
   labelFromKey,
@@ -96,6 +93,7 @@ export function ReportsHistoryPage({
   reportsHubTab,
   reportsReviewAudience,
   reportReviewContext,
+  reportReviewListRows,
   reportingActionState,
   safeCopy,
   saveReportsToHistory,
@@ -232,18 +230,30 @@ export function ReportsHistoryPage({
 
           <Card title={`${activeAudience} Reports`} subtitle="Selected report scopes remain governed by the existing eligibility rules." compact>
             <div style={{ display: "grid", gap: 10 }}>
-              {selectedFacilityActionRows.length ? selectedFacilityActionRows.map((row) => {
-                const model = facilityReportModel(row.facilityId || row.id || row.facility);
-                const content = facilityEmailContent(model, row.reportType || selectedReportType);
-                const rowEligibility = eligibilityForReportRows([row]);
+              {reportReviewListRows?.length ? reportReviewListRows.map((row) => {
+                const sourceRows = Array.isArray(row.sourceRows) ? row.sourceRows : [];
+                const rowEligibility = eligibilityForReportRows(sourceRows);
+                const facilityScope = (row.facilities || []).map((facility) => (
+                  `${facility.facilityName} (${facility.facilityId})`
+                )).join(", ");
+                const regionScope = (row.regionNames || row.regionIds || []).join(", ");
                 return (
-                  <div key={row.id} style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "1.3fr 1fr 1fr auto", gap: 10, alignItems: "center", border: `1px solid ${model.missingContact ? THEME.red : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panel }}>
-                    <div><strong>{model.facility}</strong><div style={{ color: THEME.muted, fontSize: 12 }}>{content.subject}</div></div>
-                    <Badge tone={model.missingContact ? "High" : row.status === "Needs Review" ? "Medium" : "Low"}>{model.missingContact ? "Blocked, Missing Contact" : (LEGACY_REPORT_STATUS_DISPLAY[row.status] || row.status)}</Badge>
-                    <span style={{ color: THEME.muted }}>{facilityWorkbookSheets(model).length} attachment tabs</span>
+                  <div key={row.reportId || row.key} data-testid={`audience-report-row-${row.key}`} style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "1.3fr 1fr 1fr auto", gap: 10, alignItems: "center", border: `1px solid ${row.status === "Blocked" ? THEME.red : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panel }}>
+                    <div>
+                      <strong>{row.title}</strong>
+                      <div style={{ color: THEME.muted, fontSize: 12 }}>{row.subject}</div>
+                      <div aria-label={`${row.audience} report-list scope`} style={{ color: THEME.muted, fontSize: 11, marginTop: 4 }}>
+                        Facilities: {facilityScope || "None"}{regionScope ? ` | Regions: ${regionScope}` : ""} | Report IDs: {(row.reportIds || []).join(", ") || "None"}
+                      </div>
+                      <div aria-label={`${row.audience} report-list metadata`} style={{ color: THEME.muted, fontSize: 11, marginTop: 3 }}>
+                        Recipient: {row.recipientGroup} | Attachment: {row.attachmentName}
+                      </div>
+                    </div>
+                    <Badge tone={row.status === "Blocked" ? "High" : row.status === "Needs Review" ? "Medium" : "Low"}>{LEGACY_REPORT_STATUS_DISPLAY[row.status] || row.status}</Badge>
+                    <span style={{ color: THEME.muted }}>{row.workbookTabs?.length || 0} attachment tabs</span>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <Button subtle disabled={!rowEligibility.canViewDraftPreview} onClick={() => openReportReview?.(row, { audience: activeAudience, reportType: reportReviewContext?.reportType || row.reportType || selectedReportType, recipientGroup: reportReviewContext?.recipientGroup || selectedRecipientGroup })}>Review Report</Button>
-                      <Button subtle disabled={!rowEligibility.canDownloadWorkbook} onClick={() => downloadGeneratedFacilityReport(row)}>Download Workbook</Button>
+                      <Button subtle disabled={!rowEligibility.canViewDraftPreview} onClick={() => openReportReview?.(sourceRows, { audience: row.audience, reportType: row.reportType, recipientGroup: row.recipientGroup })}>Review Report</Button>
+                      <Button subtle disabled={!rowEligibility.canDownloadWorkbook} onClick={() => downloadAudienceReportListEntry?.(row)}>Download Workbook</Button>
                     </div>
                   </div>
                 );

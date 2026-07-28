@@ -4,6 +4,7 @@ import {
   buildReportingNavigation,
   buildCanonicalReportContext,
   buildCanonicalReportScope,
+  buildAudienceReportGroups,
   createReportReviewTargetId,
   normalizeReportRows,
   parseReportReviewTargetId,
@@ -163,6 +164,40 @@ test("repeated audience switching replaces recipient, attachment, and facility s
         "facility-3": "Synthetic East",
       })[facilityId]),
     );
+  });
+});
+
+test("audience report groups replace facility details with canonical regional and executive scopes", () => {
+  const scopedRows = [
+    { ...rows[0], regionId: "region-1", regionName: "North", readiness: "Ready" },
+    { ...rows[1], regionId: "region-1", regionName: "North", readiness: "Ready" },
+    { id: "facility-3", facilityId: "facility-3", facility: "Synthetic East", regionId: "region-2", regionName: "East", readiness: "Needs Review" },
+  ];
+
+  const facilityGroups = buildAudienceReportGroups({ audience: "Facility", rows: [scopedRows[0]] });
+  const regionalGroups = buildAudienceReportGroups({ audience: "Regional", rows: scopedRows });
+  const executiveGroups = buildAudienceReportGroups({ audience: "Executive", rows: scopedRows });
+
+  expect(facilityGroups).toHaveLength(1);
+  expect(facilityGroups[0]).toMatchObject({
+    title: "Synthetic North",
+    includedFacilityIds: ["facility-1"],
+    reportIds: ["facility-1"],
+  });
+  expect(regionalGroups.map((group) => ({
+    title: group.title,
+    facilityIds: group.includedFacilityIds,
+    status: group.status,
+  }))).toEqual([
+    { title: "North", facilityIds: ["facility-1", "facility-2"], status: "Ready" },
+    { title: "East", facilityIds: ["facility-3"], status: "Needs Review" },
+  ]);
+  expect(executiveGroups).toHaveLength(1);
+  expect(executiveGroups[0]).toMatchObject({
+    audience: "Executive",
+    includedFacilityIds: ["facility-1", "facility-2", "facility-3"],
+    reportIds: ["facility-1", "facility-2", "facility-3"],
+    status: "Needs Review",
   });
 });
 
