@@ -9,6 +9,7 @@ import {
   reportActionEligibleRows,
   settingsWithNoOpeningsPolicy,
   undoWeeklyNoOpeningDecision,
+  unresolvedOpeningRiskFacilityIds,
   updateWeeklyNoOpeningDecision,
 } from "./noOpeningFacilityPolicy";
 
@@ -109,14 +110,30 @@ test.each(["AMBIGUOUS_FACILITY", "UNMAPPED_FACILITY", "MISSING_FACILITY_ID", "MI
   },
 );
 
-test("an unresolved possible opening blocks no-opening automation globally", () => {
+test("an unresolved possible opening blocks only the canonical facility choices it can affect", () => {
+  const affectedIds = unresolvedOpeningRiskFacilityIds([
+    { issue: "Ambiguous Facility", facilityIds: ["facility-1", "facility-2"] },
+    { issue: "Unmapped Facility" },
+  ]);
+
+  expect(affectedIds).toEqual(["facility-1", "facility-2"]);
   expect(deriveNoOpeningFacilityOutcome({
     row: noOpeningRow,
     policy: NO_OPENINGS_POLICIES.AUTO_STANDARD_REPORT,
     eligibility: eligible,
     hasTemplate: true,
-    unresolvedOpeningRisk: true,
+    unresolvedOpeningRisk: affectedIds.includes(noOpeningRow.facilityId),
   }).readiness).toBe("Blocked");
+  expect(deriveNoOpeningFacilityOutcome({
+    row: { ...noOpeningRow, facilityId: "facility-3" },
+    policy: NO_OPENINGS_POLICIES.ASK_WEEKLY,
+    eligibility: eligible,
+    hasTemplate: true,
+    unresolvedOpeningRisk: affectedIds.includes("facility-3"),
+  })).toMatchObject({
+    readiness: "Needs Review",
+    outcomeLabel: "Weekly Decision Needed",
+  });
 });
 
 test("no-report-required is explicit and excluded from required report actions and counts", () => {
@@ -171,6 +188,49 @@ test("ask-weekly decisions are session-only values with create, no-report, and u
     eligibility: eligible,
     hasTemplate: true,
   })).toMatchObject({ readiness: "Needs Review", outcomeLabel: "Weekly Decision Needed" });
+});
+
+test("ask-weekly Needs Review counts and canonical readiness recalculate after a session decision", () => {
+  const pendingOutcome = deriveNoOpeningFacilityOutcome({
+    row: noOpeningRow,
+    policy: NO_OPENINGS_POLICIES.ASK_WEEKLY,
+    eligibility: eligible,
+    hasTemplate: true,
+  });
+  const pendingRow = {
+    ...applyNoOpeningOutcome(noOpeningRow, pendingOutcome),
+    readiness: pendingOutcome.readiness,
+  };
+  const decidedOutcome = deriveNoOpeningFacilityOutcome({
+    row: noOpeningRow,
+    policy: NO_OPENINGS_POLICIES.ASK_WEEKLY,
+    weeklyDecision: NO_OPENINGS_WEEKLY_DECISIONS.CREATE_STANDARD_REPORT,
+    eligibility: eligible,
+    hasTemplate: true,
+  });
+  const decidedRow = {
+    ...applyNoOpeningOutcome(noOpeningRow, decidedOutcome),
+    readiness: decidedOutcome.readiness,
+  };
+
+  expect(pendingRow).toMatchObject({
+    status: "Needs Review",
+    readiness: "Needs Review",
+    noOpeningOutcomeLabel: "Weekly Decision Needed",
+  });
+  expect(noOpeningReportingSummary([pendingRow])).toMatchObject({
+    review: 1,
+    blocked: 0,
+    ready: 0,
+    remaining: 1,
+  });
+  expect(decidedRow).toMatchObject({ status: "Ready", readiness: "Ready" });
+  expect(noOpeningReportingSummary([decidedRow])).toMatchObject({
+    review: 0,
+    blocked: 0,
+    ready: 1,
+    remaining: 0,
+  });
 });
 
 test("weekly decisions are plain session state and do not create report history", () => {

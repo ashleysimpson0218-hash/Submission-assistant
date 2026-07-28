@@ -66,6 +66,23 @@ test("defaults Facility Readiness to Needs Action and includes only Blocked and 
   expect(filterFacilityReadinessRows(rows).map((row) => row.readiness)).toEqual(["Blocked", "Needs Review"]);
 });
 
+test("Ask Weekly is Needs Review unless a genuine scoped source blocker exists", () => {
+  const askWeeklyRow = {
+    id: "facility-ask-weekly",
+    facilityId: "facility-ask-weekly",
+    facility: "Synthetic Ask Weekly Facility",
+    status: "Needs Review",
+    policyReadiness: "Needs Review",
+  };
+
+  expect(withFacilityReadiness(askWeeklyRow, []).readiness).toBe("Needs Review");
+  expect(withFacilityReadiness(askWeeklyRow, [{
+    code: "MISSING_REQUIRED_CONTACT",
+    blocking: true,
+    facilityId: "facility-ask-weekly",
+  }]).readiness).toBe("Blocked");
+});
+
 test.each([
   ["Burruss Correctional", "facility-burruss"],
   ["Burruss CTC", "facility-burruss"],

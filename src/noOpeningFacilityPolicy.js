@@ -91,6 +91,13 @@ export function clearWeeklyNoOpeningDecisions() {
   return {};
 }
 
+export function unresolvedOpeningRiskFacilityIds(issues = []) {
+  return Array.from(new Set(values(issues).flatMap((issue) => [
+    text(issue?.facilityId),
+    ...values(issue?.facilityIds).map(text),
+  ]).filter(Boolean)));
+}
+
 function structuralBlockers(issues = []) {
   return values(issues).filter((issue) => STRUCTURAL_BLOCKER_CODES.has(text(issue?.code)));
 }

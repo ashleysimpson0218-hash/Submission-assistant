@@ -130,6 +130,7 @@ import {
   reportActionEligibleRows,
   settingsWithNoOpeningsPolicy,
   undoWeeklyNoOpeningDecision,
+  unresolvedOpeningRiskFacilityIds,
   updateWeeklyNoOpeningDecision,
 } from "./noOpeningFacilityPolicy";
 import {
@@ -13972,14 +13973,15 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
     });
     return issues;
   }, [canonicalReportingModel]);
-  const unresolvedOpeningRisk = useMemo(() => canonicalReportingModel.dataQuality.some((issue) => {
-    if (issue.issue === "Missing Facility ID") return true;
-    if (issue.recordType !== "Requisition" || !["Ambiguous Facility", "Unmapped Facility"].includes(issue.issue)) return false;
-    const record = canonicalReportingModel.requisitions.find((candidate) => (
-      candidate.requisitionId === issue.requisitionId || candidate.id === issue.identifier
-    ));
-    return !record || (isLiveRequisition(record.source) && openingsForReq(record.source) > 0);
-  }), [canonicalReportingModel]);
+  const unresolvedOpeningRiskIds = useMemo(() => new Set(unresolvedOpeningRiskFacilityIds(
+    canonicalReportingModel.dataQuality.filter((issue) => {
+      if (issue.recordType !== "Requisition" || !["Ambiguous Facility", "Unmapped Facility"].includes(issue.issue)) return false;
+      const record = canonicalReportingModel.requisitions.find((candidate) => (
+        candidate.requisitionId === issue.requisitionId || candidate.id === issue.identifier
+      ));
+      return !record || (isLiveRequisition(record.source) && openingsForReq(record.source) > 0);
+    }),
+  )), [canonicalReportingModel]);
 
   const selectedReportEligibilityScope = useMemo(() => ({
     all: selectedFacility === "All Facilities" && selectedFacilityReports.length === 0 && facilityReportQueueFiltered.length === facilityReportQueue.length,
@@ -14009,11 +14011,11 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
         weeklyDecision: noOpeningWeeklyDecisions[row.facilityId],
         eligibility,
         hasTemplate: standardNoOpeningsTemplateAvailable,
-        unresolvedOpeningRisk,
+        unresolvedOpeningRisk: unresolvedOpeningRiskIds.has(row.facilityId),
       });
       return withFacilityReadiness(applyNoOpeningOutcome(row, outcome), eligibility.scopedIssues);
     }),
-    [facilityReportQueue, reportValidationIssues, noOpeningsPolicy, noOpeningWeeklyDecisions, standardNoOpeningsTemplateAvailable, unresolvedOpeningRisk],
+    [facilityReportQueue, reportValidationIssues, noOpeningsPolicy, noOpeningWeeklyDecisions, standardNoOpeningsTemplateAvailable, unresolvedOpeningRiskIds],
   );
   useEffect(() => {
     if (!hasLoaded || !reportReviewTargetId || reportReviewTargetRestoredRef.current === reportReviewTargetId) return;
