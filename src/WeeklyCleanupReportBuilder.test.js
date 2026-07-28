@@ -91,7 +91,17 @@ test("ambiguous aliases leave diagnostic preview available while disabling workb
       { id: "facility-5", siteName: "West Center", aliases: ["Shared Alias"], status: "Active" },
     ],
   };
-  const { downloadExcelWorkbook } = renderBuilder({ settings: ambiguousSettings });
+  const ambiguousTracker = [
+    ...tracker,
+    {
+      id: "candidate-ambiguous",
+      name: "Synthetic Ambiguous Candidate",
+      facility: "Shared Alias",
+      status: "Active",
+      nextAction: "Resolve facility",
+    },
+  ];
+  const { downloadExcelWorkbook } = renderBuilder({ settings: ambiguousSettings, tracker: ambiguousTracker });
 
   expect(screen.getByRole("button", { name: "Export Excel" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Preview Report" }));

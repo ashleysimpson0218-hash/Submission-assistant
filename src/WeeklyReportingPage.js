@@ -2,6 +2,7 @@ import React from "react";
 import WeeklyCleanupReportBuilder from "./WeeklyCleanupReportBuilder";
 import { FACILITY_READINESS_OPTIONS } from "./facilityReadinessNavigation";
 import { NO_OPENINGS_POLICIES, NO_OPENINGS_POLICY_OPTIONS, NO_OPENINGS_WEEKLY_DECISIONS } from "./noOpeningFacilityPolicy";
+import { previewSelectedReportsLabel } from "./reportContext";
 import { LEGACY_REPORT_STATUS_DISPLAY } from "./weeklyReportingEligibility";
 import {
   WEEKLY_REPORTING_STEPS,
@@ -78,6 +79,7 @@ export function WeeklyReportingPage(props) {
     noOpeningWeeklyDecisions,
     openReportAutomationSettings,
     openReportingIssueCorrection,
+    openReportReview,
     openTentativeStartReminder,
     previewSelectedFacilityReports,
     recipientGroupOptions,
@@ -409,7 +411,7 @@ export function WeeklyReportingPage(props) {
                 <div style={{ display: "grid", gap: 12, gridTemplateColumns: isMedium ? "1fr" : "minmax(0, 1fr) 280px", alignItems: "start" }}>
                   <div style={{ display: "grid", gap: 10 }}>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <Button primary onClick={previewSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canCreateFinalPreview}>Preview {selectedFacilityActionRows.length} Selected Reports</Button>
+                      <Button primary onClick={() => previewSelectedFacilityReports()} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canCreateFinalPreview}>{previewSelectedReportsLabel(selectedFacilityActionRows.length)}</Button>
                       <Button subtle onClick={copySelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail}>Copy Email Body</Button>
                       <Button subtle onClick={exportSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canDownloadWorkbook}>Download Combined Workbook</Button>
                       <Button subtle onClick={markSelectedFacilityReportsReviewed} disabled={!allowManualCompletion || !selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canMarkReady}>Mark Reviewed</Button>
@@ -470,7 +472,7 @@ export function WeeklyReportingPage(props) {
                   <Field label="Status Filter"><SelectInput value={selectedStatusFilter} onChange={(event) => setSelectedStatusFilter(event.target.value)} options={reportStatusOptions} /></Field>
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <Button primary onClick={previewSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canCreateFinalPreview}>Preview {selectedFacilityActionRows.length} Selected Reports</Button>
+                  <Button primary onClick={() => previewSelectedFacilityReports()} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canCreateFinalPreview}>{previewSelectedReportsLabel(selectedFacilityActionRows.length)}</Button>
                   <Button subtle onClick={() => saveReportsToHistory(selectedFacilityActionRows, "Draft Generated")} disabled={!selectedFacilityActionRows.length}>Save Draft to History</Button>
                   <Button subtle onClick={copySelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail}>Copy Email Body</Button>
                   <Button subtle onClick={exportSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canDownloadWorkbook}>Download Combined Workbook</Button>
@@ -601,6 +603,8 @@ export function WeeklyReportingPage(props) {
                                   <strong>{issue.facilityName || issue.originalFacilityLabel || "Unmapped Facility"}</strong>
                                   <div style={{ color: THEME.muted, fontSize: 12 }}>{[issue.position, issue.requisitionNumber && `Req ${issue.requisitionNumber}`, issue.missingField].filter(Boolean).join(" | ") || issue.detail || issue.identifier}</div>
                                   {issue.originalFacilityLabel ? <div style={{ color: THEME.muted, fontSize: 11 }}>Original label: {issue.originalFacilityLabel}</div> : null}
+                                  {(issue.recordType || issue.identifier) ? <div style={{ color: THEME.muted, fontSize: 11 }}>Affected source: {[issue.recordType, issue.identifier].filter(Boolean).join(" ")}</div> : null}
+                                  {issue.facilityIds?.length > 1 ? <div style={{ color: THEME.muted, fontSize: 11 }}>Canonical choices: {issue.facilityIds.join(", ")}</div> : null}
                                 </div>
                                 {issue.resolutionAction ? <Button subtle onClick={() => openReportingIssueCorrection(issue)}>{issue.resolutionAction}</Button> : null}
                               </div>
@@ -616,7 +620,7 @@ export function WeeklyReportingPage(props) {
                     <strong>{facilityReadinessSelection.selectedCount} selected</strong>
                     {facilityReadinessSelection.hiddenSelectedCount ? <span style={{ color: THEME.muted }}>{facilityReadinessSelection.hiddenSelectedCount} hidden by current filters</span> : null}
                     {selectedFacilityPolicyRows.length !== selectedFacilityActionRows.length ? <span style={{ color: THEME.muted }}>{selectedFacilityPolicyRows.length - selectedFacilityActionRows.length} ineligible under the current policy</span> : null}
-                    <Button primary onClick={() => previewSelectedFacilityReports()} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canCreateFinalPreview}>Preview {selectedFacilityActionRows.length} Selected Reports</Button>
+                    <Button primary onClick={() => previewSelectedFacilityReports()} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canCreateFinalPreview}>{previewSelectedReportsLabel(selectedFacilityActionRows.length)}</Button>
                     <Button subtle onClick={exportSelectedFacilityReports} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canDownloadWorkbook}>Download Combined Workbook</Button>
                     <Button subtle onClick={markSelectedFacilityReportsReviewed} disabled={!allowManualCompletion || !selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canMarkReady}>Mark Reviewed</Button>
                     <Button subtle onClick={markSelectedFacilityReportsSent} disabled={!selectedFacilityActionRows.length || !selectedFacilityActionEligibility.canPrepareEmail}>Mark Sent</Button>
@@ -642,7 +646,7 @@ export function WeeklyReportingPage(props) {
                           </> : null}
                           {row.noOpeningOutcome?.applies && noOpeningsPolicy === NO_OPENINGS_POLICIES.ASK_WEEKLY && noOpeningWeeklyDecisions[row.facilityId] ? <Button subtle onClick={() => undoNoOpeningWeeklyDecision(row.facilityId)} style={{ padding: "6px 8px", fontSize: 11 }}>Undo Weekly Decision</Button> : null}
                           {row.readinessIssues.filter((issue) => issue.resolutionAction).slice(0, 2).map((issue, index) => <Button key={`${issue.code}-${issue.requisitionId || issue.facilityId}-${index}`} subtle onClick={() => openReportingIssueCorrection(issue)} style={{ padding: "6px 8px", fontSize: 11 }}>{issue.resolutionAction}</Button>)}
-                          {!row.readinessIssues.some((issue) => issue.resolutionAction) && row.reportActionEligible !== false ? <Button subtle disabled={!eligibilityForReportRows([row]).canCreateFinalPreview} onClick={() => { setReportsTab("review-reports"); setSelectedFacility(row.facility); setSelectedFacilityReports([row.id]); previewSelectedFacilityReports([row]); }} style={{ padding: "6px 8px", fontSize: 11 }}>{row.action === "Preview" ? "Review Report" : row.action}</Button> : null}
+                          {!row.readinessIssues.some((issue) => issue.resolutionAction) && row.reportActionEligible !== false ? <Button subtle disabled={!eligibilityForReportRows([row]).canCreateFinalPreview} onClick={() => openReportReview(row)} style={{ padding: "6px 8px", fontSize: 11 }}>{row.action === "Preview" ? "Review Report" : row.action}</Button> : null}
                         </div>
                       </div>
                     )) : <EmptyState>No facilities match the current Needs Action filters.</EmptyState>}

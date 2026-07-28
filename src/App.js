@@ -72,6 +72,14 @@ import { WeeklyReportingPage } from "./WeeklyReportingPage";
 import { ReportsHistoryPage } from "./ReportsHistoryPage";
 import { normalizeReportsHistoryDestination } from "./reportsHistoryNavigation";
 import {
+  buildCanonicalReportContext,
+  policyRowsForReportAction as resolvePolicyRowsForReportAction,
+  readReportReviewTarget,
+  reportAudienceDefinition,
+  reportReviewSearch,
+} from "./reportContext";
+import { reportingPeriodFor, reportingTimeZone } from "./reportingPeriod";
+import {
   createWeeklyReviewSessionReset,
   confirmWeeklyReviewRestart,
   normalizeWeeklyReportingStep,
@@ -1677,6 +1685,7 @@ const DEFAULT_SETTINGS = {
     signOffLine: "",
     includeSignOffNameInEmails: true,
     includeSignatureLineInEmails: true,
+    timeZone: "(UTC-05:00) Eastern Time (US & Canada)",
   },
   options: {
     roleTypes: ROLE_TYPES,
@@ -3967,9 +3976,11 @@ function tentativeStartIsCurrent(item = {}, today = todayIso()) {
   return true;
 }
 
-function openingsForReq(req) {
-  const value = Number(req?.numberOfOpenings || req?.openings || req?.openingCount || 1);
-  return Number.isFinite(value) && value > 0 ? value : 1;
+export function openingsForReq(req) {
+  const raw = req?.numberOfOpenings ?? req?.openings ?? req?.openingCount;
+  if (raw === undefined || raw === null || raw === "") return 1;
+  const value = Number(raw);
+  return Number.isFinite(value) ? Math.max(0, value) : 1;
 }
 
 function candidateMatchesRequisition(item = {}, req = {}) {
@@ -5940,20 +5951,32 @@ function RecruiterApp() {
   const [loginMode, setLoginMode] = useState("signin");
   const [selectedPricingPlanId, setSelectedPricingPlanId] = useState("professional");
   const [pricingBillingCycle, setPricingBillingCycle] = useState("monthly");
-  const [activePage, setActivePage] = useState("home");
+  const initialReportReviewTarget = useMemo(
+    () => readReportReviewTarget(window.location.search),
+    [],
+  );
+  const [activePage, setActivePage] = useState(() => initialReportReviewTarget ? "reports" : "home");
   const [accountTab, setAccountTab] = useState("profile");
   const [activeSettingsTab, setActiveSettingsTab] = useState("general");
-  const [reportsTab, setReportsTabState] = useState("overview");
+  const [reportsTab, setReportsTabState] = useState(() => initialReportReviewTarget ? "review-reports" : "overview");
   const setReportsTab = useCallback((value) => {
     setReportsTabState((current) => normalizeWeeklyReportingStep(typeof value === "function" ? value(current) : value));
   }, []);
   const [reportsHubTab, setReportsHubTabState] = useState("ready-review");
   const [reportsReviewAudience, setReportsReviewAudience] = useState("Facility");
+  const [reportReviewTargetId, setReportReviewTargetId] = useState(initialReportReviewTarget);
+  const reportReviewTargetRestoredRef = useRef("");
+  const reportReviewPreviewRestoredRef = useRef("");
   const [reportHistoryStatusView, setReportHistoryStatusView] = useState("All");
   const setReportsHubTab = useCallback((value) => {
     const normalized = normalizeReportsHistoryDestination(value);
     setReportsHubTabState(normalized.destination);
-    if (normalized.audience) setReportsReviewAudience(normalized.audience);
+    if (normalized.audience) {
+      const definition = reportAudienceDefinition(normalized.audience);
+      setReportsReviewAudience(definition.audience);
+      setSelectedReportType(definition.reportType);
+      setSelectedRecipientGroup(definition.recipientGroup);
+    }
     if (normalized.historyFilter) setReportHistoryStatusView(normalized.historyFilter);
   }, []);
   const [expandedReportIssueCode, setExpandedReportIssueCode] = useState("");
@@ -6005,14 +6028,12 @@ function RecruiterApp() {
   const [weeklySubject, setWeeklySubject] = useState("Weekly Submission Summary");
   const [atsCleanupFilter, setAtsCleanupFilter] = useState("All");
   const [atsCleanupSearch, setAtsCleanupSearch] = useState("");
-  const [reportStartDate, setReportStartDate] = useState(() => {
-    const date = new Date();
-    const day = date.getDay();
-    const mondayOffset = date.getDate() - day + (day === 0 ? -6 : 1);
-    const monday = new Date(date.setDate(mondayOffset));
-    return monday.toISOString().slice(0, 10);
-  });
-  const [reportEndDate, setReportEndDate] = useState(todayIso());
+  const initialReportingPeriod = useMemo(
+    () => reportingPeriodFor(new Date(), reportingTimeZone(DEFAULT_SETTINGS.general.timeZone)),
+    [],
+  );
+  const [reportStartDate, setReportStartDate] = useState(initialReportingPeriod.startDate);
+  const [reportEndDate, setReportEndDate] = useState(initialReportingPeriod.endDate);
   const [activeReportSection, setActiveReportSection] = useState("submitted");
   const [excludedReportIds, setExcludedReportIds] = useState([]);
   const [selectedFacility, setSelectedFacility] = useState("All Facilities");
@@ -6087,6 +6108,7 @@ function RecruiterApp() {
   const [selectedCandidateOutreachId, setSelectedCandidateOutreachId] = useState("email-candidateWarmth");
   const [selectedCandidateOutreachCategory, setSelectedCandidateOutreachCategory] = useState("Candidate Email");
   const [hasLoaded, setHasLoaded] = useState(false);
+  const reportingPeriodInitializedForWorkspace = useRef(false);
   const [cloudStatus, setCloudStatus] = useState("Connecting to cloud storage...");
   const [acceptanceVerified, setAcceptanceVerified] = useState(false);
   const [acceptanceVerifying, setAcceptanceVerifying] = useState(false);
@@ -6536,6 +6558,17 @@ function RecruiterApp() {
   useEffect(() => { if (hasLoaded) saveStoredValue(HOT_LEAD_BULK_DRAFTS_KEY, hotLeadBulkDrafts); }, [hotLeadBulkDrafts, hasLoaded]);
   useEffect(() => { if (hasLoaded) saveStoredValue(HOT_LEAD_WORKING_REQ_KEY, hotLeadWorkingReqId); }, [hotLeadWorkingReqId, hasLoaded]);
   useEffect(() => { if (hasLoaded) saveStoredValue(REPORT_HISTORY_KEY, reportHistory); }, [reportHistory, hasLoaded]);
+  useEffect(() => {
+    if (!hasLoaded || reportingPeriodInitializedForWorkspace.current) return;
+    reportingPeriodInitializedForWorkspace.current = true;
+    const period = reportingPeriodFor(
+      new Date(),
+      reportingTimeZone(settings.general?.timeZone || DEFAULT_SETTINGS.general.timeZone),
+    );
+    setReportStartDate(period.startDate);
+    setReportEndDate(period.endDate);
+  }, [hasLoaded, settings.general?.timeZone]);
+
   useEffect(() => {
     if (!hasLoaded || !workspacePersistenceEnabled) return;
     setTracker((prev) => {
@@ -13838,7 +13871,7 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
       const facilityRequisitionRecords = canonicalReportingModel.requisitions
         .filter((record) => record.facilityId === facilityId);
       const facilityReqs = facilityRequisitionRecords
-        .filter((record) => isLiveRequisition(record.source))
+        .filter((record) => isLiveRequisition(record.source) && openingsForReq(record.source) > 0)
         .map((record) => record.reportingItem);
       const facilityRows = includedReportRows.filter((item) => item.facilityId === facilityId);
       const site = canonicalReportingModel.facilityIndex.byId.get(facilityId);
@@ -13944,7 +13977,7 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
     const record = canonicalReportingModel.requisitions.find((candidate) => (
       candidate.requisitionId === issue.requisitionId || candidate.id === issue.identifier
     ));
-    return !record || isLiveRequisition(record.source);
+    return !record || (isLiveRequisition(record.source) && openingsForReq(record.source) > 0);
   }), [canonicalReportingModel]);
 
   const selectedReportEligibilityScope = useMemo(() => ({
@@ -13981,6 +14014,22 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
     }),
     [facilityReportQueue, reportValidationIssues, noOpeningsPolicy, noOpeningWeeklyDecisions, standardNoOpeningsTemplateAvailable, unresolvedOpeningRisk],
   );
+  useEffect(() => {
+    if (!hasLoaded || !reportReviewTargetId || reportReviewTargetRestoredRef.current === reportReviewTargetId) return;
+    const target = facilityReadinessRows.find((row) => (
+      String(row.id || row.facilityId) === String(reportReviewTargetId)
+    ));
+    if (!target) return;
+    reportReviewTargetRestoredRef.current = reportReviewTargetId;
+    const definition = reportAudienceDefinition("Facility");
+    setActivePage("reports");
+    setReportsTab("review-reports");
+    setSelectedFacility(target.facility);
+    setSelectedFacilityReports([target.id || target.facilityId]);
+    setReportsReviewAudience(definition.audience);
+    setSelectedReportType(target.reportType || definition.reportType);
+    setSelectedRecipientGroup(target.recipientGroup || definition.recipientGroup);
+  }, [facilityReadinessRows, hasLoaded, reportReviewTargetId, setReportsTab]);
   const selectedFacilityPolicyRows = useMemo(() => {
     const selected = new Set(selectedFacilityReports);
     return facilityReadinessRows.filter((row) => selected.has(row.id) || selected.has(row.facility));
@@ -14136,7 +14185,9 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
     const facility = reportFacilityRecord(facilityReference);
     if (!facility) return [];
     return canonicalReportingModel.requisitions
-      .filter((record) => record.facilityId === facility.facilityId && (includeClosed || isLiveRequisition(record.source)))
+      .filter((record) => record.facilityId === facility.facilityId && (
+        includeClosed || (isLiveRequisition(record.source) && openingsForReq(record.source) > 0)
+      ))
       .map((record) => record.reportingItem);
   }
 
@@ -14158,7 +14209,7 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
     const rows = rowsForReportFacility(facilityId);
     const groups = reportRowsByGroup(rows);
     const reqs = reqsForReportFacility(facilityId, reportInclusions.closedRequisitions);
-    const openReqs = reqs.filter((req) => isLiveRequisition(req));
+    const openReqs = reqs.filter((req) => isLiveRequisition(req) && openingsForReq(req) > 0);
     const leadershipReqs = openReqs.filter((req) => isLeadershipRequisition(req, settings.roles));
     const contacts = reportContactsForFacility(facilityId);
     return {
@@ -14232,10 +14283,10 @@ function rowifyCandidate(item = {}) {
     };
   }
 
-  function baseWeeklyReportTokens() {
+  function baseWeeklyReportTokens(reportType = selectedReportType) {
     const dateRange = `${displayDate(reportStartDate)} to ${displayDate(reportEndDate)}`;
     return {
-      report_type: selectedReportType,
+      report_type: reportType,
       report_start_date: displayDate(reportStartDate),
       report_end_date: displayDate(reportEndDate),
       reporting_week: dateRange,
@@ -14360,7 +14411,7 @@ function rowifyCandidate(item = {}) {
     const leadershipLines = model.leadershipReqs.length ? model.leadershipReqs.map((req) => `${req.positionTitle || "No Position"} | ${req.reqNumber || "No Req"} | ${fteLabel(req.fte) || "N/A"} | ${req.shiftPreference || req.shift || "N/A"} | ${openingsForReq(req)} | ${model.rows.filter((item) => candidateMatchesRequisition(item, req)).map((item) => item.status).filter(Boolean).join(", ") || "No candidate activity"}`) : ["No active leadership roles open."];
     const key = reportType === "No Openings Update" || !model.openReqs.length ? WEEKLY_REPORT_TEMPLATE_KEYS.noOpenings : WEEKLY_REPORT_TEMPLATE_KEYS.facility;
     return renderWeeklyReportContent(settings, key, {
-      ...baseWeeklyReportTokens(),
+      ...baseWeeklyReportTokens(reportType),
       report_type: reportType,
       facility: model.facility,
       facilities_included: model.facility,
@@ -14384,7 +14435,7 @@ function rowifyCandidate(item = {}) {
     const highRiskFacilities = models.filter((model) => model.riskCandidates.length).map((model) => `${model.facility} (${model.riskCandidates.length})`);
     const awaitingOverFive = models.flatMap((model) => model.awaitingFeedback.filter((item) => daysBetween(item.submissionDate) > 5).map((item) => `${item.candidate || "Unnamed Candidate"} | ${model.facility} | ${daysBetween(item.submissionDate)} days`));
     return renderWeeklyReportContent(settings, WEEKLY_REPORT_TEMPLATE_KEYS.regional, {
-      ...baseWeeklyReportTokens(),
+      ...baseWeeklyReportTokens("Regional Manager Summary"),
       facilities_included: models.map((model) => model.facility).join(", ") || "None selected",
       total_open_requisitions: openReqCount,
       facilities_with_no_openings: noOpeningFacilities.length ? noOpeningFacilities.join(", ") : "None",
@@ -14410,7 +14461,7 @@ function rowifyCandidate(item = {}) {
     const agingFeedbackCount = models.flatMap((model) => model.awaitingFeedback.filter((item) => daysBetween(item.submissionDate) > 5)).length;
     const noOpeningCount = models.filter((model) => !model.openReqs.length).length;
     return renderWeeklyReportContent(settings, WEEKLY_REPORT_TEMPLATE_KEYS.leadership, {
-      ...baseWeeklyReportTokens(),
+      ...baseWeeklyReportTokens("C-Suite Leadership Report"),
       facilities_included: models.map((model) => model.facility).join(", ") || "None selected",
       total_open_requisitions: models.reduce((total, model) => total + model.openReqs.length, 0),
       total_active_candidates: activeCandidates.length,
@@ -14429,22 +14480,23 @@ function rowifyCandidate(item = {}) {
     return cSuiteEmailContent(rows).body;
   }
 
-  function selectedAudienceEmailContent(rows = selectedFacilityActionRows) {
+  function selectedAudienceEmailContent(rows = selectedFacilityActionRows, audience = reportsReviewAudience) {
     const sourceRows = rows.length ? rows : facilityReportQueueFiltered;
-    if (selectedReportType === "Regional Manager Summary") return regionalEmailContent(sourceRows);
-    if (selectedReportType === "C-Suite Leadership Report") return cSuiteEmailContent(sourceRows);
-    if (sourceRows.length === 1) return facilityEmailContent(facilityReportModel(sourceRows[0].facility), selectedReportType);
-    const contents = sourceRows.map((row) => facilityEmailContent(facilityReportModel(row.facilityId || row.id || row.facility), selectedReportType));
-    const subjectTemplate = contents[0] || facilityEmailContent(facilityReportModel(""), selectedReportType);
+    const definition = reportAudienceDefinition(audience);
+    if (definition.audience === "Regional") return regionalEmailContent(sourceRows);
+    if (definition.audience === "Executive") return cSuiteEmailContent(sourceRows);
+    if (sourceRows.length === 1) return facilityEmailContent(facilityReportModel(sourceRows[0].facility), definition.reportType);
+    const contents = sourceRows.map((row) => facilityEmailContent(facilityReportModel(row.facilityId || row.id || row.facility), definition.reportType));
+    const subjectTemplate = contents[0] || facilityEmailContent(facilityReportModel(""), definition.reportType);
     return {
       ...subjectTemplate,
-      subject: `${selectedReportType}: ${displayDate(reportStartDate)} - ${displayDate(reportEndDate)}`,
+      subject: `${definition.reportType}: ${displayDate(reportStartDate)} - ${displayDate(reportEndDate)}`,
       body: contents.map((content) => content.body).join(`${NL}${NL}---${NL}${NL}`),
     };
   }
 
-  function selectedAudienceEmailBody(rows = selectedFacilityActionRows) {
-    return selectedAudienceEmailContent(rows).body;
+  function selectedAudienceEmailBody(rows = selectedFacilityActionRows, audience = reportsReviewAudience) {
+    return selectedAudienceEmailContent(rows, audience).body;
   }
 
   function facilityWorkbookSheets(model) {
@@ -14531,6 +14583,47 @@ function rowifyCandidate(item = {}) {
     return sheets;
   }
 
+  function selectReportsReviewAudience(audience) {
+    const definition = reportAudienceDefinition(audience);
+    setReportsReviewAudience(definition.audience);
+    setSelectedReportType(definition.reportType);
+    setSelectedRecipientGroup(definition.recipientGroup);
+  }
+
+  const reportReviewDefinition = reportAudienceDefinition(reportsReviewAudience);
+  const reportReviewContent = selectedAudienceEmailContent(
+    selectedFacilityActionRows,
+    reportReviewDefinition.audience,
+  );
+  const reportReviewWorkbookSheets = reportReviewDefinition.audience === "Facility"
+    && selectedFacilityActionRows.length === 1
+    ? facilityWorkbookSheets(facilityReportModel(
+      selectedFacilityActionRows[0].facilityId
+        || selectedFacilityActionRows[0].id
+        || selectedFacilityActionRows[0].facility,
+    ))
+    : buildAllFacilityWorkbookSheets();
+  const reportReviewContext = buildCanonicalReportContext({
+    audience: reportReviewDefinition.audience,
+    rows: selectedFacilityActionRows,
+    reportStartDate,
+    reportEndDate,
+    content: reportReviewContent,
+    workbookSheets: reportReviewWorkbookSheets,
+    generatedAt: (reportHistory || [])[0]?.generatedDate || "",
+  });
+  useEffect(() => {
+    if (
+      !reportReviewTargetId
+      || reportReviewContext.reportId !== reportReviewTargetId
+      || reportReviewPreviewRestoredRef.current === reportReviewTargetId
+    ) return;
+    reportReviewPreviewRestoredRef.current = reportReviewTargetId;
+    setGeneratedReportPreview(reportReviewContext.body);
+    setWeeklyReport(reportReviewContext.body);
+    setWeeklySubject(reportReviewContext.subject);
+  }, [reportReviewContext.body, reportReviewContext.reportId, reportReviewContext.subject, reportReviewTargetId]);
+
   function reportingScopeForRows(rows = []) {
     return {
       all: rows === selectedFacilityReportRows && selectedReportEligibilityScope.all,
@@ -14541,8 +14634,11 @@ function rowifyCandidate(item = {}) {
   }
 
   function policyRowsForReportAction(rows = selectedFacilityActionRows) {
-    const ids = new Set((rows || []).map((row) => row.facilityId || row.id).filter(Boolean));
-    return reportActionEligibleRows(facilityReadinessRows.filter((row) => ids.has(row.facilityId || row.id)));
+    return resolvePolicyRowsForReportAction({
+      rows,
+      facilityReadinessRows,
+      reportActionEligibleRows,
+    });
   }
 
   function eligibilityForReportRows(rows = selectedFacilityActionRows) {
@@ -14571,17 +14667,48 @@ function rowifyCandidate(item = {}) {
   }
 
   function previewSelectedFacilityReports(rows = selectedFacilityActionRows) {
-    const sourceRows = policyRowsForReportAction(rows);
+    let sourceRows;
+    try {
+      sourceRows = policyRowsForReportAction(rows);
+    } catch (error) {
+      console.error("Report preview contract error", error);
+      setCopyNotice("The report preview could not open because its selected-report data was invalid. No report data or status was changed.");
+      return false;
+    }
     if (!sourceRows.length) {
       setCopyNotice("Select at least one facility report before previewing.");
-      return;
+      return false;
     }
-    if (blockReportAction("canCreateFinalPreview", sourceRows, "Final report preview")) return;
-    const content = selectedAudienceEmailContent(sourceRows);
+    if (blockReportAction("canCreateFinalPreview", sourceRows, "Final report preview")) return false;
+    const content = selectedAudienceEmailContent(sourceRows, reportsReviewAudience);
     setGeneratedReportPreview(content.body);
     setWeeklyReport(content.body);
     setWeeklySubject(content.subject);
-    setCopyNotice("Facility report preview generated.");
+    setCopyNotice(`${reportAudienceDefinition(reportsReviewAudience).audience} report preview generated.`);
+    return true;
+  }
+
+  function openReportReview(row) {
+    const id = String(row?.id || row?.facilityId || "").trim();
+    if (!id) {
+      setCopyNotice("This report does not have a stable identifier and cannot be opened.");
+      return false;
+    }
+    const definition = reportAudienceDefinition("Facility");
+    setActivePage("reports");
+    setReportsTab("review-reports");
+    setSelectedFacility(row.facility || "All Facilities");
+    setSelectedFacilityReports([id]);
+    setReportReviewTargetId(id);
+    setReportsReviewAudience(definition.audience);
+    setSelectedReportType(row.reportType || definition.reportType);
+    setSelectedRecipientGroup(row.recipientGroup || definition.recipientGroup);
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}${reportReviewSearch(window.location.search, id)}${window.location.hash}`,
+    );
+    return previewSelectedFacilityReports([row]);
   }
 
   function copySelectedFacilityReports() {
@@ -19080,6 +19207,7 @@ function rowifyCandidate(item = {}) {
             noOpeningsPolicySelection,
             noOpeningWeeklyDecisions,
             openReportAutomationSettings,
+            openReportReview,
             openReportingIssueCorrection,
             openTentativeStartReminder,
             previewSelectedFacilityReports,
@@ -19202,6 +19330,7 @@ function rowifyCandidate(item = {}) {
             reportTypeOptions,
             reportsHubTab,
             reportsReviewAudience,
+            reportReviewContext,
             safeCopy,
             saveReportsToHistory,
             selectedAudienceEmailBody,
@@ -19213,7 +19342,7 @@ function rowifyCandidate(item = {}) {
             setReportHistoryStatusView,
             setReportInclusions,
             setReportsHubTab,
-            setReportsReviewAudience,
+            setReportsReviewAudience: selectReportsReviewAudience,
             setWeeklyReport,
             setWeeklySubject,
             weeklyReport,

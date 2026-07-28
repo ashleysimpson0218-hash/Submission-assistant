@@ -186,6 +186,45 @@ test("preserves Facility, Regional, and Executive audience context", () => {
   expect(screen.getByText("Synthetic executive body")).toBeInTheDocument();
 });
 
+test.each([
+  ["Facility", "Facility Contacts", "Facility Weekly Report", "welcomeflow-synthetic-central-2026-07-20.xls", "Facility body"],
+  ["Regional", "Regional Manager", "Regional Manager Summary", "welcomeflow-regional-summary-2026-07-20.xls", "Regional body"],
+  ["Executive", "C-Suite", "C-Suite Leadership Report", "welcomeflow-executive-summary-2026-07-20.xls", "Executive body"],
+])("renders synchronized %s body, recipient, report type, and attachment metadata", (audience, recipientGroup, reportType, attachmentName, body) => {
+  render(<ReportsHistoryPage {...baseProps({
+    reportsReviewAudience: audience,
+    reportReviewContext: {
+      audience,
+      recipientGroup,
+      reportType,
+      subject: `${reportType} subject`,
+      body,
+      attachmentName,
+      attachmentType: `${audience} recruiting workbook`,
+      workbookSheets: [{ name: `${audience} Summary` }],
+      generatedAt: "2026-07-24T12:00:00.000Z",
+    },
+  })} />);
+
+  expect(screen.getByLabelText("Report audience metadata")).toHaveTextContent(audience);
+  expect(screen.getByLabelText("Report recipient")).toHaveTextContent(recipientGroup);
+  expect(screen.getByLabelText("Report subject")).toHaveTextContent(reportType);
+  expect(screen.getByText(body)).toBeInTheDocument();
+  expect(screen.getByLabelText("Attachment name")).toHaveTextContent(attachmentName);
+  expect(screen.getByLabelText("Attachment type")).toHaveTextContent(`${audience} recruiting workbook`);
+});
+
+test("audience controls delegate one synchronized context change and preview passes no click event as rows", () => {
+  const props = baseProps();
+  render(<ReportsHistoryPage {...props} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Regional" }));
+  fireEvent.click(screen.getAllByRole("button", { name: "Review Report" })[0]);
+
+  expect(props.setReportsReviewAudience).toHaveBeenCalledWith("Regional");
+  expect(props.previewSelectedFacilityReports).toHaveBeenCalledWith();
+});
+
 test("renders email and attachment details together", () => {
   render(<ReportsHistoryPage {...baseProps()} />);
 

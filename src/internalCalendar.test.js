@@ -9,6 +9,7 @@ import {
   updateInternalCalendarEvent,
   upcomingRecruitingEvents,
 } from "./internalCalendar";
+import { getLocalCalendarDateKey } from "./calendarDate";
 
 const NOW = new Date("2026-07-23T12:00:00.000Z");
 
@@ -37,7 +38,7 @@ describe("internal WelcomeFlow calendar", () => {
       endDateTime: "2026-07-28T02:00:00.000Z",
     });
     const source = JSON.parse(JSON.stringify(event));
-    const expectedDate = process.env.TZ === "America/New_York" ? "2026-07-27" : "2026-07-28";
+    const expectedDate = getLocalCalendarDateKey(event.startDateTime);
     expect(eventsForCalendarDate([event], expectedDate)).toHaveLength(1);
     expect(event).toEqual(source);
   });

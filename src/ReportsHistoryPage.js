@@ -71,6 +71,7 @@ export function ReportsHistoryPage({
   reportTypeOptions,
   reportsHubTab,
   reportsReviewAudience,
+  reportReviewContext,
   safeCopy,
   saveReportsToHistory,
   selectedAudienceEmailBody,
@@ -97,16 +98,16 @@ export function ReportsHistoryPage({
   const activeHistoryView = (isCanonicalDestination ? reportHistoryStatusView : normalizedDestination.historyFilter) || "All";
   const currentReportPeriod = `${reportStartDate || ""} to ${reportEndDate || ""}`;
   const visibleHistory = filterReportHistoryByView(reportHistoryFiltered, activeHistoryView, currentReportPeriod);
-  const reviewBody = activeAudience === "Regional"
-    ? regionalEmailBody(selectedFacilityActionRows)
-    : activeAudience === "Executive"
-      ? cSuiteEmailBody(selectedFacilityActionRows)
-      : (weeklyReport || selectedAudienceEmailBody());
-  const workbookSheets = buildAllFacilityWorkbookSheets();
-  const attachmentName = selectedFacilityActionRows.length === 1
-    ? `welcomeflow-${String(selectedFacilityActionRows[0]?.facility || "facility").replace(/\s+/g, "-").toLowerCase()}-${reportStartDate || "report"}.xls`
-    : `welcomeflow-facility-reports-${reportStartDate || "report"}.xls`;
-  const latestGeneratedAt = (reportHistory || [])[0]?.generatedDate || "";
+  const reviewBody = reportReviewContext?.body || (
+    activeAudience === "Regional"
+      ? regionalEmailBody(selectedFacilityActionRows)
+      : activeAudience === "Executive"
+        ? cSuiteEmailBody(selectedFacilityActionRows)
+        : (weeklyReport || selectedAudienceEmailBody())
+  );
+  const workbookSheets = reportReviewContext?.workbookSheets || buildAllFacilityWorkbookSheets();
+  const attachmentName = reportReviewContext?.attachmentName || "";
+  const latestGeneratedAt = reportReviewContext?.generatedAt || (reportHistory || [])[0]?.generatedDate || "";
   const blockers = selectedReportEligibility?.blockingReasons || [];
   const warnings = selectedReportEligibility?.warnings
     || (selectedReportEligibility?.scopedIssues || []).filter((issue) => !issue.blocking);
@@ -158,13 +159,15 @@ export function ReportsHistoryPage({
               <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : "repeat(2, minmax(0, 1fr))" }}>
                 <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 6, padding: 12, background: THEME.panel }}>
                   <div style={{ color: THEME.muted, fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>Email</div>
-                  <div aria-label="Report recipient" style={{ marginTop: 8 }}><strong>Recipient:</strong> {selectedRecipientGroup || activeAudience}</div>
-                  <div aria-label="Report subject" style={{ marginTop: 6 }}><strong>Subject:</strong> {weeklySubject || `${selectedReportType || activeAudience} report`}</div>
+                  <div aria-label="Report audience metadata" style={{ marginTop: 8 }}><strong>Audience:</strong> {reportReviewContext?.audience || activeAudience}</div>
+                  <div aria-label="Report recipient" style={{ marginTop: 6 }}><strong>Recipient:</strong> {reportReviewContext?.recipientGroup || selectedRecipientGroup || activeAudience}</div>
+                  <div aria-label="Report subject" style={{ marginTop: 6 }}><strong>Subject:</strong> {reportReviewContext?.subject || weeklySubject || `${selectedReportType || activeAudience} report`}</div>
                   <div style={{ marginTop: 10, whiteSpace: "pre-wrap", lineHeight: 1.65 }}>{reviewBody}</div>
                 </div>
                 <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 6, padding: 12, background: THEME.panel }}>
                   <div style={{ color: THEME.muted, fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>Attachment</div>
-                  <div style={{ marginTop: 8 }}><strong>Attachment name:</strong> {attachmentName}</div>
+                  <div aria-label="Attachment name" style={{ marginTop: 8 }}><strong>Attachment name:</strong> {attachmentName}</div>
+                  <div aria-label="Attachment type" style={{ marginTop: 6 }}><strong>Attachment type:</strong> {reportReviewContext?.attachmentType || "Recruiting workbook"}</div>
                   <div aria-label="Workbook tabs" style={{ marginTop: 6 }}><strong>Workbook tabs:</strong> {workbookSheets.map((sheet) => sheet.name).join(", ") || "No tabs available"}</div>
                   <div aria-label="Reporting period" style={{ marginTop: 6 }}><strong>Reporting period:</strong> {currentReportPeriod}</div>
                   <div style={{ marginTop: 6 }}><strong>Generated time:</strong> {latestGeneratedAt ? displayDate(String(latestGeneratedAt).slice(0, 10)) : "Not generated this session"}</div>
@@ -182,7 +185,7 @@ export function ReportsHistoryPage({
               ) : null}
 
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <Button primary onClick={previewSelectedFacilityReports} disabled={!selectedReportEligibility.canCreateFinalPreview}>Review Report</Button>
+                <Button primary onClick={() => previewSelectedFacilityReports()} disabled={!selectedReportEligibility.canCreateFinalPreview}>Review Report</Button>
                 <Button subtle onClick={() => copyReportEmailContent(reviewBody, "Email body")} disabled={!selectedReportEligibility.canPrepareEmail}>Copy Email Body</Button>
                 <Button subtle onClick={exportWeeklyFullDataWorkbook} disabled={!selectedReportEligibility.canDownloadWorkbook}>Download Workbook</Button>
                 <Button subtle disabled={!selectedFacilityActionRows.length} onClick={() => saveReportsToHistory(selectedFacilityActionRows, "Draft Generated")}>Save Draft to History</Button>

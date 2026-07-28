@@ -145,6 +145,7 @@ function baseProps(overrides = {}) {
     noOpeningsPolicyDraft: "",
     noOpeningsPolicySelection: NO_OPENINGS_POLICIES.ASK_WEEKLY,
     noOpeningWeeklyDecisions: {},
+    openReportReview: jest.fn(),
     openReportingIssueCorrection: jest.fn(),
     previewSelectedFacilityReports: jest.fn(),
     reportAutomation: {},
@@ -217,7 +218,7 @@ test("shows hidden selections and count-specific actions without making zero sel
   render(<WeeklyReportingPage {...props} />);
 
   expect(screen.getAllByText(/1 hidden by current filters/).length).toBeGreaterThan(0);
-  expect(screen.getByRole("button", { name: "Preview 1 Selected Reports" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Preview 1 Selected Report" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Download Combined Workbook" })).toBeEnabled();
   expect(screen.getByText("1 ineligible under the current policy")).toBeInTheDocument();
 });
@@ -273,7 +274,7 @@ test("keeps diagnostic issue detail available while final actions obey eligibili
 
   expect(screen.getByText("Synthetic Shared")).toBeInTheDocument();
   expect(screen.getByText("Choose a canonical facility.")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Preview 1 Selected Reports" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Preview 1 Selected Report" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Download Combined Workbook" })).toBeDisabled();
 });
 
@@ -306,6 +307,32 @@ test("preserves session-only no-opening decisions and status labels", () => {
   expect(props.undoNoOpeningWeeklyDecision).toHaveBeenCalledWith("facility-1");
 });
 
+test("Review Report delegates the exact stable report row for deterministic deep linking", () => {
+  const props = baseProps({
+    facilityReadinessRows: [baseRow],
+    facilityReadinessVisibleRows: [baseRow],
+    facilityReadinessMatchingRows: [baseRow],
+  });
+  render(<WeeklyReportingPage {...props} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Review Report" }));
+
+  expect(props.openReportReview).toHaveBeenCalledWith(baseRow);
+  expect(props.previewSelectedFacilityReports).not.toHaveBeenCalled();
+});
+
+test("uses plural preview wording when two eligible reports are selected", () => {
+  const second = { ...baseRow, id: "facility-2", facilityId: "facility-2", facility: "Synthetic South" };
+  render(<WeeklyReportingPage {...baseProps({
+    selectedFacilityReports: [baseRow.id, second.id],
+    selectedFacilityPolicyRows: [baseRow, second],
+    selectedFacilityActionRows: [baseRow, second],
+    facilityReadinessSelection: { selectedCount: 2, hiddenSelectedCount: 0 },
+  })} />);
+
+  expect(screen.getByRole("button", { name: "Preview 2 Selected Reports" })).toBeInTheDocument();
+});
+
 test("rendering and navigation do not mutate source rows or create hidden status changes", () => {
   const row = { ...baseRow, readinessIssues: [] };
   const original = JSON.stringify(row);
@@ -319,7 +346,7 @@ test("rendering and navigation do not mutate source rows or create hidden status
   });
   render(<WeeklyReportingPage {...props} />);
 
-  fireEvent.click(screen.getByRole("button", { name: "Preview 1 Selected Reports" }));
+  fireEvent.click(screen.getByRole("button", { name: "Preview 1 Selected Report" }));
   fireEvent.click(screen.getByRole("button", { name: "Download Combined Workbook" }));
 
   expect(JSON.stringify(row)).toBe(original);

@@ -121,21 +121,33 @@ describe("configurable Weekly Cleanup reporting", () => {
     ]));
   });
 
-  test("facility master-data alias collisions are surfaced instead of merged", () => {
+  test("orphan facility alias collisions remain visible as administrative warnings without blocking reports", () => {
     const model = buildCanonicalReportingModel({ tracker: [], requisitions: [], sites, contacts, reporting });
 
     expect(model.dataQuality).toEqual(expect.arrayContaining([
       expect.objectContaining({
         recordType: "Facility",
         identifier: "facility-north, facility-east",
-        issue: "Ambiguous Facility",
+        issue: "Ambiguous alias configuration",
+        code: "WARNING",
+        blocking: false,
+        orphanAlias: true,
       }),
     ]));
+    expect(model.dataQuality.filter((issue) => issue.issue === "Ambiguous Facility")).toHaveLength(0);
     expect(model.facilities.filter((facility) => ["facility-north", "facility-east"].includes(facility.facilityId))).toHaveLength(2);
   });
 
   test("ambiguous aliases block final report outputs while diagnostics remain available", () => {
-    const result = report({ sites });
+    const result = report({
+      sites,
+      tracker: [...tracker, {
+        id: "candidate-active-ambiguous",
+        candidate: "Synthetic Ambiguous",
+        site: "Shared Alias",
+        status: "Submitted",
+      }],
+    });
 
     expect(result.canViewDiagnostics).toBe(true);
     expect(result.canViewDraftPreview).toBe(true);

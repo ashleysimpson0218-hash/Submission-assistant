@@ -270,8 +270,10 @@ export function buildCanonicalReportingModel({ tracker = [], requisitions = [], 
       originalFacilityLabel: label,
       identifier: facilityIds.join(", "),
       facilityIds,
-      issue: "Ambiguous Facility",
-      resolutionAction: "Resolve Facility",
+      issue: "Ambiguous alias configuration",
+      type: "Ambiguous alias configuration",
+      orphanAlias: true,
+      competingFacilityIds: facilityIds,
       recommendedSetupLocation: "Facility & Position Setup → Facilities",
     }));
   });
