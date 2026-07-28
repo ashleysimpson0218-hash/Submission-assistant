@@ -8,24 +8,17 @@ import {
   eventsForCalendarDate,
   normalizeInternalCalendarEvent,
 } from "./internalCalendar";
+import {
+  getLocalCalendarDate,
+  getLocalCalendarDateKey,
+  getLocalCalendarWeekRange,
+} from "./calendarDate";
 
 const VIEWS = ["Day", "Work Week", "Week", "Month", "Agenda"];
 
-function dateKey(value) {
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
-}
-
-function startOfWeek(value) {
-  const date = new Date(value);
-  const day = date.getDay();
-  date.setDate(date.getDate() - day + (day === 0 ? -6 : 1));
-  date.setHours(0, 0, 0, 0);
-  return date;
-}
-
 function dateStrip(value, days = 7) {
-  const start = startOfWeek(value);
+  const { start } = getLocalCalendarWeekRange(value, days);
+  if (!start) return [];
   return Array.from({ length: days }, (_, index) => {
     const date = new Date(start);
     date.setDate(start.getDate() + index);
@@ -61,7 +54,7 @@ function emptyDraft(recruiterName) {
     eventType: "Candidate Phone Screen",
     title: "",
     description: "",
-    date: dateKey(start),
+    date: getLocalCalendarDateKey(start),
     startTime: start.toTimeString().slice(0, 5),
     endTime: end.toTimeString().slice(0, 5),
     timeZone: "America/New_York",
@@ -114,7 +107,7 @@ function draftFromEvent(event) {
   const end = new Date(normalized.endDateTime);
   return {
     ...normalized,
-    date: dateKey(start),
+    date: getLocalCalendarDateKey(start),
     startTime: start.toTimeString().slice(0, 5),
     endTime: end.toTimeString().slice(0, 5),
     reminderMinutes: normalized.reminderSettings.minutesBefore,
@@ -177,7 +170,7 @@ function CalendarEventEditor({ draft, setDraft, events, candidates, requisitions
 
 export function InternalCalendarPage({ events = [], candidates = [], requisitions = [], sites = [], recruiterName = "Recruiter", theme, isNarrow = false, createRequestToken = 0, createPrefill = {}, selectedEventId = "", onCreateEvent, onUpdateEvent, onOpenCandidate, onOpenRequisition, onDownloadInvitation }) {
   const [view, setView] = useState("Agenda");
-  const [selectedDate, setSelectedDate] = useState(dateKey(new Date()));
+  const [selectedDate, setSelectedDate] = useState(getLocalCalendarDateKey(new Date()));
   const [eventTypeFilter, setEventTypeFilter] = useState("All");
   const [facilityFilter, setFacilityFilter] = useState("All");
   const [confirmationFilter, setConfirmationFilter] = useState("All");
@@ -190,9 +183,12 @@ export function InternalCalendarPage({ events = [], candidates = [], requisition
   const editingEvent = normalizedEvents.find((event) => event.id === editingEventId) || null;
   const visibleEvents = useMemo(() => {
     if (view === "Day") return eventsForCalendarDate(normalizedEvents, selectedDate, { eventType: eventTypeFilter, facilityId: facilityFilter, confirmationStatus: confirmationFilter });
-    const selected = new Date(selectedDate);
-    const rangeStart = view === "Month" ? new Date(selected.getFullYear(), selected.getMonth(), 1) : startOfWeek(selected);
-    const rangeEnd = view === "Month" ? new Date(selected.getFullYear(), selected.getMonth() + 1, 1) : new Date(rangeStart.getTime() + (view === "Work Week" ? 5 : 7) * 86400000);
+    const selected = getLocalCalendarDate(selectedDate);
+    if (!selected) return [];
+    const weekRange = getLocalCalendarWeekRange(selectedDate, view === "Work Week" ? 5 : 7);
+    const rangeStart = view === "Month" ? new Date(selected.getFullYear(), selected.getMonth(), 1) : weekRange.start;
+    const rangeEnd = view === "Month" ? new Date(selected.getFullYear(), selected.getMonth() + 1, 1) : weekRange.end;
+    if (!rangeStart || !rangeEnd) return [];
     return normalizedEvents.filter((event) => {
       const start = new Date(event.startDateTime);
       if (event.eventStatus === "Canceled" || start < rangeStart || start >= rangeEnd) return false;
@@ -260,15 +256,15 @@ export function InternalCalendarPage({ events = [], candidates = [], requisition
         </div>
         <div aria-label="Calendar date strip" style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(52px, 1fr))", gap: 5, marginTop: 14 }}>
           {strip.map((date) => {
-            const key = dateKey(date);
-            const count = normalizedEvents.filter((event) => event.eventStatus !== "Canceled" && event.startDateTime.slice(0, 10) === key).length;
+            const key = getLocalCalendarDateKey(date);
+            const count = normalizedEvents.filter((event) => event.eventStatus !== "Canceled" && getLocalCalendarDateKey(event.startDateTime) === key).length;
             const selected = key === selectedDate;
             return <button key={key} type="button" onClick={() => setSelectedDate(key)} aria-pressed={selected} style={{ border: `1px solid ${selected ? theme.primary2 : theme.borderSoft}`, borderRadius: 8, padding: "7px 3px", background: selected ? theme.primary2 : theme.panel, color: selected ? "#fff" : theme.text }}><span style={{ display: "block", fontSize: 10, fontWeight: 850 }}>{date.toLocaleDateString([], { weekday: "short" })}</span><strong style={{ display: "block", fontSize: 17 }}>{date.getDate()}</strong><span aria-label={`${count} events`} style={{ display: "block", minHeight: 10, color: selected ? "#fff" : theme.primary2 }}>{count ? "●" : ""}</span></button>;
           })}
         </div>
       </CalendarCard>
       <CalendarCard theme={theme}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}><div><h2 style={{ margin: 0, fontSize: 16 }}>{view} Schedule</h2><span style={{ color: theme.muted, fontSize: 11 }}>{visibleEvents.length} event{visibleEvents.length === 1 ? "" : "s"} in the selected view</span></div><button type="button" onClick={() => setSelectedDate(dateKey(new Date()))} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: "7px 10px", background: theme.panel }}>Today</button></div>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}><div><h2 style={{ margin: 0, fontSize: 16 }}>{view} Schedule</h2><span style={{ color: theme.muted, fontSize: 11 }}>{visibleEvents.length} event{visibleEvents.length === 1 ? "" : "s"} in the selected view</span></div><button type="button" onClick={() => setSelectedDate(getLocalCalendarDateKey(new Date()))} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: "7px 10px", background: theme.panel }}>Today</button></div>
         <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
           {visibleEvents.length ? visibleEvents.map((event) => <article key={event.id} style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "70px 36px minmax(180px, 1.3fr) minmax(170px, 1fr) auto", gap: 10, alignItems: "center", border: `1px solid ${theme.borderSoft}`, borderRadius: 8, padding: 10, borderLeft: `4px solid ${event.outcomeStatus === "Pending" && new Date(event.endDateTime) < new Date() ? theme.red : theme.primary2}` }}>
             <strong>{formatTime(event.startDateTime)}</strong><span aria-hidden="true" style={{ width: 30, height: 30, borderRadius: "50%", background: theme.panelAlt, color: theme.primary2, display: "grid", placeItems: "center", fontWeight: 950 }}>{eventIcon(event.eventType)}</span><div><strong>{event.eventType}</strong><span style={{ display: "block", color: theme.muted, fontSize: 11 }}>{event.candidateName || event.title}</span><span style={{ display: "block", color: theme.muted, fontSize: 11 }}>{event.position || "No position"} · {event.facilityName || "No facility"}</span></div><div><span style={{ display: "block", fontSize: 11 }}>Confirmation: <strong>{event.confirmationStatus}</strong></span><span style={{ display: "block", fontSize: 11 }}>Outcome: <strong>{event.outcomeStatus}</strong></span><span style={{ display: "block", color: theme.muted, fontSize: 10 }}>{event.calendarProvider} · {event.timeZone}</span></div><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}><button type="button" onClick={() => openEdit(event)}>Edit / Reschedule</button>{event.candidateId ? <button type="button" onClick={() => onOpenCandidate(event.candidateId)}>Candidate</button> : null}{event.requisitionId ? <button type="button" onClick={() => onOpenRequisition(event.requisitionId)}>Requisition</button> : null}<select aria-label={`Outcome for ${event.title}`} value={event.outcomeStatus} onChange={(change) => updateOutcome(event, change.target.value)}>{CALENDAR_OUTCOME_STATUSES.map((status) => <option key={status}>{status}</option>)}</select><button type="button" onClick={() => onDownloadInvitation(event)}>Export .ics</button><button type="button" onClick={() => cancelEvent(event)} disabled={event.eventStatus === "Canceled"}>Cancel</button></div>

@@ -1,4 +1,8 @@
-import { getLocalCalendarDateKey } from "./calendarDate";
+import {
+  getLocalCalendarDate,
+  getLocalCalendarDateKey,
+  getLocalCalendarWeekRange,
+} from "./calendarDate";
 
 const timezone = process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
 const isNewYork = timezone === "America/New_York";
@@ -25,4 +29,24 @@ test.each([undefined, null, "", "not-a-date", new Date("invalid")])("fails safel
 
 test("accepts Date objects using the same local calendar model", () => {
   expect(getLocalCalendarDateKey(new Date("2026-07-28T00:44:00.000Z"))).toBe(isNewYork ? "2026-07-27" : "2026-07-28");
+});
+
+test("constructs date-only values as local calendar dates without shifting Monday", () => {
+  const date = getLocalCalendarDate("2026-07-27");
+  expect(getLocalCalendarDateKey(date)).toBe("2026-07-27");
+  expect(date.getDay()).toBe(1);
+});
+
+test("keeps Sunday and Monday in their correct local week ranges", () => {
+  const sunday = getLocalCalendarWeekRange("2026-07-26");
+  const monday = getLocalCalendarWeekRange("2026-07-27");
+  expect(getLocalCalendarDateKey(sunday.start)).toBe("2026-07-20");
+  expect(getLocalCalendarDateKey(sunday.end)).toBe("2026-07-27");
+  expect(getLocalCalendarDateKey(monday.start)).toBe("2026-07-27");
+  expect(getLocalCalendarDateKey(monday.end)).toBe("2026-08-03");
+});
+
+test("fails safely when a local date or week cannot be constructed", () => {
+  expect(getLocalCalendarDate("2026-02-30")).toBeNull();
+  expect(getLocalCalendarWeekRange("invalid")).toEqual({ start: null, end: null });
 });

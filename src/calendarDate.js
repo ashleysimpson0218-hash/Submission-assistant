@@ -12,3 +12,32 @@ export function getLocalCalendarDateKey(value) {
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
+
+export function getLocalCalendarDate(value) {
+  const key = getLocalCalendarDateKey(value);
+  if (!key) return null;
+
+  const [year, month, day] = key.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  if (
+    Number.isNaN(date.getTime())
+    || date.getFullYear() !== year
+    || date.getMonth() !== month - 1
+    || date.getDate() !== day
+  ) return null;
+
+  return date;
+}
+
+export function getLocalCalendarWeekRange(value, days = 7) {
+  const selected = getLocalCalendarDate(value);
+  if (!selected) return { start: null, end: null };
+
+  const start = new Date(selected);
+  const mondayOffset = (start.getDay() + 6) % 7;
+  start.setDate(start.getDate() - mondayOffset);
+
+  const end = new Date(start);
+  end.setDate(end.getDate() + days);
+  return { start, end };
+}
