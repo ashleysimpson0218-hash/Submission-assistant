@@ -6,10 +6,21 @@ const theme = {
   primary2: "#6d28d9", red: "#dc2626", redBg: "#fee2e2", amber: "#d97706", amberBg: "#fef3c7", green: "#15803d", greenBg: "#dcfce7",
 };
 
+beforeEach(() => {
+  jest.useFakeTimers();
+  jest.setSystemTime(new Date("2026-07-22T12:00:00.000Z"));
+});
+
+afterEach(() => {
+  jest.useRealTimers();
+});
+
 test("renders the recruiter command center and filters its shared queue", () => {
+  const candidate = { id: "candidate-1", candidate: "Synthetic Candidate", status: "Submitted", nextAction: "Await decision maker review", submissionDate: "2026-07-21", candidateNotes: "Synthetic" };
+  const source = JSON.parse(JSON.stringify(candidate));
   render(<RecruiterWorkspacePage
     theme={theme}
-    tracker={[{ id: "candidate-1", candidate: "Synthetic Candidate", status: "Submitted", nextAction: "Await decision maker review", submissionDate: "2026-07-21", candidateNotes: "Synthetic" }]}
+    tracker={[candidate]}
     requisitions={[]}
     recruiterName="Synthetic Recruiter"
     onOpenCandidate={jest.fn()}
@@ -24,6 +35,30 @@ test("renders the recruiter command center and filters its shared queue", () => 
   expect(screen.getByText("Synthetic Candidate")).toBeInTheDocument();
   expect(screen.getAllByText("Hiring Manager").length).toBeGreaterThan(0);
   expect(screen.getByText(/The next recorded step is controlled by Hiring Manager/i)).toBeInTheDocument();
+  expect(candidate).toEqual(source);
+});
+
+test("keeps Hiring Manager ownership when an aged record uses the higher-priority risk explanation", () => {
+  jest.setSystemTime(new Date("2026-07-29T12:00:00.000Z"));
+  const candidate = { id: "candidate-aged", candidate: "Synthetic Aged Candidate", status: "Submitted", nextAction: "Await decision maker review", submissionDate: "2026-07-21", candidateNotes: "Synthetic" };
+  const source = JSON.parse(JSON.stringify(candidate));
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={[candidate]}
+    requisitions={[]}
+    recruiterName="Synthetic Recruiter"
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+  />);
+
+  fireEvent.click(screen.getByRole("tab", { name: /Waiting on Others/i }));
+  expect(screen.getByText("Synthetic Aged Candidate")).toBeInTheDocument();
+  expect(screen.getAllByText("Hiring Manager").length).toBeGreaterThan(0);
+  expect(screen.getByText(/days without recorded activity|facility review has not produced a recorded next step/i)).toBeInTheDocument();
+  expect(screen.queryByText(/The next recorded step is controlled by Hiring Manager/i)).not.toBeInTheDocument();
+  expect(candidate).toEqual(source);
 });
 
 test("shows useful empty-state language", () => {
