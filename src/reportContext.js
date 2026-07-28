@@ -61,6 +61,33 @@ export function reportAudienceDefinition(value) {
   return REPORT_AUDIENCE_CONTEXT[text(value)] || REPORT_AUDIENCE_CONTEXT.Facility;
 }
 
+const unique = (values = []) => Array.from(new Set(values.map(text).filter(Boolean)));
+
+export function buildCanonicalReportScope({
+  audience,
+  rows,
+  reportType = "",
+  recipient = "",
+  recipientGroup = "",
+} = {}) {
+  const definition = reportAudienceDefinition(audience);
+  const selectedRows = normalizeReportRows(rows, "Canonical report scope rows");
+  return {
+    ...definition,
+    reportType: text(reportType) || definition.reportType,
+    recipient: text(recipient) || text(recipientGroup) || definition.recipientGroup,
+    recipientGroup: text(recipientGroup) || definition.recipientGroup,
+    selectedReportIds: unique(selectedRows.map((row) => row?.id || row?.facilityId)),
+    includedFacilityIds: unique(selectedRows.map((row) => row?.facilityId || row?.id)),
+    includedRequisitionIds: unique(selectedRows.flatMap((row) => (
+      Array.isArray(row?.activeReqs)
+        ? row.activeReqs.map((requisition) => requisition?.id || requisition?.requisitionId)
+        : []
+    ))),
+    regionIds: unique(selectedRows.map((row) => row?.regionId)),
+  };
+}
+
 function safeFilePart(value, fallback) {
   const normalized = text(value)
     .toLowerCase()
@@ -72,23 +99,33 @@ function safeFilePart(value, fallback) {
 export function buildCanonicalReportContext({
   audience,
   rows,
+  scope,
+  reportType,
+  recipient,
+  recipientGroup,
   reportStartDate,
   reportEndDate,
   content,
   workbookSheets,
   generatedAt = "",
 }) {
-  const definition = reportAudienceDefinition(audience);
   const selectedRows = normalizeReportRows(rows, "Canonical report context rows");
+  const reportScope = scope || buildCanonicalReportScope({
+    audience,
+    rows: selectedRows,
+    reportType,
+    recipient,
+    recipientGroup,
+  });
+  const definition = reportAudienceDefinition(reportScope.audience || audience);
   const sheets = normalizeReportRows(workbookSheets, "Canonical report context workbook sheets");
   const singleFacility = definition.audience === "Facility" && selectedRows.length === 1;
   const attachmentStem = singleFacility
     ? safeFilePart(selectedRows[0]?.facility, "facility")
     : definition.attachmentPrefix;
   return {
-    ...definition,
+    ...reportScope,
     reportId: selectedRows.length === 1 ? text(selectedRows[0]?.id || selectedRows[0]?.facilityId) : "",
-    selectedReportIds: selectedRows.map((row) => text(row?.id || row?.facilityId)).filter(Boolean),
     subject: text(content?.subject) || `${definition.reportType}: ${reportStartDate} to ${reportEndDate}`,
     body: String(content?.body ?? ""),
     attachmentName: `welcomeflow-${attachmentStem}-${reportStartDate || "report"}.xls`,

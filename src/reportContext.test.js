@@ -1,6 +1,7 @@
 import {
   ReportRowContractError,
   buildCanonicalReportContext,
+  buildCanonicalReportScope,
   normalizeReportRows,
   policyRowsForReportAction,
   previewSelectedReportsLabel,
@@ -76,6 +77,88 @@ test("canonical report context changes body, recipient, report type, and attachm
     "welcomeflow-regional-summary-2026-07-27.xls",
     "welcomeflow-executive-summary-2026-07-27.xls",
   ]);
+});
+
+test("canonical scope preserves one included facility set for report metadata and workbook construction", () => {
+  const scopeRows = [
+    {
+      ...rows[0],
+      regionId: "region-1",
+      activeReqs: [{ id: "req-1" }, { requisitionId: "req-2" }],
+    },
+    {
+      ...rows[1],
+      regionId: "region-1",
+      activeReqs: [{ id: "req-3" }],
+    },
+  ];
+  const scope = buildCanonicalReportScope({
+    audience: "Regional",
+    rows: scopeRows,
+    recipientGroup: "Regional Manager",
+  });
+  const workbookSheets = [
+    { name: "Regional Summary", rows: [{ facilityId: "facility-1" }, { facilityId: "facility-2" }] },
+    { name: "Synthetic North", rows: [] },
+    { name: "Synthetic South", rows: [] },
+  ];
+  const context = buildCanonicalReportContext({
+    audience: "Regional",
+    rows: scopeRows,
+    scope,
+    reportStartDate: "2026-07-27",
+    reportEndDate: "2026-07-28",
+    content: { subject: "Regional subject", body: "Facilities included: Synthetic North, Synthetic South" },
+    workbookSheets,
+  });
+
+  expect(context.includedFacilityIds).toEqual(["facility-1", "facility-2"]);
+  expect(context.includedRequisitionIds).toEqual(["req-1", "req-2", "req-3"]);
+  expect(context.regionIds).toEqual(["region-1"]);
+  expect(context.recipient).toBe("Regional Manager");
+  expect(context.workbookTabs).toEqual(["Regional Summary", "Synthetic North", "Synthetic South"]);
+});
+
+test("repeated audience switching replaces recipient, attachment, and facility scope without stale values", () => {
+  const third = { id: "facility-3", facilityId: "facility-3", facility: "Synthetic East", regionId: "region-2" };
+  const sequence = [
+    { audience: "Facility", rows: [rows[0]] },
+    { audience: "Regional", rows },
+    { audience: "Executive", rows: [...rows, third] },
+    { audience: "Regional", rows },
+    { audience: "Facility", rows: [rows[0]] },
+  ].map(({ audience, rows: selectedRows }) => buildCanonicalReportContext({
+    audience,
+    rows: selectedRows,
+    reportStartDate: "2026-07-27",
+    reportEndDate: "2026-07-28",
+    content: { subject: `${audience} subject`, body: `${audience}: ${selectedRows.map((row) => row.facility).join(", ")}` },
+    workbookSheets: selectedRows.map((row) => ({ name: row.facility, rows: [{ facilityId: row.facilityId }] })),
+  }));
+
+  expect(sequence.map((context) => context.includedFacilityIds)).toEqual([
+    ["facility-1"],
+    ["facility-1", "facility-2"],
+    ["facility-1", "facility-2", "facility-3"],
+    ["facility-1", "facility-2"],
+    ["facility-1"],
+  ]);
+  expect(sequence.map((context) => context.recipientGroup)).toEqual([
+    "Facility Contacts",
+    "Regional Manager",
+    "C-Suite",
+    "Regional Manager",
+    "Facility Contacts",
+  ]);
+  sequence.forEach((context) => {
+    expect(context.workbookTabs).toEqual(
+      context.includedFacilityIds.map((facilityId) => ({
+        "facility-1": "Synthetic North",
+        "facility-2": "Synthetic South",
+        "facility-3": "Synthetic East",
+      })[facilityId]),
+    );
+  });
 });
 
 test("one facility context uses that facility attachment without mutating source rows", () => {

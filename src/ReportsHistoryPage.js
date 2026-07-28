@@ -44,6 +44,7 @@ export function ReportsHistoryPage({
   displayDate,
   downloadGeneratedFacilityReport,
   downloadHistoricalFacilityReport,
+  downloadReportReviewWorkbook,
   eligibilityForReportRows,
   exportAtsUpdatePacketExcel,
   exportFacilityWorkbooks,
@@ -187,8 +188,8 @@ export function ReportsHistoryPage({
 
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <Button primary onClick={() => previewSelectedFacilityReports()} disabled={!reportingActionState.selectedPreviewableReportIds.length}>Review Report</Button>
-                <Button subtle onClick={() => copyReportEmailContent(reviewBody, "Email body")} disabled={!reportingActionState.selectedEmailReportIds.length}>Copy Email Body</Button>
-                <Button subtle onClick={exportWeeklyFullDataWorkbook} disabled={!reportingActionState.selectedDownloadableReportIds.length}>Download Workbook</Button>
+                <Button subtle onClick={() => copyReportEmailContent(reviewBody, "Email body")} disabled={!reportingActionState.selectedEmailReportIds.length || reportingActionState.selectedEmailReportIds.length !== selectedFacilityActionRows.length}>Copy Email Body</Button>
+                <Button subtle onClick={downloadReportReviewWorkbook} disabled={!reportingActionState.selectedDownloadableReportIds.length || reportingActionState.selectedDownloadableReportIds.length !== selectedFacilityActionRows.length}>Download Workbook</Button>
                 <Button subtle disabled={!selectedFacilityActionRows.length} onClick={() => saveReportsToHistory(selectedFacilityActionRows, "Draft Generated")}>Save Draft to History</Button>
                 <Button subtle disabled={!reportingActionState.selectedMarkReviewedReportIds.length} onClick={markSelectedFacilityReportsReviewed}>Mark Reviewed</Button>
                 <Button subtle disabled={!reportingActionState.selectedMarkSentReportIds.length} onClick={markSelectedFacilityReportsSent}>Mark Sent</Button>

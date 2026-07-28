@@ -72,6 +72,7 @@ import { WeeklyReportingPage } from "./WeeklyReportingPage";
 import { ReportsHistoryPage } from "./ReportsHistoryPage";
 import { normalizeReportsHistoryDestination } from "./reportsHistoryNavigation";
 import {
+  buildCanonicalReportScope,
   buildCanonicalReportContext,
   policyRowsForReportAction as resolvePolicyRowsForReportAction,
   readReportReviewTarget,
@@ -14554,8 +14555,18 @@ function rowifyCandidate(item = {}) {
     return sheets;
   }
 
-  function buildAllFacilityWorkbookSheets() {
-    const models = reportFacilityRecords.map((facility) => facilityReportModel(facility.facilityId));
+  function buildFacilityScopeWorkbookSheets(includedFacilityIds = []) {
+    const facilityIds = new Set(includedFacilityIds.map((value) => String(value || "").trim()).filter(Boolean));
+    const models = Array.from(facilityIds).map((facilityId) => facilityReportModel(facilityId));
+    const scopedIncludedReportRows = includedReportRows.filter((item) => {
+      const facility = reportFacilityRecord(
+        item.facilityId
+          || item.canonicalFacilityName
+          || item.site
+          || item.formSnapshot?.siteName,
+      );
+      return facilityIds.has(facility?.facilityId);
+    });
     const candidateColumns = ["Candidate", "Position", "Facility ID", "Facility", "Original Facility Label", "Requisition ID", "Req Number", "Submitted", "Current Status", "Next Action", "Awaiting Feedback", "Pending Offer", "Interview Date", "Interview Time", "Booking Status", "Calendar Source", "Tentative Start", "Risk", "Attention", "Timing Risk", "Delay Type", "Next Recommended Timing Action", "Outreach Response Time", "Outreach Response Bucket", "Submittal To Interview", "Submittal To Interview Bucket", "Interview To Decision", "Interview To Decision Bucket", "HR Response Time", "HR Response Bucket"];
     const openReqs = models.flatMap((model) => model.openReqs);
     const activeRows = models.flatMap((model) => model.activeCandidates);
@@ -14564,8 +14575,10 @@ function rowifyCandidate(item = {}) {
     const startRows = models.flatMap((model) => model.hiresTentativeStarts);
     const leadershipReqs = models.flatMap((model) => model.leadershipReqs);
     const riskRows = models.flatMap((model) => model.riskCandidates);
+    const allFacilitiesIncluded = facilityIds.size === reportFacilityRecords.length
+      && reportFacilityRecords.every((facility) => facilityIds.has(facility.facilityId));
     const sheets = [
-      { name: "All Facilities Summary", columns: ["Metric", "Value"], rows: [
+      { name: allFacilitiesIncluded ? "All Facilities Summary" : "Report Scope Summary", columns: ["Metric", "Value"], rows: [
         { Metric: "Facilities", Value: models.length },
         { Metric: "Open Requisitions", Value: openReqs.length },
         { Metric: "Active Candidates", Value: activeRows.length },
@@ -14582,20 +14595,27 @@ function rowifyCandidate(item = {}) {
       { name: "Hires and Starts", columns: candidateColumns, rows: startRows.map(rowifyCandidate) },
       { name: "Leadership Openings", columns: ["Position", "Requisition ID", "Req Number", "Unique ID", "FTE", "Shift", "Openings", "Employment Type", "Facility ID", "Facility", "Original Facility Label", "Status"], rows: leadershipReqs.map(rowifyReq) },
       { name: "Risk and Attention", columns: candidateColumns, rows: riskRows.map(rowifyCandidate) },
-      { name: "Candidate Timing", columns: ["Candidate", "Facility", "Req Number", "Position", "Main Stage", "Current Action Status", "Last Action Date", "Days Since Last Action", "Delay Type", "Next Recommended Action", "Candidate Timing Risk", "Initial Outreach Sent", "Candidate First Response", "Outreach Response Time", "Outreach Response Bucket", "Submitted To Facility", "Interview Scheduled", "Actual Interview", "Submittal To Interview", "Submittal To Interview Bucket", "Interview To Decision", "Interview To Decision Bucket", "HR Request Sent", "HR Response Received", "HR Response Time", "HR Response Bucket", "Final Outcome", "Made It Through Process"], rows: includedReportRows.map((item) => {
+      { name: "Candidate Timing", columns: ["Candidate", "Facility", "Req Number", "Position", "Main Stage", "Current Action Status", "Last Action Date", "Days Since Last Action", "Delay Type", "Next Recommended Action", "Candidate Timing Risk", "Initial Outreach Sent", "Candidate First Response", "Outreach Response Time", "Outreach Response Bucket", "Submitted To Facility", "Interview Scheduled", "Actual Interview", "Submittal To Interview", "Submittal To Interview Bucket", "Interview To Decision", "Interview To Decision Bucket", "HR Request Sent", "HR Response Received", "HR Response Time", "HR Response Bucket", "Final Outcome", "Made It Through Process"], rows: scopedIncludedReportRows.map((item) => {
         const timing = candidateTimingFor(item);
         return { Candidate: timing.candidateName, Facility: timing.facility, "Req Number": timing.reqNumber, Position: timing.position, "Main Stage": timing.mainStage, "Current Action Status": timing.currentActionStatus, "Last Action Date": timing.lastActionDate, "Days Since Last Action": timing.daysSinceLastAction, "Delay Type": timing.delayType, "Next Recommended Action": timing.nextRecommendedAction, "Candidate Timing Risk": timing.candidateTimingRisk, "Initial Outreach Sent": timing.initialOutreachSentAt, "Candidate First Response": timing.candidateFirstResponseAt, "Outreach Response Time": timing.outreachResponseTime, "Outreach Response Bucket": timing.outreachResponseBucket, "Submitted To Facility": timing.candidateSubmittedToFacilityAt, "Interview Scheduled": timing.interviewScheduledAt, "Actual Interview": timing.actualInterviewAt, "Submittal To Interview": timing.submittalToInterviewScheduledTime, "Submittal To Interview Bucket": timing.submittalToInterviewScheduledBucket, "Interview To Decision": timing.interviewToDecisionTime, "Interview To Decision Bucket": timing.interviewToDecisionBucket, "HR Request Sent": timing.hrVerificationRequestSentAt, "HR Response Received": timing.hrVerificationResponseReceivedAt, "HR Response Time": timing.hrResponseTime, "HR Response Bucket": timing.hrResponseBucket, "Final Outcome": timing.finalCandidateOutcome, "Made It Through Process": timing.candidateMadeItThroughProcess };
       }) },
-      { name: "ATS Cleanup", columns: ["Candidate", "Requisition ID", "Req Number", "Position", "Facility ID", "Facility", "Original Facility Label", "Status", "Next Action"], rows: includedReportRows.map((item) => ({ Candidate: item.candidate || "", "Requisition ID": item.requisitionId || "", "Req Number": item.requisitionNumber || item.reqNumber || item.formSnapshot?.reqNumber || "", Position: item.position || "", "Facility ID": item.facilityId || "", Facility: item.canonicalFacilityName || item.site || "Unmapped Facility", "Original Facility Label": item.originalFacilityLabel || "", Status: item.status || "", "Next Action": item.nextAction || "" })) },
+      { name: "ATS Cleanup", columns: ["Candidate", "Requisition ID", "Req Number", "Position", "Facility ID", "Facility", "Original Facility Label", "Status", "Next Action"], rows: scopedIncludedReportRows.map((item) => ({ Candidate: item.candidate || "", "Requisition ID": item.requisitionId || "", "Req Number": item.requisitionNumber || item.reqNumber || item.formSnapshot?.reqNumber || "", Position: item.position || "", "Facility ID": item.facilityId || "", Facility: item.canonicalFacilityName || item.site || "Unmapped Facility", "Original Facility Label": item.originalFacilityLabel || "", Status: item.status || "", "Next Action": item.nextAction || "" })) },
       { name: "No Opening Facilities", columns: ["Facility", "Status"], rows: models.filter((model) => !model.openReqs.length).map((model) => ({ Facility: model.facility, Status: "No current openings this week" })) },
     ];
-    if (reportInclusions.closedRequisitions) sheets.push({ name: "Archived Requisitions", columns: ["Position", "Requisition ID", "Req Number", "Unique ID", "FTE", "Shift", "Openings", "Employment Type", "Facility ID", "Facility", "Original Facility Label", "Status"], rows: canonicalReportingModel.requisitions.filter((record) => !isLiveRequisition(record.source)).map((record) => rowifyReq(record.reportingItem)) });
+    if (reportInclusions.closedRequisitions) sheets.push({ name: "Archived Requisitions", columns: ["Position", "Requisition ID", "Req Number", "Unique ID", "FTE", "Shift", "Openings", "Employment Type", "Facility ID", "Facility", "Original Facility Label", "Status"], rows: canonicalReportingModel.requisitions.filter((record) => facilityIds.has(record.facilityId) && !isLiveRequisition(record.source)).map((record) => rowifyReq(record.reportingItem)) });
     models.forEach((model) => sheets.push({ name: model.facility, columns: ["Section", "Name", "Position", "Req Number", "Status", "Notes"], rows: [
       ...model.openReqs.map((req) => ({ Section: "Open Requisition", Name: req.positionTitle || "", Position: req.positionTitle || "", "Req Number": req.reqNumber || "", Status: req.status || "Active", Notes: `${fteLabel(req.fte) || "N/A"} | ${req.shiftPreference || "N/A"} | ${openingsForReq(req)} openings` })),
       ...model.activeCandidates.map((item) => ({ Section: "Candidate", Name: item.candidate || "", Position: item.position || "", "Req Number": item.reqNumber || item.formSnapshot?.reqNumber || "", Status: item.status || "", Notes: item.nextAction || "" })),
       ...model.riskCandidates.map((item) => ({ Section: "Risk", Name: item.candidate || "", Position: item.position || "", "Req Number": item.reqNumber || item.formSnapshot?.reqNumber || "", Status: riskFor(item), Notes: stuckReasonFor(item) || "" })),
     ] }));
     return sheets;
+  }
+
+  function buildAllFacilityWorkbookSheets(rows) {
+    const includedFacilityIds = rows === undefined
+      ? reportFacilityRecords.map((facility) => facility.facilityId)
+      : buildCanonicalReportScope({ audience: "Facility", rows }).includedFacilityIds;
+    return buildFacilityScopeWorkbookSheets(includedFacilityIds);
   }
 
   function selectReportsReviewAudience(audience) {
@@ -14606,21 +14626,27 @@ function rowifyCandidate(item = {}) {
   }
 
   const reportReviewDefinition = reportAudienceDefinition(reportsReviewAudience);
-  const reportReviewContent = selectedAudienceEmailContent(
-    selectedFacilityActionRows,
-    reportReviewDefinition.audience,
-  );
-  const reportReviewWorkbookSheets = reportReviewDefinition.audience === "Facility"
-    && selectedFacilityActionRows.length === 1
-    ? facilityWorkbookSheets(facilityReportModel(
-      selectedFacilityActionRows[0].facilityId
-        || selectedFacilityActionRows[0].id
-        || selectedFacilityActionRows[0].facility,
-    ))
-    : buildAllFacilityWorkbookSheets();
-  const reportReviewContext = buildCanonicalReportContext({
+  const reportReviewScope = buildCanonicalReportScope({
     audience: reportReviewDefinition.audience,
     rows: selectedFacilityActionRows,
+    reportType: selectedReportType,
+    recipient: selectedRecipientGroup,
+    recipientGroup: selectedRecipientGroup,
+  });
+  const reportReviewContent = selectedAudienceEmailContent(
+    selectedFacilityActionRows,
+    reportReviewScope.audience,
+  );
+  const reportReviewWorkbookSheets = reportReviewScope.audience === "Facility"
+    && reportReviewScope.includedFacilityIds.length === 1
+    ? facilityWorkbookSheets(facilityReportModel(
+      reportReviewScope.includedFacilityIds[0],
+    ))
+    : buildFacilityScopeWorkbookSheets(reportReviewScope.includedFacilityIds);
+  const reportReviewContext = buildCanonicalReportContext({
+    audience: reportReviewScope.audience,
+    rows: selectedFacilityActionRows,
+    scope: reportReviewScope,
     reportStartDate,
     reportEndDate,
     content: reportReviewContent,
@@ -14732,10 +14758,13 @@ function rowifyCandidate(item = {}) {
       setCopyNotice("Select at least one facility report before copying.");
       return;
     }
+    if (rows.length !== selectedFacilityActionRows.length) {
+      setCopyNotice("Copy Email Body is unavailable because one or more selected reports cannot be prepared for email.");
+      return;
+    }
     if (blockReportAction("canPrepareEmail", rows, "Copying the report email")) return;
-    const body = facilityReportBundle(rows);
-    safeCopy(body);
-    setCopyNotice("Selected facility report email copied. Report status was not changed.");
+    safeCopy(reportReviewContext.body);
+    setCopyNotice(`${reportReviewContext.audience} report email copied. Report status was not changed.`);
   }
 
   function copyReportEmailContent(value, label = "Email content") {
@@ -14750,19 +14779,33 @@ function rowifyCandidate(item = {}) {
       setCopyNotice("Select at least one facility report before downloading.");
       return;
     }
-    if (blockReportAction("canDownloadWorkbook", rows, "Workbook download")) return;
-    if (rows.length === 1) {
-      const model = facilityReportModel(rows[0].facilityId || rows[0].id || rows[0].facility);
-      downloadExcelWorkbook(`welcomeflow-${safeExcelSheetName(model.facility).replace(/\s+/g, "-").toLowerCase()}-${reportStartDate}.xls`, facilityWorkbookSheets(model));
-    } else {
-      downloadExcelWorkbook(`welcomeflow-facility-reports-${reportStartDate}.xls`, buildAllFacilityWorkbookSheets());
+    if (rows.length !== selectedFacilityActionRows.length) {
+      setCopyNotice("Download Combined Workbook is unavailable because one or more selected reports cannot be downloaded.");
+      return;
     }
-    setCopyNotice("Selected facility reports downloaded. Report status was not changed.");
+    if (blockReportAction("canDownloadWorkbook", rows, "Workbook download")) return;
+    downloadExcelWorkbook(reportReviewContext.attachmentName, reportReviewContext.workbookSheets);
+    setCopyNotice(`${reportReviewContext.audience} workbook downloaded for the selected report scope. Report status was not changed.`);
   }
 
   function exportWeeklyFullDataWorkbook() {
     if (blockReportAction("canDownloadWorkbook", selectedFacilityActionRows, "All-facility workbook download")) return;
     exportFullDataWorkbook();
+  }
+
+  function downloadReportReviewWorkbook() {
+    const rows = selectedDownloadableReportRows;
+    if (!rows.length || !reportReviewContext.workbookSheets.length) {
+      setCopyNotice("No selected reports are eligible for this workbook download.");
+      return;
+    }
+    if (rows.length !== selectedFacilityActionRows.length) {
+      setCopyNotice("Download Workbook is unavailable because one or more selected reports cannot be downloaded.");
+      return;
+    }
+    if (blockReportAction("canDownloadWorkbook", rows, "Report review workbook download")) return;
+    downloadExcelWorkbook(reportReviewContext.attachmentName, reportReviewContext.workbookSheets);
+    setCopyNotice(`${reportReviewContext.audience} workbook downloaded for ${reportReviewContext.includedFacilityIds.length} facilit${reportReviewContext.includedFacilityIds.length === 1 ? "y" : "ies"}. Report status was not changed.`);
   }
 
   function downloadGeneratedFacilityReport(row) {
@@ -14792,6 +14835,10 @@ function rowifyCandidate(item = {}) {
     const rows = selectedDownloadableReportRows;
     if (!rows.length) {
       setCopyNotice("Select at least one facility report before downloading.");
+      return;
+    }
+    if (rows.length !== selectedFacilityActionRows.length) {
+      setCopyNotice("Download Separate Facility Workbooks is unavailable because one or more selected reports cannot be downloaded.");
       return;
     }
     if (blockReportAction("canDownloadWorkbook", rows, "Facility workbook download")) return;
@@ -19320,6 +19367,7 @@ function rowifyCandidate(item = {}) {
             displayDate,
             downloadGeneratedFacilityReport,
             downloadHistoricalFacilityReport,
+            downloadReportReviewWorkbook,
             eligibilityForReportRows,
             exportAtsUpdatePacketExcel,
             exportFacilityWorkbooks,

@@ -106,6 +106,7 @@ function baseProps(overrides = {}) {
     displayDate: jest.fn((value) => value),
     downloadGeneratedFacilityReport: jest.fn(),
     downloadHistoricalFacilityReport: jest.fn(),
+    downloadReportReviewWorkbook: jest.fn(),
     eligibilityForReportRows: jest.fn(() => allowedEligibility),
     exportAtsUpdatePacketExcel: jest.fn(),
     exportFacilityWorkbooks: jest.fn(),
@@ -302,6 +303,24 @@ test("missing contact blocks email actions but permits workbook review", () => {
   expect(screen.getByRole("button", { name: "Mark Sent" })).toBeDisabled();
 });
 
+test("mixed downloadable and blocked selections cannot produce a partially scoped workbook", () => {
+  const blocked = { ...reportRow, id: "facility-2", facilityId: "facility-2", status: "Blocked" };
+  render(<ReportsHistoryPage {...baseProps({
+    selectedFacilityActionRows: [reportRow, blocked],
+    reportingActionState: {
+      ...allowedActionState,
+      selectedReportIds: [reportRow.id, blocked.id],
+      selectedPreviewableReportIds: [reportRow.id, blocked.id],
+      selectedDownloadableReportIds: [reportRow.id],
+      selectedEmailReportIds: [reportRow.id],
+    },
+  })} />);
+
+  expect(screen.getAllByRole("button", { name: "Review Report" })[0]).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Copy Email Body" })).toBeDisabled();
+  expect(screen.getAllByRole("button", { name: "Download Workbook" })[0]).toBeDisabled();
+});
+
 test("renders nonblocking reporting warnings alongside the review details", () => {
   const eligibility = {
     ...allowedEligibility,
@@ -319,7 +338,7 @@ test("copy, download, draft, reviewed, and sent callbacks run only from explicit
   render(<ReportsHistoryPage {...props} />);
 
   expect(props.copyReportEmailContent).not.toHaveBeenCalled();
-  expect(props.exportWeeklyFullDataWorkbook).not.toHaveBeenCalled();
+  expect(props.downloadReportReviewWorkbook).not.toHaveBeenCalled();
   expect(props.saveReportsToHistory).not.toHaveBeenCalled();
   expect(props.markSelectedFacilityReportsReviewed).not.toHaveBeenCalled();
   expect(props.markSelectedFacilityReportsSent).not.toHaveBeenCalled();
@@ -331,7 +350,7 @@ test("copy, download, draft, reviewed, and sent callbacks run only from explicit
   fireEvent.click(screen.getByRole("button", { name: "Mark Sent" }));
 
   expect(props.copyReportEmailContent).toHaveBeenCalledWith("Synthetic preview body", "Email body");
-  expect(props.exportWeeklyFullDataWorkbook).toHaveBeenCalledTimes(1);
+  expect(props.downloadReportReviewWorkbook).toHaveBeenCalledTimes(1);
   expect(props.saveReportsToHistory).toHaveBeenCalledWith([reportRow], "Draft Generated");
   expect(props.markSelectedFacilityReportsReviewed).toHaveBeenCalledTimes(1);
   expect(props.markSelectedFacilityReportsSent).toHaveBeenCalledTimes(1);

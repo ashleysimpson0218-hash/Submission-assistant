@@ -493,7 +493,8 @@ test("mixed selections expose exact transition counts without making ineligible 
 
   expect(screen.getByText("1 Ready")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Review 1 Ready Reports" })).toBeEnabled();
-  expect(screen.getByText(/2 selected · 2 available for diagnostic preview · 1 ready · 1 eligible to mark reviewed · 0 eligible to mark sent/)).toBeInTheDocument();
+  expect(screen.getByText(/2 selected · 2 available for diagnostic preview · 1 downloadable · 1 ready · 1 eligible to mark reviewed · 0 eligible to mark sent/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Download Combined Workbook" })).toBeDisabled();
 });
 
 test("renders the five-step workflow in order with the active step and exact scope", () => {
