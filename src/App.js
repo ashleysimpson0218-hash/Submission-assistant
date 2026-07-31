@@ -2161,7 +2161,11 @@ function appOrigin() {
 
 function bookingRequestLinkForLead(lead = {}) {
   if (!lead?.id) return lead.bookingLink || "";
-  return `${appOrigin()}/schedule/${encodeURIComponent(lead.id)}`;
+  return `${appOrigin()}/schedule/${encodeURIComponent(lead.id)}?workspace=${encodeURIComponent(CLOUD_WORKSPACE_ID)}`;
+}
+
+function bookingApiUrl(leadId = "") {
+  return `/api/book-screening?leadId=${encodeURIComponent(leadId)}&workspaceId=${encodeURIComponent(CLOUD_WORKSPACE_ID)}`;
 }
 
 function LoginPage({ mode, setMode, onEnter, soundEnabled, setSoundEnabled }) {
@@ -5779,7 +5783,7 @@ function PublicBookingPage({ leadId }) {
         return;
       }
       try {
-        const response = await fetch(`/api/book-screening?leadId=${encodeURIComponent(leadId)}`);
+        const response = await fetch(bookingApiUrl(leadId));
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data?.error || "This scheduling link could not be loaded.");
         if (cancelled) return;
@@ -5817,10 +5821,10 @@ function PublicBookingPage({ leadId }) {
     setSaving(true);
     setError("");
     try {
-      const response = await fetch(`/api/book-screening?leadId=${encodeURIComponent(leadId)}`, {
+      const response = await fetch(bookingApiUrl(leadId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, workspaceId: CLOUD_WORKSPACE_ID, leadId }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data?.error || "Your request could not be saved.");
