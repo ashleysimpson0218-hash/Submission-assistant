@@ -3549,9 +3549,13 @@ function publicBookingLeadId() {
 
 async function sendWelcomeFlowEmail({ to, subject, body, cc, replyTo, metadata } = {}) {
   if (ownerUatMode) throw new Error("Email is disabled in Owner UAT.");
+  if (!supabase) throw new Error("Authenticated email is not available in this environment.");
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  const accessToken = sessionData?.session?.access_token || "";
+  if (sessionError || !accessToken) throw new Error("Sign in with an authenticated WelcomeFlow account before sending email.");
   const response = await fetch("/api/send-email", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
     body: JSON.stringify({ to, subject, body, cc, replyTo, metadata }),
   });
   const data = await response.json().catch(() => ({}));
