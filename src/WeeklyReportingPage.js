@@ -148,7 +148,6 @@ export function WeeklyReportingPage(props) {
     selectAllMatchingFacilityReports,
     selectAllVisibleFacilityReports,
     selectedFacility,
-    selectedFacilityActionEligibility,
     selectedFacilityActionRows,
     selectedFacilityPolicyRows,
     selectedFacilityReports,
