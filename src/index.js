@@ -45,6 +45,7 @@ class WelcomeFlowErrorBoundary extends React.Component {
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 const runtimeConfig = readRuntimeConfig();
+const safeRuntimeErrors = runtimeConfig.isUat || process.env.NODE_ENV === 'production';
 
 if (isMaintenanceModeEnabled()) {
   root.render(
@@ -63,7 +64,7 @@ if (isMaintenanceModeEnabled()) {
   const ownerUatAuthImport = runtimeConfig.isUat ? import('./OwnerUatAuthGate') : Promise.resolve({ default: null });
   Promise.all([applicationImport, ownerUatAuthImport]).then(([{ default: App }, { default: OwnerUatAuthGate }]) => {
     const application = (
-      <WelcomeFlowErrorBoundary safeErrorsOnly={runtimeConfig.isUat}>
+      <WelcomeFlowErrorBoundary safeErrorsOnly={safeRuntimeErrors}>
         <App />
       </WelcomeFlowErrorBoundary>
     );
@@ -74,8 +75,8 @@ if (isMaintenanceModeEnabled()) {
     );
   }).catch((error) => {
     root.render(
-      <WelcomeFlowErrorBoundary safeErrorsOnly={runtimeConfig.isUat}>
-        <div>{runtimeConfig.isUat ? "The protected Owner UAT application could not be loaded." : String(error?.message || error)}</div>
+      <WelcomeFlowErrorBoundary safeErrorsOnly={safeRuntimeErrors}>
+        <div>{safeRuntimeErrors ? "WelcomeFlow could not be loaded safely. Reload and try again." : String(error?.message || error)}</div>
       </WelcomeFlowErrorBoundary>
     );
   });

@@ -19,7 +19,7 @@ test("UAT client contains no service credential", () => {
 
 test("UAT stores no workspace or candidate backup in browser storage", () => {
   const app = source("src/App.js");
-  expect(app).toMatch(/if \(ownerUatMode\) return fallback/);
+  expect(app).toMatch(/if \(ownerUatMode \|\| acceptanceMode\) return fallback/);
   expect(app).toMatch(/if \(ownerUatMode\) return;/);
 });
 

@@ -1,8 +1,11 @@
 const MAX_BODY_CHARS = 12000;
 const MAX_PAYLOAD_BYTES = 64 * 1024;
 const MAX_RECIPIENTS = 20;
-const RATE_WINDOW_MS = 60 * 1000;
-const rateBuckets = new Map();
+const {
+  authenticatedUser,
+  consumeSharedRateLimit,
+  requestPayloadBytes,
+} = require("../server/welcomeflowApiSecurity");
 
 function json(res, status, payload) {
   res.statusCode = status;
@@ -16,6 +19,8 @@ function cleanEmailList(value) {
 }
 
 function cleanText(value, limit = 500) {
+  // The NUL match is intentional: reject control-byte injection at the API boundary.
+  // eslint-disable-next-line no-control-regex
   return String(value || "").replace(/\u0000/g, "").trim().slice(0, limit);
 }
 
@@ -24,41 +29,6 @@ function configuredList(name) {
     .split(/[;,\s]+/)
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean);
-}
-
-function bearerToken(req = {}) {
-  const value = String(req.headers?.authorization || req.headers?.Authorization || "").trim();
-  const match = value.match(/^Bearer\s+([^\s]+)$/i);
-  return match?.[1] || "";
-}
-
-function requestPayloadBytes(req = {}) {
-  const headerBytes = Number(req.headers?.["content-length"] || req.headers?.["Content-Length"] || 0);
-  if (Number.isFinite(headerBytes) && headerBytes > 0) return headerBytes;
-  const serialized = typeof req.body === "string" ? req.body : JSON.stringify(req.body || {});
-  return Buffer.byteLength(serialized, "utf8");
-}
-
-async function authenticatedUser(req = {}) {
-  const token = bearerToken(req);
-  if (!token) return { error: "Authorization is required." };
-
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.REACT_APP_SUPABASE_URL;
-  const publishableKey = process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.REACT_APP_SUPABASE_ANON_KEY;
-  if (!url || !publishableKey) return { error: "Email authorization is not configured.", unavailable: true };
-
-  try {
-    const { createClient } = require("@supabase/supabase-js");
-    const client = createClient(url, publishableKey, {
-      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    });
-    const { data, error } = await client.auth.getUser(token);
-    if (error || !data?.user?.id) return { error: "Authorization is invalid or expired." };
-    return { user: data.user };
-  } catch {
-    return { error: "Authorization could not be verified.", unavailable: true };
-  }
 }
 
 function recipientsAreApproved(recipients = []) {
@@ -71,18 +41,6 @@ function recipientsAreApproved(recipients = []) {
     return !exact.has(normalized) && !domains.has(domain);
   });
   return { ok: denied.length === 0, deniedCount: denied.length };
-}
-
-function withinRateLimit(userId, now = Date.now()) {
-  const configuredLimit = Number(process.env.WELCOMEFLOW_EMAIL_RATE_LIMIT_PER_MINUTE || 10);
-  const limit = Number.isFinite(configuredLimit) && configuredLimit > 0 ? Math.floor(configuredLimit) : 10;
-  const prior = (rateBuckets.get(userId) || []).filter((timestamp) => now - timestamp < RATE_WINDOW_MS);
-  if (prior.length >= limit) {
-    rateBuckets.set(userId, prior);
-    return false;
-  }
-  rateBuckets.set(userId, [...prior, now]);
-  return true;
 }
 
 module.exports = async function handler(req, res) {
@@ -115,7 +73,17 @@ module.exports = async function handler(req, res) {
     json(res, authorization.unavailable ? 503 : 401, { error: authorization.error });
     return;
   }
-  if (!withinRateLimit(authorization.user.id)) {
+  const rateLimit = await consumeSharedRateLimit({
+    action: "send-email",
+    subject: `user:${authorization.user.id}`,
+    limit: process.env.WELCOMEFLOW_EMAIL_RATE_LIMIT_PER_MINUTE || 10,
+    windowSeconds: 60,
+  });
+  if (rateLimit.unavailable) {
+    json(res, 503, { error: rateLimit.error });
+    return;
+  }
+  if (!rateLimit.ok) {
     json(res, 429, { error: "Too many email requests. Try again shortly." });
     return;
   }
@@ -165,8 +133,12 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  const fromEmail = cleanText(process.env.RESEND_FROM_EMAIL || "assistant@welcomeflowhq.com", 120);
+  const fromEmail = cleanText(process.env.RESEND_FROM_EMAIL, 120);
   const fromName = cleanText(process.env.RESEND_FROM_NAME || "WelcomeFlow Assistant", 80);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fromEmail)) {
+    json(res, 503, { error: "Email sender configuration is unavailable." });
+    return;
+  }
   const from = `${fromName} <${fromEmail}>`;
 
   const resendPayload = {
@@ -201,5 +173,3 @@ module.exports = async function handler(req, res) {
     json(res, 502, { error: "The email provider could not complete this request." });
   }
 };
-
-module.exports.__resetRateLimitsForTests = () => rateBuckets.clear();
