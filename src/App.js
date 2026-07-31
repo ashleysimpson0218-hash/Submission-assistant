@@ -1133,10 +1133,10 @@ const DEFAULT_MANUAL_TRACKER_DRAFT = {
 
 const DEMO_FORM = {
   ...DEFAULT_FORM,
-  fullName: "Ashley Martin-Simpson",
-  legalName: "Ashley Martin-Simpson",
-  phoneNumber: "(770) 651-1051",
-  emailAddress: "ashley@example.com",
+  fullName: "Synthetic Candidate",
+  legalName: "Synthetic Candidate",
+  phoneNumber: "(555) 010-0101",
+  emailAddress: "candidate@example.test",
   location: "Douglasville, GA",
   selectedRequisitionId: "req-1",
   reqNumber: "1001",
@@ -1184,7 +1184,7 @@ function displayDate(value) {
 
 function loadStoredValue(key, fallback) {
   try {
-    if (ownerUatMode) return fallback;
+    if (ownerUatMode || acceptanceMode) return fallback;
     if (typeof window === "undefined") return fallback;
     const raw = window.localStorage.getItem(key);
     return raw ? JSON.parse(raw) : fallback;
@@ -1707,9 +1707,9 @@ const DEFAULT_SETTINGS = {
     { id: "site-1", siteName: "Demo Facility", siteType: "24-hour operation", location: "Douglasville, GA", siteAddress: "", siteCity: "Douglasville", siteState: "GA", siteZipCode: "", hiringManagerName: "", hiringManagerTitle: "", hiringManagerEmail: "", hiringManagerPhone: "", additionalHiringManagers: [], adminContactName: "", adminContactEmail: "", adminContactPhone: "", requiresShiftConfirmation: false, requiresStartDateApproval: false, requiresManagerReview: true, requiresCoverageFteRules: false, requiresClearance: false, requiresPayApproval: false, requiresBackground: false, requiresDrugScreen: false, siteSpecificQuestions: [], status: "Active", notes: "" },
   ],
   contacts: [
-    { id: "contact-hr", department: "HR Department", name: "HR Inbox", title: "Offer Letter / HR Onboarding", email: "hrinbox@teamcenturion.com", phone: "", duty: "Offer Letter / HR Onboarding", status: "Active", notes: "" },
-    { id: "contact-bg", department: "Background Check", name: "Background Check Team", title: "Background Check Questions", email: "tbryant1@teamcenturion.com", phone: "", duty: "Background Check", status: "Active", notes: "" },
-    { id: "contact-cred", department: "Credentialing", name: "Credentialing Team", title: "Credentialing Questions", email: "credentialing@teamcenturion.com", phone: "", duty: "Credentialing", status: "Active", notes: "" },
+    { id: "contact-hr", department: "HR Department", name: "HR Inbox", title: "Offer Letter / HR Onboarding", email: "", phone: "", duty: "Offer Letter / HR Onboarding", status: "Active", notes: "Configure an approved recipient before sending." },
+    { id: "contact-bg", department: "Background Check", name: "Background Check Team", title: "Background Check Questions", email: "", phone: "", duty: "Background Check", status: "Active", notes: "Configure an approved recipient before sending." },
+    { id: "contact-cred", department: "Credentialing", name: "Credentialing Team", title: "Credentialing Questions", email: "", phone: "", duty: "Credentialing", status: "Active", notes: "Configure an approved recipient before sending." },
   ],
   roles: [
     { id: "role-1", positionTitle: "Registered Nurse", roleCategory: "Healthcare", roleCredentialType: "Credentialed", roleScopeType: "All", roleScopeValue: "All", requiresLicense: true, requiresCpr: true, requiresCredentialing: true, requiresDegree: false, requiresBackground: true, requiresDrugScreen: false, requiresPayApproval: false, requiresFacilityClearance: true, requiresManagerApproval: true, requiresStartDate: true, requiresFte: true, requiresShift: true, requiresWorkExpectations: true, status: "Active" },
@@ -2160,12 +2160,22 @@ function appOrigin() {
 }
 
 function bookingRequestLinkForLead(lead = {}) {
-  if (!lead?.id) return lead.bookingLink || "";
-  return `${appOrigin()}/schedule/${encodeURIComponent(lead.id)}?workspace=${encodeURIComponent(CLOUD_WORKSPACE_ID)}`;
+  if (!/^[a-f0-9]{64}$/i.test(String(lead?.bookingAccessToken || ""))) return lead.bookingLink || "";
+  return `${appOrigin()}/schedule/${encodeURIComponent(lead.bookingAccessToken)}?workspace=${encodeURIComponent(CLOUD_WORKSPACE_ID)}`;
 }
 
-function bookingApiUrl(leadId = "") {
-  return `/api/book-screening?leadId=${encodeURIComponent(leadId)}&workspaceId=${encodeURIComponent(CLOUD_WORKSPACE_ID)}`;
+function bookingApiUrl(token = "") {
+  return `/api/book-screening?token=${encodeURIComponent(token)}&workspaceId=${encodeURIComponent(CLOUD_WORKSPACE_ID)}`;
+}
+
+function createBookingAccess() {
+  if (typeof window === "undefined" || typeof window.crypto?.getRandomValues !== "function") return { bookingAccessToken: "", bookingAccessExpiresAt: "" };
+  const bytes = new Uint8Array(32);
+  window.crypto.getRandomValues(bytes);
+  return {
+    bookingAccessToken: Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join(""),
+    bookingAccessExpiresAt: new Date(Date.now() + (30 * 24 * 60 * 60 * 1000)).toISOString(),
+  };
 }
 
 function LoginPage({ mode, setMode, onEnter, soundEnabled, setSoundEnabled }) {
@@ -2211,7 +2221,7 @@ function LoginPage({ mode, setMode, onEnter, soundEnabled, setSoundEnabled }) {
                   {["Home", "Hot Candidates", "Workspace", "Add Candidate", "Weekly Cleanup", "Reports", "Settings"].map((item, index) => <div key={item} style={{ padding: "9px 10px", borderRadius: 6, background: index === 0 ? "#6d28d9" : "transparent", color: index === 0 ? "#fff" : "rgba(255,255,255,0.78)", fontSize: 10, fontWeight: 800 }}>{item}</div>)}
                 </div>
                 <div style={{ padding: 18, color: "#160a43" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 18 }}><strong>Good morning, Ashley!</strong><span style={{ color: "#16a34a", fontSize: 10, fontWeight: 900 }}>Cloud Saved</span></div>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 18 }}><strong>Good morning, Recruiter!</strong><span style={{ color: "#16a34a", fontSize: 10, fontWeight: 900 }}>Cloud Saved</span></div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 18 }}>
                     {[["42", "Active"], ["8", "Ready"], ["15", "Pending"], ["4", "Interviews"]].map(([value, label]) => <div key={label} style={{ border: "1px solid #ebe6f8", borderRadius: 8, padding: 10, background: "#fff" }}><strong>{value}</strong><span style={{ display: "block", fontSize: 9, color: "#635b7c" }}>{label}</span></div>)}
                   </div>
@@ -5754,21 +5764,18 @@ function PricingPage({ plans = DEFAULT_PRICING_PLANS, selectedPlanId, billingCyc
     </div>
   );
 }
-function PublicBookingPage({ leadId }) {
+function PublicBookingPage({ bookingToken }) {
   const [loading, setLoading] = useState(true);
   const [lead, setLead] = useState(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [form, setForm] = useState({
-    candidateName: "",
-    candidateEmail: "",
-    candidatePhone: "",
     requestedDate: "",
     requestedTime: "",
     meetingType: "Phone",
     preferredContactMethod: "Phone",
-    timeZone: "Eastern Time (ET)",
+    timeZone: "",
     notes: "",
   });
 
@@ -5783,17 +5790,15 @@ function PublicBookingPage({ leadId }) {
         return;
       }
       try {
-        const response = await fetch(bookingApiUrl(leadId));
+        const response = await fetch(bookingApiUrl(bookingToken));
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data?.error || "This scheduling link could not be loaded.");
         if (cancelled) return;
         setLead(data.lead || null);
         setForm((prev) => ({
           ...prev,
-          candidateName: data.lead?.candidateName || "",
-          candidateEmail: data.lead?.email || "",
-          candidatePhone: data.lead?.phone || "",
           meetingType: data.lead?.phoneScreenType || "Phone",
+          timeZone: data.lead?.timeZone || "",
         }));
       } catch (loadError) {
         if (!cancelled) setError(loadError?.message || "This scheduling link could not be loaded.");
@@ -5803,10 +5808,10 @@ function PublicBookingPage({ leadId }) {
     }
     loadLead();
     return () => { cancelled = true; };
-  }, [leadId]);
+  }, [bookingToken]);
 
   function updateBookingField(key, value) {
-    setForm((prev) => ({ ...prev, [key]: key === "candidatePhone" ? formatCandidatePhone(value) : value }));
+    setForm((prev) => ({ ...prev, [key]: value }));
   }
 
   async function submitBookingRequest() {
@@ -5821,10 +5826,10 @@ function PublicBookingPage({ leadId }) {
     setSaving(true);
     setError("");
     try {
-      const response = await fetch(bookingApiUrl(leadId), {
+      const response = await fetch(bookingApiUrl(bookingToken), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, workspaceId: CLOUD_WORKSPACE_ID, leadId }),
+        body: JSON.stringify({ ...form, workspaceId: CLOUD_WORKSPACE_ID, token: bookingToken }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data?.error || "Your request could not be saved.");
@@ -5869,14 +5874,11 @@ function PublicBookingPage({ leadId }) {
               ) : (
                 <>
                   <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-                    <Field label="Your Name"><TextInput value={form.candidateName} onChange={(event) => updateBookingField("candidateName", event.target.value)} /></Field>
-                    <Field label="Email"><TextInput value={form.candidateEmail} onChange={(event) => updateBookingField("candidateEmail", event.target.value)} /></Field>
-                    <Field label="Phone"><TextInput value={form.candidatePhone} onChange={(event) => updateBookingField("candidatePhone", event.target.value)} placeholder="(000) 000-0000" /></Field>
                     <Field label="Preferred Date*"><TextInput type="date" value={form.requestedDate} onChange={(event) => updateBookingField("requestedDate", event.target.value)} /></Field>
-                    <Field label="Preferred Time*"><TimeEntryInput value={form.requestedTime} onChangeValue={(value) => updateBookingField("requestedTime", value)} /></Field>
+                    <Field label="Preferred Time*"><SelectInput value={form.requestedTime} onChange={(event) => updateBookingField("requestedTime", event.target.value)} options={lead.allowedSlots || []} placeholder="Select an available time" /></Field>
                     <Field label="Meeting Type"><SelectInput value={form.meetingType} onChange={(event) => updateBookingField("meetingType", event.target.value)} options={["Phone", "Teams", "Zoom"]} /></Field>
                     <Field label="Preferred Contact Method"><SelectInput value={form.preferredContactMethod} onChange={(event) => updateBookingField("preferredContactMethod", event.target.value)} options={["Phone", "Email", "Text"]} /></Field>
-                    <Field label="Time Zone"><SelectInput value={form.timeZone} onChange={(event) => updateBookingField("timeZone", event.target.value)} options={["Eastern Time (ET)", "Central Time (CT)", "Mountain Time (MT)", "Pacific Time (PT)"]} /></Field>
+                    <Field label="Time Zone"><TextInput value={form.timeZone} disabled /></Field>
                   </div>
                   <Field label="Notes / Alternate Times"><TextArea value={form.notes} onChange={(event) => updateBookingField("notes", event.target.value)} minHeight={88} placeholder="If this time is flexible, or you need another option, add it here." /></Field>
                   <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "space-between", alignItems: "center" }}>
@@ -5894,8 +5896,8 @@ function PublicBookingPage({ leadId }) {
 }
 
 export default function App() {
-  const bookingLeadId = publicBookingLeadId();
-  return bookingLeadId ? <PublicBookingPage leadId={bookingLeadId} /> : <RecruiterApp />;
+  const bookingToken = publicBookingLeadId();
+  return bookingToken ? <PublicBookingPage bookingToken={bookingToken} /> : <RecruiterApp />;
 }
 
 function RecruiterApp() {
@@ -6338,14 +6340,14 @@ function RecruiterApp() {
         setHistory(Array.isArray(cloud.data.history) ? cloud.data.history : []);
         setNotesText(typeof cloud.data.notes === "string" ? cloud.data.notes : "");
         const cloudIntakeDraft = cloud.data.intakeDraft || null;
-        const intakeDraftToRestore = intakeDraftClearedAfter(localIntakeDraft, cloudIntakeDraft) ? null : (cloudIntakeDraft || localIntakeDraft || null);
+        const intakeDraftToRestore = intakeDraftClearedAfter(localIntakeDraft, cloudIntakeDraft) ? null : (cloudIntakeDraft || (acceptanceMode ? null : localIntakeDraft) || null);
         restoreIntakeDraft(intakeDraftToRestore, intakeDraftToRestore?.activeIntakeDraftId || "");
-        setIntakeDrafts(Array.isArray(cloud.data.intakeDrafts) ? cloud.data.intakeDrafts : Array.isArray(localIntakeDrafts) ? localIntakeDrafts : []);
+        setIntakeDrafts(Array.isArray(cloud.data.intakeDrafts) ? cloud.data.intakeDrafts : !acceptanceMode && Array.isArray(localIntakeDrafts) ? localIntakeDrafts : []);
         setManualQueueItems(Array.isArray(cloud.data.manualQueueItems) ? cloud.data.manualQueueItems : []);
-        setCalendarEvents((Array.isArray(cloud.data.calendarEvents) ? cloud.data.calendarEvents : localCalendarEvents).map(normalizeInternalCalendarEvent));
+        setCalendarEvents((Array.isArray(cloud.data.calendarEvents) ? cloud.data.calendarEvents : acceptanceMode ? [] : localCalendarEvents).map(normalizeInternalCalendarEvent));
         setHotLeads(migrateHotLeadRecords(Array.isArray(cloud.data.hotLeads) ? cloud.data.hotLeads : []));
-        setHotLeadBulkDrafts(Array.isArray(cloud.data.hotLeadBulkDrafts) ? cloud.data.hotLeadBulkDrafts : Array.isArray(localHotLeadBulkDrafts) ? localHotLeadBulkDrafts : []);
-        setHotLeadWorkingReqId(cloud.data.hotLeadWorkingReqId || localHotLeadWorkingReqId || "");
+        setHotLeadBulkDrafts(Array.isArray(cloud.data.hotLeadBulkDrafts) ? cloud.data.hotLeadBulkDrafts : !acceptanceMode && Array.isArray(localHotLeadBulkDrafts) ? localHotLeadBulkDrafts : []);
+        setHotLeadWorkingReqId(cloud.data.hotLeadWorkingReqId || (acceptanceMode ? "" : localHotLeadWorkingReqId) || "");
         setReportHistory(Array.isArray(cloud.data.reportHistory) ? cloud.data.reportHistory : []);
         setReportInclusions({ ...DEFAULT_REPORT_INCLUSIONS, ...(cloud.data.reportInclusions || {}) });
         setCloudStatus(workspacePersistenceEnabled ? (ownerUatMode ? "Owner UAT authenticated workspace connected" : "Cloud storage connected") : "Autosave Disabled");
@@ -8482,6 +8484,7 @@ function RecruiterApp() {
       id: makeId("hot"),
       leadId: makeId("lead"),
       ...hotLeadDraft,
+      ...createBookingAccess(),
       selectedRequisitionId: hotLeadDraft.selectedRequisitionId || "",
       reqNumber: hotLeadDraft.reqNumber || "",
       uniqueIdNumber: hotLeadDraft.uniqueIdNumber || "",
@@ -8684,6 +8687,7 @@ function RecruiterApp() {
       ...leadBase,
       id: leadBase.id || makeId("hot"),
       leadId: leadBase.leadId || makeId("lead"),
+      ...createBookingAccess(),
       outreachStatus: "Outreach Needed",
       responseStatus: "",
       outreachAttempts: Number(leadBase.outreachAttempts || 0),
@@ -14754,6 +14758,7 @@ function rowifyCandidate(item = {}) {
     const lead = {
       ...DEFAULT_HOT_LEAD_DRAFT,
       id: makeId("hot"),
+      ...createBookingAccess(),
       candidateName: form.fullName || "Unnamed candidate",
       phone: form.phoneNumber || "",
       email: form.emailAddress || "",
@@ -15250,7 +15255,7 @@ function rowifyCandidate(item = {}) {
             <Card compact>
               <div style={{ display: "grid", gridTemplateColumns: isMedium ? "1fr" : "minmax(0, 1fr) 230px", gap: 16, alignItems: "center" }}>
                 <div>
-                  <h1 style={{ margin: 0, fontSize: 21, fontWeight: 950 }}>Good morning, Ashley!</h1>
+                  <h1 style={{ margin: 0, fontSize: 21, fontWeight: 950 }}>Good morning, Recruiter!</h1>
                   <div style={{ color: THEME.muted, fontSize: 12, marginTop: 5 }}>Here's what's happening with your recruiting pipeline today.</div>
                 </div>
                 <div aria-hidden="true" style={{ minHeight: 96, borderRadius: 8, background: `linear-gradient(135deg, ${THEME.blueBg}, ${THEME.panelAlt})`, border: `1px solid ${THEME.borderSoft}`, position: "relative", overflow: "hidden" }}>
@@ -15432,11 +15437,11 @@ function rowifyCandidate(item = {}) {
                   <div style={{ width: 118, height: 118, borderRadius: "50%", background: `linear-gradient(135deg, ${THEME.blueBg}, ${THEME.coralBg || THEME.panelAlt})`, border: `1px solid ${THEME.borderSoft}`, display: "grid", placeItems: "center", color: THEME.primary2, fontSize: 34, fontWeight: 950 }}>AM</div>
                   <div>
                     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                      <h2 style={{ margin: 0, fontSize: 22 }}>{settings.general.recruiterName || "Ashley Martin-Simpson"}</h2>
+                      <h2 style={{ margin: 0, fontSize: 22 }}>{settings.general.recruiterName || "Recruiter"}</h2>
                       <Badge tone="Interview">Recruiter</Badge>
                     </div>
-                    <div style={{ marginTop: 8, color: THEME.muted }}>{settings.general.recruiterEmail || "ashley@central54recruiting.com"}</div>
-                    <div style={{ marginTop: 5, color: THEME.muted }}>{settings.general.recruiterPhone || "(770) 651-1051"}</div>
+                    <div style={{ marginTop: 8, color: THEME.muted }}>{settings.general.recruiterEmail || "No recruiter email configured"}</div>
+                    <div style={{ marginTop: 5, color: THEME.muted }}>{settings.general.recruiterPhone || "No recruiter phone configured"}</div>
                     <div style={{ marginTop: 5, color: THEME.muted }}>Member since Jan 18, 2024</div>
                     <Button subtle onClick={() => setCopyNotice("Photo upload can be connected when account storage is added.")} style={{ marginTop: 16 }}>Change Photo</Button>
                   </div>
@@ -23088,7 +23093,7 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
   }
 
   function downloadContactsTemplate() {
-    downloadExcelWorkbook("welcomeflow-contacts-template.xls", [{ name: "Contacts Template", columns: CONTACT_TEMPLATE_COLUMNS, rows: [{ Department: "Background Check", "Contact Duty": "Background Check", Name: "Background Check Team", Title: "Background Check Questions", Email: "tbryant1@teamcenturion.com", Phone: "", Status: "Active", Notes: "Used for onboarding email step 2" }] }]);
+    downloadExcelWorkbook("welcomeflow-contacts-template.xls", [{ name: "Contacts Template", columns: CONTACT_TEMPLATE_COLUMNS, rows: [{ Department: "Background Check", "Contact Duty": "Background Check", Name: "Background Check Team", Title: "Background Check Questions", Email: "contact@example.test", Phone: "", Status: "Active", Notes: "Replace this test address with an approved recipient before use." }] }]);
   }
 
   function downloadRequisitionsTemplate() {

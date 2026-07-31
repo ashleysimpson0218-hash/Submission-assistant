@@ -1,3 +1,9 @@
+const {
+  authenticatedUser,
+  consumeSharedRateLimit,
+  requestPayloadBytes,
+} = require("../server/welcomeflowApiSecurity");
+
 if (process.env.WELCOMEFLOW_MAINTENANCE_MODE === "true" || process.env.WELCOMEFLOW_UAT_EXTERNAL_ACTIONS_DISABLED === "true") {
   module.exports = async function maintenanceHandler(req, res) {
     res.statusCode = 503;
@@ -5,7 +11,11 @@ if (process.env.WELCOMEFLOW_MAINTENANCE_MODE === "true" || process.env.WELCOMEFL
     res.end(JSON.stringify({ error: "WelcomeFlow is temporarily unavailable." }));
   };
 } else {
-const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+const MAX_REQUEST_BYTES = Math.ceil(MAX_UPLOAD_BYTES * 4 / 3) + 16 * 1024;
+const MAX_ARCHIVE_ENTRIES = 500;
+const MAX_ARCHIVE_ENTRY_BYTES = 16 * 1024 * 1024;
+const MAX_ARCHIVE_TOTAL_BYTES = 32 * 1024 * 1024;
 if (typeof global.DOMMatrix === "undefined") {
   global.DOMMatrix = class DOMMatrix {
     constructor() {
@@ -121,9 +131,12 @@ function readZipEntries(buffer) {
   }
   if (eocd < 0) throw new Error("ZIP directory was not found.");
   const totalEntries = source.readUInt16LE(eocd + 10);
+  if (totalEntries > MAX_ARCHIVE_ENTRIES) throw new Error("Archive contains too many entries.");
   let offset = source.readUInt32LE(eocd + 16);
   const entries = new Map();
+  let totalOutputBytes = 0;
   for (let item = 0; item < totalEntries; item += 1) {
+    if (offset < 0 || offset + 46 > source.length) throw new Error("Archive directory is invalid.");
     if (source.readUInt32LE(offset) !== 0x02014b50) break;
     const method = source.readUInt16LE(offset + 10);
     const compressedSize = source.readUInt32LE(offset + 20);
@@ -131,6 +144,7 @@ function readZipEntries(buffer) {
     const extraLength = source.readUInt16LE(offset + 30);
     const commentLength = source.readUInt16LE(offset + 32);
     const localOffset = source.readUInt32LE(offset + 42);
+    if (localOffset < 0 || localOffset + 30 > source.length) throw new Error("Archive entry is invalid.");
     const name = source.slice(offset + 46, offset + 46 + nameLength).toString("utf8");
     const localNameLength = source.readUInt16LE(localOffset + 26);
     const localExtraLength = source.readUInt16LE(localOffset + 28);
@@ -138,7 +152,10 @@ function readZipEntries(buffer) {
     const raw = source.slice(dataStart, dataStart + compressedSize);
     let content = Buffer.alloc(0);
     if (method === 0) content = raw;
-    else if (method === 8) content = zlib.inflateRawSync(raw);
+    else if (method === 8) content = zlib.inflateRawSync(raw, { maxOutputLength: MAX_ARCHIVE_ENTRY_BYTES });
+    if (content.length > MAX_ARCHIVE_ENTRY_BYTES) throw new Error("Archive entry is too large.");
+    totalOutputBytes += content.length;
+    if (totalOutputBytes > MAX_ARCHIVE_TOTAL_BYTES) throw new Error("Archive expands beyond the safe processing limit.");
     if (content.length) entries.set(name, content);
     offset += 46 + nameLength + extraLength + commentLength;
   }
@@ -202,6 +219,8 @@ function extractRtfTextServer(buffer) {
 }
 
 function extractPlainOrLegacyTextServer(buffer) {
+  // The NUL match is intentional: resume extraction must not retain embedded NULs.
+  // eslint-disable-next-line no-control-regex
   const utf8 = buffer.toString("utf8").replace(/\u0000/g, " ");
   const readable = utf8.match(/[\x20-\x7E\n\r\t]{4,}/g)?.join(" ") || utf8;
   return readable.replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
@@ -447,7 +466,7 @@ async function parseWithAffinda({ buffer, filename, mimeType }) {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    return { ok: false, status: response.status, error: payload.error || payload.message || "Affinda parsing failed.", provider: "Affinda" };
+    return { ok: false, status: response.status >= 400 && response.status < 500 ? 422 : 502, error: "The resume parser provider could not complete this request.", provider: "Affinda" };
   }
   const normalized = normalizeAffinda(payload);
   return { ok: true, provider: "Affinda", ...normalized };
@@ -456,11 +475,30 @@ async function parseWithAffinda({ buffer, filename, mimeType }) {
 module.exports = async function handler(req, res) {
   if (req.method !== "POST") return json(res, 405, { ok: false, error: "Method not allowed" });
   try {
+    if (requestPayloadBytes(req) > MAX_REQUEST_BYTES) return json(res, 413, { ok: false, error: "Resume file is too large for parsing. Maximum is 8MB." });
+
+    const authorization = await authenticatedUser(req);
+    if (!authorization.user) return json(res, authorization.unavailable ? 503 : 401, { ok: false, error: authorization.error });
+
+    const rateLimit = await consumeSharedRateLimit({
+      action: "parse-resume",
+      subject: `user:${authorization.user.id}`,
+      limit: process.env.WELCOMEFLOW_RESUME_RATE_LIMIT_PER_MINUTE || 6,
+      windowSeconds: 60,
+    });
+    if (rateLimit.unavailable) return json(res, 503, { ok: false, error: rateLimit.error });
+    if (!rateLimit.ok) return json(res, 429, { ok: false, error: "Too many resume parsing requests. Try again shortly." });
+
     const { filename = "resume", mimeType = "application/octet-stream", size = 0, base64 = "" } = req.body || {};
     if (!base64) return json(res, 400, { ok: false, error: "Missing resume file payload" });
-    if (Number(size || 0) > MAX_UPLOAD_BYTES) return json(res, 413, { ok: false, error: "Resume file is too large for parsing. Maximum is 8MB." });
+    if (typeof base64 !== "string" || base64.length > Math.ceil(MAX_UPLOAD_BYTES * 4 / 3) + 4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) {
+      return json(res, 413, { ok: false, error: "Resume file is too large or invalid for parsing. Maximum is 8MB." });
+    }
 
     const buffer = Buffer.from(base64, "base64");
+    if (buffer.length > MAX_UPLOAD_BYTES || (Number(size || 0) > 0 && Number(size) !== buffer.length)) {
+      return json(res, 413, { ok: false, error: "Resume file size validation failed." });
+    }
     const provider = String(process.env.RESUME_PARSER_PROVIDER || "affinda").toLowerCase();
     const result = provider === "affinda"
       ? await parseWithAffinda({ buffer, filename, mimeType })
@@ -470,7 +508,8 @@ module.exports = async function handler(req, res) {
 
     return json(res, result.ok ? 200 : result.status || 502, result);
   } catch (error) {
-    return json(res, 500, { ok: false, error: error.message || "Resume parser failed", provider: process.env.RESUME_PARSER_PROVIDER || "adapter" });
+    console.error("WelcomeFlow resume parsing failed", { code: error?.code || "", provider: process.env.RESUME_PARSER_PROVIDER || "adapter" });
+    return json(res, 500, { ok: false, error: "Resume parsing could not be completed safely.", provider: process.env.RESUME_PARSER_PROVIDER || "adapter" });
   }
 };
 }
