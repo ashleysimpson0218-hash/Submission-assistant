@@ -22,6 +22,8 @@ export function readWorkspaceRuntimeConfig(env = process.env) {
   const acceptanceMode = enabledFlag(firstConfigured(env, "REACT_APP_WELCOMEFLOW_ACCEPTANCE_MODE", "WELCOMEFLOW_ACCEPTANCE_MODE"));
   const autosaveValue = firstConfigured(env, "REACT_APP_WELCOMEFLOW_AUTOSAVE", "WELCOMEFLOW_AUTOSAVE");
   const autosaveEnabled = enabledFlag(autosaveValue, true);
+  const autosaveExplicitlyDisabled = ["false", "0", "off"].includes(autosaveValue.toLowerCase());
+  const browserPersistenceEnabled = autosaveEnabled;
   const expectedCounts = {
     candidates: expectedCount(env, "CANDIDATES"),
     facilities: expectedCount(env, "FACILITIES"),
@@ -36,7 +38,19 @@ export function readWorkspaceRuntimeConfig(env = process.env) {
     return { ok: false, error: "Acceptance mode requires an explicit WelcomeFlow workspace ID.", workspaceId, acceptanceMode, autosaveEnabled, expectedCounts, expectedFingerprint };
   }
   if (acceptanceMode && workspaceId === DEFAULT_WORKSPACE_ID) {
-    return { ok: false, error: "Acceptance mode refuses the default workspace.", workspaceId, acceptanceMode, autosaveEnabled, expectedCounts, expectedFingerprint };
+    return { ok: false, error: "Acceptance mode refuses the default workspace.", workspaceId, acceptanceMode, autosaveEnabled, browserPersistenceEnabled, expectedCounts, expectedFingerprint };
+  }
+  if (acceptanceMode && !autosaveExplicitlyDisabled) {
+    return {
+      ok: false,
+      error: "Acceptance mode requires REACT_APP_WELCOMEFLOW_AUTOSAVE=false so cloud and browser persistence remain disabled.",
+      workspaceId,
+      acceptanceMode,
+      autosaveEnabled,
+      browserPersistenceEnabled,
+      expectedCounts,
+      expectedFingerprint,
+    };
   }
   const missingExpectedCounts = Object.entries(expectedCounts).filter(([, value]) => value === null).map(([name]) => name);
   if (acceptanceMode && (missingExpectedCounts.length || !expectedFingerprint)) {
@@ -46,11 +60,21 @@ export function readWorkspaceRuntimeConfig(env = process.env) {
       workspaceId,
       acceptanceMode,
       autosaveEnabled,
+      browserPersistenceEnabled,
       expectedCounts,
       expectedFingerprint,
     };
   }
-  return { ok: true, workspaceId, acceptanceMode, autosaveEnabled, expectedCounts, expectedFingerprint };
+  return { ok: true, workspaceId, acceptanceMode, autosaveEnabled, browserPersistenceEnabled, expectedCounts, expectedFingerprint };
+}
+
+export function workspacePersistenceMode(runtime = {}) {
+  const configured = runtime.ok === true;
+  const acceptanceLocked = runtime.acceptanceMode === true;
+  return {
+    cloudEnabled: configured && runtime.autosaveEnabled === true && !acceptanceLocked,
+    browserEnabled: configured && runtime.browserPersistenceEnabled === true && !acceptanceLocked,
+  };
 }
 
 export function projectRefFromSupabaseUrl(value = "") {

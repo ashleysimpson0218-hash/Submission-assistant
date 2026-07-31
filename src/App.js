@@ -20,7 +20,7 @@ import {
   filterCommunicationReadinessReport,
 } from "./communicationReadiness";
 import { isFeatureFlagEnabled } from "./featureFlags";
-import { readRuntimeConfig } from "./runtimeConfig";
+import { readRuntimeConfig, workspacePersistenceMode } from "./runtimeConfig";
 import { getRuntimeSupabaseClient } from "./supabaseRuntimeClient";
 import { workspaceCounts, workspaceFingerprint, verifyAcceptanceWorkspace } from "./acceptanceWorkspace";
 import { AcceptanceWorkspaceGate } from "./AcceptanceWorkspaceGate";
@@ -162,7 +162,9 @@ const CLOUD_TABLE = "welcomeflow_workspace_state";
 const runtimeConfig = readRuntimeConfig();
 const CLOUD_WORKSPACE_ID = runtimeConfig.workspaceId || "default";
 const acceptanceMode = Boolean(runtimeConfig.acceptanceMode);
-const workspacePersistenceEnabled = runtimeConfig.autosaveEnabled !== false;
+const persistenceMode = workspacePersistenceMode(runtimeConfig);
+const workspacePersistenceEnabled = persistenceMode.cloudEnabled;
+const browserPersistenceEnabled = persistenceMode.browserEnabled;
 const testRuntime = assertTestRuntime(runtimeConfig);
 const ownerUatMode = Boolean(runtimeConfig.ok && runtimeConfig.isUat);
 if (runtimeConfig.ok) console.info("WelcomeFlow runtime", { environment: runtimeConfig.environment, projectRef: runtimeConfig.projectRef });
@@ -1245,7 +1247,7 @@ function loadStoredValue(key, fallback) {
 function saveStoredValue(key, value) {
   try {
     if (ownerUatMode) return;
-    if (!workspacePersistenceEnabled) return;
+    if (!browserPersistenceEnabled) return;
     if (typeof window !== "undefined") window.localStorage.setItem(key, JSON.stringify(value));
   } catch {}
 }
@@ -2211,7 +2213,11 @@ function appOrigin() {
 
 function bookingRequestLinkForLead(lead = {}) {
   if (!lead?.id) return lead.bookingLink || "";
-  return `${appOrigin()}/schedule/${encodeURIComponent(lead.id)}`;
+  return `${appOrigin()}/schedule/${encodeURIComponent(lead.id)}?workspace=${encodeURIComponent(CLOUD_WORKSPACE_ID)}`;
+}
+
+function bookingApiUrl(leadId = "") {
+  return `/api/book-screening?leadId=${encodeURIComponent(leadId)}&workspaceId=${encodeURIComponent(CLOUD_WORKSPACE_ID)}`;
 }
 
 function LoginPage({ mode, setMode, onEnter, soundEnabled, setSoundEnabled }) {
@@ -3601,9 +3607,13 @@ function publicBookingLeadId() {
 
 async function sendWelcomeFlowEmail({ to, subject, body, cc, replyTo, metadata } = {}) {
   if (ownerUatMode) throw new Error("Email is disabled in Owner UAT.");
+  if (!supabase) throw new Error("Authenticated email is not available in this environment.");
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  const accessToken = sessionData?.session?.access_token || "";
+  if (sessionError || !accessToken) throw new Error("Sign in with an authenticated WelcomeFlow account before sending email.");
   const response = await fetch("/api/send-email", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
     body: JSON.stringify({ to, subject, body, cc, replyTo, metadata }),
   });
   const data = await response.json().catch(() => ({}));
@@ -5827,7 +5837,7 @@ function PublicBookingPage({ leadId }) {
         return;
       }
       try {
-        const response = await fetch(`/api/book-screening?leadId=${encodeURIComponent(leadId)}`);
+        const response = await fetch(bookingApiUrl(leadId));
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data?.error || "This scheduling link could not be loaded.");
         if (cancelled) return;
@@ -5865,10 +5875,10 @@ function PublicBookingPage({ leadId }) {
     setSaving(true);
     setError("");
     try {
-      const response = await fetch(`/api/book-screening?leadId=${encodeURIComponent(leadId)}`, {
+      const response = await fetch(bookingApiUrl(leadId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, workspaceId: CLOUD_WORKSPACE_ID, leadId }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data?.error || "Your request could not be saved.");
@@ -6145,6 +6155,7 @@ function RecruiterApp() {
     fingerprint: "",
     counts: {},
     autosaveEnabled: workspacePersistenceEnabled,
+    browserPersistenceEnabled,
   });
   const [undoDepth, setUndoDepth] = useState(0);
   const intakeSectionRef = useRef(null);
@@ -6412,6 +6423,7 @@ function RecruiterApp() {
               fingerprint,
               counts: workspaceCounts(cloud.data),
               autosaveEnabled: workspacePersistenceEnabled,
+              browserPersistenceEnabled,
             });
           } catch (error) {
             setAcceptanceError(error?.message || "WelcomeFlow could not fingerprint the requested workspace.");
@@ -6569,18 +6581,18 @@ function RecruiterApp() {
     return () => window.removeEventListener("welcomeflow-sound", onSound);
   }, [soundEnabled]);
 
-  useEffect(() => { if (hasLoaded) saveStoredValue(STORAGE_KEY, settings); }, [settings, hasLoaded]);
-  useEffect(() => { if (hasLoaded) saveStoredValue(TRACKER_KEY, tracker); }, [tracker, hasLoaded]);
-  useEffect(() => { if (hasLoaded) saveStoredValue(HISTORY_KEY, history); }, [history, hasLoaded]);
-  useEffect(() => { if (hasLoaded) saveStoredValue(NOTES_KEY, notesText); }, [notesText, hasLoaded]);
-  useEffect(() => { if (hasLoaded) saveStoredValue(INTAKE_DRAFT_KEY, currentIntakeDraftSnapshot()); }, [currentIntakeDraftSnapshot, hasLoaded]);
-  useEffect(() => { if (hasLoaded) saveStoredValue(INTAKE_DRAFTS_KEY, intakeDrafts); }, [intakeDrafts, hasLoaded]);
-  useEffect(() => { if (hasLoaded) saveStoredValue(MANUAL_QUEUE_KEY, manualQueueItems); }, [manualQueueItems, hasLoaded]);
-  useEffect(() => { if (hasLoaded) saveStoredValue(CALENDAR_EVENTS_KEY, calendarEvents); }, [calendarEvents, hasLoaded]);
-  useEffect(() => { if (hasLoaded) saveStoredValue(HOT_LEADS_KEY, hotLeads); }, [hotLeads, hasLoaded]);
-  useEffect(() => { if (hasLoaded) saveStoredValue(HOT_LEAD_BULK_DRAFTS_KEY, hotLeadBulkDrafts); }, [hotLeadBulkDrafts, hasLoaded]);
-  useEffect(() => { if (hasLoaded) saveStoredValue(HOT_LEAD_WORKING_REQ_KEY, hotLeadWorkingReqId); }, [hotLeadWorkingReqId, hasLoaded]);
-  useEffect(() => { if (hasLoaded) saveStoredValue(REPORT_HISTORY_KEY, reportHistory); }, [reportHistory, hasLoaded]);
+  useEffect(() => { if (hasLoaded && browserPersistenceEnabled) saveStoredValue(STORAGE_KEY, settings); }, [settings, hasLoaded]);
+  useEffect(() => { if (hasLoaded && browserPersistenceEnabled) saveStoredValue(TRACKER_KEY, tracker); }, [tracker, hasLoaded]);
+  useEffect(() => { if (hasLoaded && browserPersistenceEnabled) saveStoredValue(HISTORY_KEY, history); }, [history, hasLoaded]);
+  useEffect(() => { if (hasLoaded && browserPersistenceEnabled) saveStoredValue(NOTES_KEY, notesText); }, [notesText, hasLoaded]);
+  useEffect(() => { if (hasLoaded && browserPersistenceEnabled) saveStoredValue(INTAKE_DRAFT_KEY, currentIntakeDraftSnapshot()); }, [currentIntakeDraftSnapshot, hasLoaded]);
+  useEffect(() => { if (hasLoaded && browserPersistenceEnabled) saveStoredValue(INTAKE_DRAFTS_KEY, intakeDrafts); }, [intakeDrafts, hasLoaded]);
+  useEffect(() => { if (hasLoaded && browserPersistenceEnabled) saveStoredValue(MANUAL_QUEUE_KEY, manualQueueItems); }, [manualQueueItems, hasLoaded]);
+  useEffect(() => { if (hasLoaded && browserPersistenceEnabled) saveStoredValue(CALENDAR_EVENTS_KEY, calendarEvents); }, [calendarEvents, hasLoaded]);
+  useEffect(() => { if (hasLoaded && browserPersistenceEnabled) saveStoredValue(HOT_LEADS_KEY, hotLeads); }, [hotLeads, hasLoaded]);
+  useEffect(() => { if (hasLoaded && browserPersistenceEnabled) saveStoredValue(HOT_LEAD_BULK_DRAFTS_KEY, hotLeadBulkDrafts); }, [hotLeadBulkDrafts, hasLoaded]);
+  useEffect(() => { if (hasLoaded && browserPersistenceEnabled) saveStoredValue(HOT_LEAD_WORKING_REQ_KEY, hotLeadWorkingReqId); }, [hotLeadWorkingReqId, hasLoaded]);
+  useEffect(() => { if (hasLoaded && browserPersistenceEnabled) saveStoredValue(REPORT_HISTORY_KEY, reportHistory); }, [reportHistory, hasLoaded]);
   useEffect(() => {
     if (!hasLoaded || reportingPeriodInitializedForWorkspace.current) return;
     reportingPeriodInitializedForWorkspace.current = true;
@@ -15705,6 +15717,7 @@ function rowifyCandidate(item = {}) {
     setAcceptanceVerifying(true);
     const result = verifyAcceptanceWorkspace({
       workspaceId: acceptanceDiagnostics.workspaceId,
+      expectedWorkspaceId: runtimeConfig.workspaceId,
       expectedCounts: runtimeConfig.expectedCounts,
       expectedFingerprint: runtimeConfig.expectedFingerprint,
       actualCounts: acceptanceDiagnostics.counts,

@@ -38,3 +38,9 @@ test("loaded diagnostics remain an interaction lock until Verify Workspace is us
   expect(screen.queryByText("Recruiter Workspace")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Start Weekly Review/i })).not.toBeInTheDocument();
 });
+
+test("verification remains disabled when the locked workspace failed to load", () => {
+  render(<AcceptanceWorkspaceGate diagnostics={{ ...diagnostics, status: "failed" }} expectedCounts={{}} loadError="Workspace verification failed." onVerify={() => {}} />);
+  expect(screen.getByRole("button", { name: "Verify Workspace" })).toBeDisabled();
+  expect(screen.getByRole("alert")).toHaveTextContent("Workspace verification failed.");
+});
