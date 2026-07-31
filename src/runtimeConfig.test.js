@@ -1,4 +1,4 @@
-import { OWNER_UAT_SUPABASE_PROJECT_REF, PRODUCTION_SUPABASE_PROJECT_REF, SYNTHETIC_TEST_SUPABASE_PROJECT_REF, readRuntimeConfig, readWorkspaceRuntimeConfig } from "./runtimeConfig";
+import { OWNER_UAT_SUPABASE_PROJECT_REF, PRODUCTION_SUPABASE_PROJECT_REF, SYNTHETIC_TEST_SUPABASE_PROJECT_REF, readRuntimeConfig, readWorkspaceRuntimeConfig, workspacePersistenceMode } from "./runtimeConfig";
 
 const validTestEnv = {
   REACT_APP_ENVIRONMENT: "test",
@@ -79,8 +79,32 @@ test("acceptance mode requires and preserves an explicit non-default workspace w
     acceptanceMode: true,
     workspaceId: "phase1-acceptance-synthetic",
     autosaveEnabled: false,
+    browserPersistenceEnabled: false,
     expectedCounts: { candidates: 100, facilities: 32, requisitions: 114, history: 200, reportHistory: 53 },
   });
+});
+
+test.each([
+  ["omitted", { REACT_APP_WELCOMEFLOW_AUTOSAVE: undefined }],
+  ["enabled", { REACT_APP_WELCOMEFLOW_AUTOSAVE: "true" }],
+])("acceptance mode rejects autosave when it is %s", (_label, patch) => {
+  const env = { ...acceptanceEnv, ...patch };
+  if (patch.REACT_APP_WELCOMEFLOW_AUTOSAVE === undefined) delete env.REACT_APP_WELCOMEFLOW_AUTOSAVE;
+  const result = readRuntimeConfig(env);
+  expect(result.ok).toBe(false);
+  expect(result.error).toMatch(/autosave=false/i);
+});
+
+test("acceptance mode cannot initialize cloud or browser persistence", () => {
+  const runtime = readRuntimeConfig(acceptanceEnv);
+  expect(runtime.ok).toBe(true);
+  expect(workspacePersistenceMode(runtime)).toEqual({ cloudEnabled: false, browserEnabled: false });
+});
+
+test("normal non-acceptance mode retains cloud and browser persistence defaults", () => {
+  const runtime = readRuntimeConfig(validTestEnv);
+  expect(runtime.ok).toBe(true);
+  expect(workspacePersistenceMode(runtime)).toEqual({ cloudEnabled: true, browserEnabled: true });
 });
 
 test.each([

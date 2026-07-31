@@ -49,8 +49,12 @@ export function workspaceCounts(workspace = {}) {
   };
 }
 
-export function verifyAcceptanceWorkspace({ workspaceId, expectedCounts = {}, expectedFingerprint = "", actualCounts = {}, actualFingerprint = "" } = {}) {
+export function verifyAcceptanceWorkspace({ workspaceId, expectedWorkspaceId = "", expectedCounts = {}, expectedFingerprint = "", actualCounts = {}, actualFingerprint = "" } = {}) {
   const mismatches = [];
+  if (!workspaceId) mismatches.push("workspace identity is unavailable");
+  if (expectedWorkspaceId && workspaceId !== expectedWorkspaceId) {
+    mismatches.push(`workspace ID: expected ${expectedWorkspaceId}, loaded ${workspaceId || "unavailable"}`);
+  }
   Object.entries(expectedCounts).forEach(([field, expected]) => {
     if (expected !== null && expected !== undefined && actualCounts[field] !== expected) {
       mismatches.push(`${field}: expected ${expected}, loaded ${actualCounts[field] ?? "unavailable"}`);
@@ -60,7 +64,7 @@ export function verifyAcceptanceWorkspace({ workspaceId, expectedCounts = {}, ex
     mismatches.push("workspace fingerprint does not match the approved fixture");
   }
   return {
-    ok: Boolean(workspaceId) && mismatches.length === 0,
+    ok: mismatches.length === 0,
     mismatches,
     message: mismatches.length ? `Workspace verification failed: ${mismatches.join("; ")}.` : `Workspace ${workspaceId} matches the approved acceptance fixture.`,
   };

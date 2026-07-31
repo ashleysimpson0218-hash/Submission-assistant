@@ -38,6 +38,7 @@ test("canonical workspace fingerprint is deterministic across object key order",
 test("workspace verification passes only exact counts and fingerprint", () => {
   const exact = verifyAcceptanceWorkspace({
     workspaceId: "phase1-acceptance-synthetic",
+    expectedWorkspaceId: "phase1-acceptance-synthetic",
     expectedCounts: { candidates: 2, facilities: 1, requisitions: 2, history: 1, reportHistory: 1 },
     expectedFingerprint: "fixture-hash",
     actualCounts: workspaceCounts(workspace),
@@ -55,4 +56,17 @@ test("workspace verification passes only exact counts and fingerprint", () => {
   expect(mismatch.ok).toBe(false);
   expect(mismatch.message).toMatch(/expected 100/);
   expect(mismatch.message).toMatch(/fingerprint/);
+});
+
+test("workspace verification rejects a different non-default workspace", () => {
+  const result = verifyAcceptanceWorkspace({
+    workspaceId: "another-synthetic-workspace",
+    expectedWorkspaceId: "phase1-acceptance-synthetic",
+    expectedCounts: workspaceCounts(workspace),
+    actualCounts: workspaceCounts(workspace),
+    expectedFingerprint: "fixture-hash",
+    actualFingerprint: "fixture-hash",
+  });
+  expect(result.ok).toBe(false);
+  expect(result.message).toMatch(/workspace ID/);
 });
