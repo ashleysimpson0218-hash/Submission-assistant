@@ -3,7 +3,8 @@ const MAX_PAYLOAD_BYTES = 64 * 1024;
 const MAX_RECIPIENTS = 20;
 const {
   authorizedRecruiter,
-  consumeSharedRateLimit,
+  consumeSharedRateLimits,
+  requestIp,
   requestPayloadBytes,
 } = require("../server/welcomeflowApiSecurity");
 
@@ -73,9 +74,9 @@ module.exports = async function handler(req, res) {
     json(res, authorization.unavailable ? 503 : authorization.forbidden ? 403 : 401, { error: authorization.error });
     return;
   }
-  const rateLimit = await consumeSharedRateLimit({
+  const rateLimit = await consumeSharedRateLimits({
     action: "send-email",
-    subject: `user:${authorization.user.id}`,
+    subjects: [`user:${authorization.user.id}`, `ip:${requestIp(req)}`],
     limit: process.env.WELCOMEFLOW_EMAIL_RATE_LIMIT_PER_MINUTE || 10,
     windowSeconds: 60,
   });

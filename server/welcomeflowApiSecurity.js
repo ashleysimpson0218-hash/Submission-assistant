@@ -110,17 +110,24 @@ function opaqueSubject(value = "") {
   return crypto.createHash("sha256").update(String(value), "utf8").digest("hex");
 }
 
-async function consumeSharedRateLimit({ action, subject, limit, windowSeconds = 60 } = {}) {
+async function consumeSharedRateLimits({ action, subjects, limit, windowSeconds = 60 } = {}) {
   const client = serviceSupabaseClient();
   if (!client) return { ok: false, unavailable: true, error: "Shared abuse protection is not configured." };
   const normalizedAction = String(action || "").trim().slice(0, 80);
-  const normalizedSubject = String(subject || "").trim().slice(0, 160);
-  if (!normalizedAction || !normalizedSubject) return { ok: false, unavailable: true, error: "Shared abuse protection could not identify this request." };
+  const subjectHashes = Array.from(new Set(
+    (Array.isArray(subjects) ? subjects : [])
+      .map((subject) => String(subject || "").trim().slice(0, 256))
+      .filter(Boolean)
+      .map(opaqueSubject),
+  )).sort();
+  if (!normalizedAction || subjectHashes.length < 2 || subjectHashes.length > 8) {
+    return { ok: false, unavailable: true, error: "Shared abuse protection could not identify this request." };
+  }
 
   try {
-    const { data, error } = await client.rpc("welcomeflow_consume_api_rate_limit", {
+    const { data, error } = await client.rpc("welcomeflow_consume_api_rate_limits", {
       p_action: normalizedAction,
-      p_subject: normalizedSubject,
+      p_subject_hashes: subjectHashes,
       p_limit: positiveInteger(limit, 10, 1000),
       p_window_seconds: positiveInteger(windowSeconds, 60, 86400),
     });
@@ -148,7 +155,7 @@ function requestPayloadBytes(req = {}) {
 module.exports = {
   authenticatedUser,
   authorizedRecruiter,
-  consumeSharedRateLimit,
+  consumeSharedRateLimits,
   opaqueSubject,
   positiveInteger,
   requestIp,

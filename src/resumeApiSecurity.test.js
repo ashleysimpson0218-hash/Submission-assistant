@@ -25,7 +25,7 @@ function resumeRequest(body = {}, authorization = "Bearer valid-token") {
   const text = Buffer.from("Synthetic Candidate\nsynthetic@example.test\nRegistered Nurse", "utf8");
   return {
     method: "POST",
-    headers: { authorization, "x-welcomeflow-workspace-id": "workspace-1" },
+    headers: { authorization, "x-welcomeflow-workspace-id": "workspace-1", "x-forwarded-for": "203.0.113.20" },
     body: {
       filename: "synthetic-resume.txt",
       mimeType: "text/plain",
@@ -70,7 +70,13 @@ describe("resume parser authentication and abuse protection", () => {
     await handler(resumeRequest(), res);
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toMatchObject({ ok: true, provider: "WelcomeFlow Local Parser" });
-    expect(rpc).toHaveBeenCalledWith("welcomeflow_consume_api_rate_limit", expect.objectContaining({ p_action: "parse-resume", p_subject: "user:user-1" }));
+    expect(rpc).toHaveBeenCalledWith("welcomeflow_consume_api_rate_limits", expect.objectContaining({
+      p_action: "parse-resume",
+      p_subject_hashes: expect.arrayContaining([expect.stringMatching(/^[a-f0-9]{64}$/)]),
+    }));
+    const rateArguments = rpc.mock.calls[0][1];
+    expect(rateArguments.p_subject_hashes).toHaveLength(2);
+    expect(JSON.stringify(rateArguments)).not.toMatch(/user-1|203\.0\.113\.20/);
   });
 
   test("rejects a valid user without the recruiter role", async () => {

@@ -70,9 +70,11 @@ describe("WelcomeFlow workspace bootstrap safety", () => {
   test("shared API rate limits are atomic and callable only by the service role", () => {
     const sql = normalizedSql(rateLimitPath);
     expect(sql).toContain("security invoker");
+    expect(sql).toContain("pg_advisory_xact_lock");
+    expect(sql).toContain("cardinality(p_subject_hashes) < 2");
     expect(sql).toContain("on conflict (action_name, subject_hash, window_bucket)");
-    expect(sql).toContain("where limits.request_count < p_limit");
-    expect(sql).toContain("revoke all privileges on function public.welcomeflow_consume_api_rate_limit(text, text, integer, integer) from public, anon, authenticated");
-    expect(sql).toContain("grant execute on function public.welcomeflow_consume_api_rate_limit(text, text, integer, integer) to service_role");
+    expect(sql).toContain("expires_at < clock_timestamp()");
+    expect(sql).toContain("revoke all privileges on function public.welcomeflow_consume_api_rate_limits(text, text[], integer, integer) from public, anon, authenticated");
+    expect(sql).toContain("grant execute on function public.welcomeflow_consume_api_rate_limits(text, text[], integer, integer) to service_role");
   });
 });

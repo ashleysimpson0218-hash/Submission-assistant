@@ -56,7 +56,7 @@ function mockClient({ data = workspaceData(), updatedAt = "2026-07-30T12:00:00.0
   const state = { row: { data, updated_at: updatedAt }, updates: [], reservations: [], conflict };
   const client = {
     rpc: jest.fn(async (name, args) => {
-      if (name === "welcomeflow_consume_api_rate_limit") return { data: rateAllowed, error: null };
+      if (name === "welcomeflow_consume_api_rate_limits") return { data: rateAllowed, error: null };
       if (name === "welcomeflow_reserve_screening_slot") {
         state.reservations.push(args);
         const result = conflict ? "conflict" : reservationResult;

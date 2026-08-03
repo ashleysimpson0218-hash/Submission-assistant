@@ -1,5 +1,5 @@
 const {
-  consumeSharedRateLimit,
+  consumeSharedRateLimits,
   opaqueSubject,
   requestIp,
   serviceSupabaseClient,
@@ -283,9 +283,9 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  const rateLimit = await consumeSharedRateLimit({
+  const rateLimit = await consumeSharedRateLimits({
     action: "book-screening",
-    subject: opaqueSubject(`ip:${requestIp(req)}`),
+    subjects: [`ip:${requestIp(req)}`, `token:${opaqueSubject(token)}`],
     limit: positiveInteger(process.env.WELCOMEFLOW_BOOKING_RATE_LIMIT_PER_MINUTE, 30, 300),
     windowSeconds: 60,
   });

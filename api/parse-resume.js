@@ -1,6 +1,7 @@
 const {
   authorizedRecruiter,
-  consumeSharedRateLimit,
+  consumeSharedRateLimits,
+  requestIp,
   requestPayloadBytes,
 } = require("../server/welcomeflowApiSecurity");
 const { validateResumeFile } = require("../server/resumeFileValidation");
@@ -496,9 +497,9 @@ module.exports = async function handler(req, res) {
       return json(res, authorization.unavailable ? 503 : authorization.forbidden ? 403 : 401, { ok: false, error: authorization.error });
     }
 
-    const rateLimit = await consumeSharedRateLimit({
+    const rateLimit = await consumeSharedRateLimits({
       action: "parse-resume",
-      subject: `user:${authorization.user.id}`,
+      subjects: [`user:${authorization.user.id}`, `ip:${requestIp(req)}`],
       limit: process.env.WELCOMEFLOW_RESUME_RATE_LIMIT_PER_MINUTE || 6,
       windowSeconds: 60,
     });
