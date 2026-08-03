@@ -102,8 +102,14 @@ function positiveInteger(value, fallback, maximum = 10000) {
 }
 
 function requestIp(req = {}) {
-  const forwarded = String(req.headers?.["x-forwarded-for"] || req.headers?.["X-Forwarded-For"] || "").split(",")[0].trim();
-  return forwarded || String(req.headers?.["x-real-ip"] || req.socket?.remoteAddress || "unknown").trim() || "unknown";
+  const headers = req.headers || {};
+  const isTrustedVercelRequest = process.env.VERCEL === "1";
+  if (isTrustedVercelRequest) {
+    const forwarded = String(headers["x-forwarded-for"] || headers["X-Forwarded-For"] || "").split(",")[0].trim();
+    const realIp = String(headers["x-real-ip"] || headers["X-Real-Ip"] || "").trim();
+    if (forwarded || realIp) return forwarded || realIp;
+  }
+  return String(req.socket?.remoteAddress || "unknown").trim() || "unknown";
 }
 
 function opaqueSubject(value = "") {
@@ -140,6 +146,20 @@ async function consumeSharedRateLimits({ action, subjects, limit, windowSeconds 
   }
 }
 
+async function consumePreAuthenticationRateLimit(req = {}, { action, limit, windowSeconds = 60 } = {}) {
+  const normalizedAction = String(action || "").trim().slice(0, 64);
+  const ip = requestIp(req);
+  if (!normalizedAction || !ip || ip === "unknown") {
+    return { ok: false, unavailable: true, error: "Shared abuse protection could not identify this request." };
+  }
+  return consumeSharedRateLimits({
+    action: `${normalizedAction}-preauth`,
+    subjects: [`preauth-ip:${ip}`, `preauth-route:${normalizedAction}:${ip}`],
+    limit: positiveInteger(limit, 30, 1000),
+    windowSeconds,
+  });
+}
+
 function requestPayloadBytes(req = {}) {
   const headerBytes = Number(req.headers?.["content-length"] || req.headers?.["Content-Length"] || 0);
   let serialized = "";
@@ -155,6 +175,7 @@ function requestPayloadBytes(req = {}) {
 module.exports = {
   authenticatedUser,
   authorizedRecruiter,
+  consumePreAuthenticationRateLimit,
   consumeSharedRateLimits,
   opaqueSubject,
   positiveInteger,

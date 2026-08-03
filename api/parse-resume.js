@@ -1,5 +1,6 @@
 const {
   authorizedRecruiter,
+  consumePreAuthenticationRateLimit,
   consumeSharedRateLimits,
   requestIp,
   requestPayloadBytes,
@@ -538,6 +539,14 @@ module.exports = async function handler(req, res) {
   if (req.method !== "POST") return json(res, 405, { ok: false, error: "Method not allowed" });
   try {
     if (requestPayloadBytes(req) > MAX_REQUEST_BYTES) return json(res, 413, { ok: false, error: "Resume file is too large for parsing. Maximum is 8MB." });
+
+    const preAuthRateLimit = await consumePreAuthenticationRateLimit(req, {
+      action: "parse-resume",
+      limit: process.env.WELCOMEFLOW_PREAUTH_RATE_LIMIT_PER_MINUTE || 30,
+      windowSeconds: 60,
+    });
+    if (preAuthRateLimit.unavailable) return json(res, 503, { ok: false, error: preAuthRateLimit.error });
+    if (!preAuthRateLimit.ok) return json(res, 429, { ok: false, error: "Too many authentication attempts. Try again shortly." });
 
     const authorization = await authorizedRecruiter(req);
     if (!authorization.user) {
