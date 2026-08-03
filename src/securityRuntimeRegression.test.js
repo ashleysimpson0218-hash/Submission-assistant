@@ -23,6 +23,12 @@ test("internal booking links require opaque random tokens and do not expose lead
   expect(appSource).toContain('key !== "bookingAccessToken"');
 });
 
+test("acceptance authentication is in-memory and never consumes the persistent login marker", () => {
+  expect(appSource).toContain('useState(() => acceptanceMode || window.localStorage.getItem("welcomeflow-session") === "active")');
+  expect(appSource).toContain('if (!acceptanceMode) window.localStorage.setItem("welcomeflow-session", "active")');
+  expect(appSource).toContain('if (!acceptanceMode) window.localStorage.removeItem("welcomeflow-session")');
+});
+
 test("active application defaults contain no real recipient or personal contact values", () => {
   expect(appSource).not.toMatch(/teamcenturion\.com|ashley@central54recruiting\.com|Ashleysimpson0218@gmail\.com/i);
 });

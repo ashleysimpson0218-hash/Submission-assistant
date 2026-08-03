@@ -5950,7 +5950,7 @@ function RecruiterApp() {
     return () => window.clearTimeout(timer);
   }, []);
   const viewportWidth = useWindowWidth();
-  const [isAuthenticated, setIsAuthenticated] = useState(() => window.localStorage.getItem("welcomeflow-session") === "active");
+  const [isAuthenticated, setIsAuthenticated] = useState(() => acceptanceMode || window.localStorage.getItem("welcomeflow-session") === "active");
   const [loginMode, setLoginMode] = useState("signin");
   const [selectedPricingPlanId, setSelectedPricingPlanId] = useState("professional");
   const [pricingBillingCycle, setPricingBillingCycle] = useState("monthly");
@@ -15088,13 +15088,13 @@ function rowifyCandidate(item = {}) {
   }
 
   function enterAppFromLogin() {
-    window.localStorage.setItem("welcomeflow-session", "active");
+    if (!acceptanceMode) window.localStorage.setItem("welcomeflow-session", "active");
     setIsAuthenticated(true);
     playUiSound("ding", soundEnabled);
   }
 
   function logoutOfApp() {
-    window.localStorage.removeItem("welcomeflow-session");
+    if (!acceptanceMode) window.localStorage.removeItem("welcomeflow-session");
     setIsAuthenticated(false);
     setLoginMode("signin");
     setCopyNotice("");
