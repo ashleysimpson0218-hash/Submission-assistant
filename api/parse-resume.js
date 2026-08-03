@@ -3,6 +3,7 @@ const {
   consumeSharedRateLimit,
   requestPayloadBytes,
 } = require("../server/welcomeflowApiSecurity");
+const { validateResumeFile } = require("../server/resumeFileValidation");
 
 if (process.env.WELCOMEFLOW_MAINTENANCE_MODE === "true" || process.env.WELCOMEFLOW_UAT_EXTERNAL_ACTIONS_DISABLED === "true") {
   module.exports = async function maintenanceHandler(req, res) {
@@ -513,6 +514,10 @@ module.exports = async function handler(req, res) {
     const buffer = Buffer.from(base64, "base64");
     if (buffer.length > MAX_UPLOAD_BYTES || (Number(size || 0) > 0 && Number(size) !== buffer.length)) {
       return json(res, 413, { ok: false, error: "Resume file size validation failed." });
+    }
+    const fileValidation = validateResumeFile({ buffer, filename, mimeType });
+    if (!fileValidation.ok) {
+      return json(res, 415, { ok: false, code: fileValidation.code, error: fileValidation.error });
     }
     const provider = String(process.env.RESUME_PARSER_PROVIDER || "affinda").toLowerCase();
     const result = provider === "affinda"

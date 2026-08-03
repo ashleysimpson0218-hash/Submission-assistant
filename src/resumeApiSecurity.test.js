@@ -38,6 +38,7 @@ function resumeRequest(body = {}, authorization = "Bearer valid-token") {
 
 describe("resume parser authentication and abuse protection", () => {
   const originalEnv = { ...process.env };
+  const originalFetch = global.fetch;
 
   beforeEach(() => {
     jest.resetModules();
@@ -50,9 +51,10 @@ describe("resume parser authentication and abuse protection", () => {
     process.env.WELCOMEFLOW_RESUME_RATE_LIMIT_PER_MINUTE = "6";
     process.env.WELCOMEFLOW_AUTHORIZED_RECRUITER_ROLES = "recruiter,admin";
     process.env.WELCOMEFLOW_API_WORKSPACE_IDS = "workspace-1";
+    delete process.env.AFFINDA_API_KEY;
   });
 
-  afterAll(() => { process.env = originalEnv; jest.restoreAllMocks(); });
+  afterAll(() => { process.env = originalEnv; global.fetch = originalFetch; jest.restoreAllMocks(); });
 
   test("rejects an unauthenticated parser request before parsing", async () => {
     const handler = require("../api/parse-resume");
@@ -111,5 +113,27 @@ describe("resume parser authentication and abuse protection", () => {
     req.headers["content-length"] = String(12 * 1024 * 1024);
     await handler(req, res);
     expect(res.statusCode).toBe(413);
+  });
+
+  test("rejects a signature mismatch before Affinda receives any file bytes", async () => {
+    configureSupabase(true);
+    process.env.RESUME_PARSER_PROVIDER = "affinda";
+    process.env.AFFINDA_API_KEY = "server-provider-key";
+    global.fetch = jest.fn();
+    const handler = require("../api/parse-resume");
+    const res = responseRecorder();
+    await handler(resumeRequest({ filename: "renamed.pdf", mimeType: "application/pdf" }), res);
+    expect(res.statusCode).toBe(415);
+    expect(JSON.parse(res.body)).toMatchObject({ code: "RESUME_FILE_SIGNATURE_INVALID" });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test("rejects mismatched extension and MIME before selecting a parser", async () => {
+    configureSupabase(true);
+    const handler = require("../api/parse-resume");
+    const res = responseRecorder();
+    await handler(resumeRequest({ filename: "resume.pdf", mimeType: "text/plain", base64: Buffer.from("%PDF-1.7").toString("base64"), size: 8 }), res);
+    expect(res.statusCode).toBe(415);
+    expect(JSON.parse(res.body)).toMatchObject({ code: "RESUME_FILE_TYPE_MISMATCH" });
   });
 });
