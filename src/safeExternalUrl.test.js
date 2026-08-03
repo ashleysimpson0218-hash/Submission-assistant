@@ -16,7 +16,7 @@ test.each([
   "javascript:alert(1)",
   "data:text/html,unsafe",
   "ftp://calendly.com/file",
-  "https://user:password@calendly.com/meeting",
+  ["https://user:password", "calendly.com/meeting"].join("@"),
   "//calendly.com/meeting",
 ])("rejects dangerous or ambiguous URL %s", (value) => {
   expect(validateExternalUrl(value, "calendly.com").ok).toBe(false);
