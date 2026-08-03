@@ -23,7 +23,13 @@ function eventAt(hoursFromNow, overrides = {}) {
   };
 }
 
+afterEach(() => {
+  jest.useRealTimers();
+});
+
 test("renders a compact internal agenda and opens its linked event", () => {
+  jest.useFakeTimers();
+  jest.setSystemTime(new Date("2026-07-27T16:00:00.000Z"));
   const onOpenEvent = jest.fn();
   render(<HomeCalendarWidget theme={theme} events={[eventAt(1)]} onAddEvent={jest.fn()} onOpenCalendar={jest.fn()} onOpenEvent={onOpenEvent} />);
   expect(screen.getByRole("region", { name: "Today and Upcoming" })).toBeInTheDocument();
@@ -33,6 +39,8 @@ test("renders a compact internal agenda and opens its linked event", () => {
 });
 
 test("filters the Home agenda to interviews and exposes scheduling actions", () => {
+  jest.useFakeTimers();
+  jest.setSystemTime(new Date("2026-07-27T16:00:00.000Z"));
   const onAddEvent = jest.fn();
   render(<HomeCalendarWidget
     theme={theme}
