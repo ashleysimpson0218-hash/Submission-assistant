@@ -3,6 +3,7 @@ const MAX_PAYLOAD_BYTES = 64 * 1024;
 const MAX_RECIPIENTS = 20;
 const {
   authorizedRecruiter,
+  consumePreAuthenticationRateLimit,
   consumeSharedRateLimits,
   requestIp,
   requestPayloadBytes,
@@ -67,6 +68,20 @@ module.exports = async function handler(req, res) {
 
   if (requestPayloadBytes(req) > MAX_PAYLOAD_BYTES) {
     json(res, 413, { error: "Email request is too large." });
+    return;
+  }
+
+  const preAuthRateLimit = await consumePreAuthenticationRateLimit(req, {
+    action: "send-email",
+    limit: process.env.WELCOMEFLOW_PREAUTH_RATE_LIMIT_PER_MINUTE || 30,
+    windowSeconds: 60,
+  });
+  if (preAuthRateLimit.unavailable) {
+    json(res, 503, { error: preAuthRateLimit.error });
+    return;
+  }
+  if (!preAuthRateLimit.ok) {
+    json(res, 429, { error: "Too many authentication attempts. Try again shortly." });
     return;
   }
 

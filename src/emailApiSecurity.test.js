@@ -16,14 +16,16 @@ function authorizedSupabase(user = {
   id: "user-1",
   email: "recruiter@example.test",
   app_metadata: { welcomeflow_role: "recruiter", welcomeflow_workspace_ids: ["workspace-1"] },
-}, rateResults = [true]) {
-  const rpc = jest.fn();
+}, rateResults = []) {
+  const rpc = jest.fn().mockResolvedValue({ data: true, error: null });
   rateResults.forEach((result) => rpc.mockResolvedValueOnce({ data: result, error: null }));
+  const getUser = jest.fn().mockResolvedValue({ data: { user }, error: null });
   jest.doMock("@supabase/supabase-js", () => ({
     createClient: jest.fn((url, key) => key === "server-secret-key"
       ? { rpc }
-      : { auth: { getUser: jest.fn().mockResolvedValue({ data: { user }, error: null }) } }),
+      : { auth: { getUser } }),
   }));
+  rpc.getUser = getUser;
   return rpc;
 }
 
@@ -31,6 +33,7 @@ function request(body = {}, authorization = "Bearer valid-token") {
   return {
     method: "POST",
     headers: { authorization, "x-welcomeflow-workspace-id": "workspace-1" },
+    socket: { remoteAddress: "203.0.113.20" },
     body,
   };
 }
@@ -67,30 +70,48 @@ describe("email API authorization and abuse protection", () => {
   });
 
   test("rejects missing authorization before provider access", async () => {
+    const rpc = authorizedSupabase();
     const handler = require("../api/send-email");
     const res = responseRecorder();
     await handler(request({ to: "recruiter@example.test", subject: "Subject", body: "Body" }, ""), res);
     expect(res.statusCode).toBe(401);
+    expect(rpc).toHaveBeenCalledWith("welcomeflow_consume_api_rate_limits", expect.objectContaining({ p_action: "send-email-preauth" }));
+    expect(rpc.getUser).not.toHaveBeenCalled();
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  test("charges malformed bearer credentials to the pre-authentication limit", async () => {
+    const rpc = authorizedSupabase();
+    const handler = require("../api/send-email");
+    const res = responseRecorder();
+    await handler(request({ to: "recruiter@example.test", subject: "Subject", body: "Body" }, "Basic invalid"), res);
+    expect(res.statusCode).toBe(401);
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc.getUser).not.toHaveBeenCalled();
+  });
+
   test("rejects invalid or expired authorization before provider access", async () => {
+    const rpc = jest.fn().mockResolvedValue({ data: true, error: null });
+    const getUser = jest.fn().mockResolvedValue({ data: { user: null }, error: new Error("expired") });
     jest.doMock("@supabase/supabase-js", () => ({
       createClient: jest.fn((url, key) => key === "server-secret-key"
-        ? { rpc: jest.fn() }
-        : { auth: { getUser: jest.fn().mockResolvedValue({ data: { user: null }, error: new Error("expired") }) } }),
+        ? { rpc }
+        : { auth: { getUser } }),
     }));
     const handler = require("../api/send-email");
     const res = responseRecorder();
     await handler(request({ to: "recruiter@example.test", subject: "Subject", body: "Body" }), res);
     expect(res.statusCode).toBe(401);
+    expect(rpc).toHaveBeenCalledWith("welcomeflow_consume_api_rate_limits", expect.objectContaining({ p_action: "send-email-preauth" }));
+    expect(getUser).toHaveBeenCalledTimes(1);
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
   test("rejects a token issued by a different Supabase project", async () => {
+    const rpc = jest.fn().mockResolvedValue({ data: true, error: null });
     jest.doMock("@supabase/supabase-js", () => ({
       createClient: jest.fn((url, key) => key === "server-secret-key"
-        ? { rpc: jest.fn() }
+        ? { rpc }
         : { auth: { getUser: jest.fn().mockResolvedValue({ data: { user: null }, error: new Error("issuer mismatch") }) } }),
     }));
     const handler = require("../api/send-email");
@@ -148,11 +169,12 @@ describe("email API authorization and abuse protection", () => {
   });
 
   test("sends a bounded request for an authorized user and approved recipient", async () => {
-    authorizedSupabase();
+    const rpc = authorizedSupabase();
     const handler = require("../api/send-email");
     const res = responseRecorder();
     await handler(request({ to: "recruiter@example.test", subject: "Approved subject", body: "Approved body" }), res);
     expect(res.statusCode).toBe(200);
+    expect(rpc.mock.calls.map((call) => call[1].p_action)).toEqual(["send-email-preauth", "send-email"]);
     expect(global.fetch).toHaveBeenCalledTimes(1);
     const providerRequest = JSON.parse(global.fetch.mock.calls[0][1].body);
     expect(providerRequest).toMatchObject({ to: ["recruiter@example.test"], subject: "Approved subject", text: "Approved body" });
@@ -182,7 +204,7 @@ describe("email API authorization and abuse protection", () => {
 
   test("rate limits repeated requests from the same verified user", async () => {
     process.env.WELCOMEFLOW_EMAIL_RATE_LIMIT_PER_MINUTE = "1";
-    const rpc = authorizedSupabase(undefined, [true, false]);
+    const rpc = authorizedSupabase(undefined, [true, true, true, false]);
     const handler = require("../api/send-email");
     const first = responseRecorder();
     const second = responseRecorder();
@@ -191,7 +213,17 @@ describe("email API authorization and abuse protection", () => {
     expect(first.statusCode).toBe(200);
     expect(second.statusCode).toBe(429);
     expect(global.fetch).toHaveBeenCalledTimes(1);
-    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(rpc).toHaveBeenCalledTimes(4);
+  });
+
+  test("does not call Supabase Auth after the pre-authentication limit is exceeded", async () => {
+    const rpc = authorizedSupabase(undefined, [false]);
+    const handler = require("../api/send-email");
+    const res = responseRecorder();
+    await handler(request({ to: "recruiter@example.test", subject: "Subject", body: "Body" }, "Bearer invalid-token"), res);
+    expect(res.statusCode).toBe(429);
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc.getUser).not.toHaveBeenCalled();
   });
 
   test("fails closed when shared rate limiting is unavailable", async () => {

@@ -12,12 +12,16 @@ function configureSupabase(rateResult = true, user = {
   id: "user-1",
   app_metadata: { welcomeflow_role: "recruiter", welcomeflow_workspace_ids: ["workspace-1"] },
 }) {
-  const rpc = jest.fn().mockResolvedValue({ data: rateResult, error: null });
+  const results = Array.isArray(rateResult) ? rateResult : [];
+  const rpc = jest.fn().mockResolvedValue({ data: rateResult === false ? false : true, error: null });
+  results.forEach((result) => rpc.mockResolvedValueOnce({ data: result, error: null }));
+  const getUser = jest.fn().mockResolvedValue({ data: { user }, error: null });
   jest.doMock("@supabase/supabase-js", () => ({
     createClient: jest.fn((url, key) => key === "server-secret-key"
       ? { rpc }
-      : { auth: { getUser: jest.fn().mockResolvedValue({ data: { user }, error: null }) } }),
+      : { auth: { getUser } }),
   }));
+  rpc.getUser = getUser;
   return rpc;
 }
 
@@ -26,6 +30,7 @@ function resumeRequest(body = {}, authorization = "Bearer valid-token") {
   return {
     method: "POST",
     headers: { authorization, "x-welcomeflow-workspace-id": "workspace-1", "x-forwarded-for": "203.0.113.20" },
+    socket: { remoteAddress: "203.0.113.20" },
     body: {
       filename: "synthetic-resume.txt",
       mimeType: "text/plain",
@@ -57,10 +62,13 @@ describe("resume parser authentication and abuse protection", () => {
   afterAll(() => { process.env = originalEnv; global.fetch = originalFetch; jest.restoreAllMocks(); });
 
   test("rejects an unauthenticated parser request before parsing", async () => {
+    const rpc = configureSupabase(true);
     const handler = require("../api/parse-resume");
     const res = responseRecorder();
     await handler(resumeRequest({}, ""), res);
     expect(res.statusCode).toBe(401);
+    expect(rpc).toHaveBeenCalledWith("welcomeflow_consume_api_rate_limits", expect.objectContaining({ p_action: "parse-resume-preauth" }));
+    expect(rpc.getUser).not.toHaveBeenCalled();
   });
 
   test("parses a bounded text resume for an authenticated user", async () => {
@@ -74,7 +82,8 @@ describe("resume parser authentication and abuse protection", () => {
       p_action: "parse-resume",
       p_subject_hashes: expect.arrayContaining([expect.stringMatching(/^[a-f0-9]{64}$/)]),
     }));
-    const rateArguments = rpc.mock.calls[0][1];
+    expect(rpc).toHaveBeenCalledWith("welcomeflow_consume_api_rate_limits", expect.objectContaining({ p_action: "parse-resume-preauth" }));
+    const rateArguments = rpc.mock.calls.find((call) => call[1].p_action === "parse-resume")[1];
     expect(rateArguments.p_subject_hashes).toHaveLength(2);
     expect(JSON.stringify(rateArguments)).not.toMatch(/user-1|203\.0\.113\.20/);
   });
@@ -96,11 +105,12 @@ describe("resume parser authentication and abuse protection", () => {
   });
 
   test("fails closed when the shared limiter denies a request", async () => {
-    configureSupabase(false);
+    const rpc = configureSupabase(false);
     const handler = require("../api/parse-resume");
     const res = responseRecorder();
     await handler(resumeRequest(), res);
     expect(res.statusCode).toBe(429);
+    expect(rpc.getUser).not.toHaveBeenCalled();
   });
 
   test("rejects a payload whose claimed size differs from decoded content", async () => {

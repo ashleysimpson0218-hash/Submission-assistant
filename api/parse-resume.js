@@ -1,11 +1,13 @@
 const {
   authorizedRecruiter,
+  consumePreAuthenticationRateLimit,
   consumeSharedRateLimits,
   requestIp,
   requestPayloadBytes,
 } = require("../server/welcomeflowApiSecurity");
 const { validateResumeFile } = require("../server/resumeFileValidation");
 const { reportServerFailure } = require("../server/safeServerError");
+const resumeSecurityLimits = require("../src/resumeSecurityLimits.json");
 
 if (process.env.WELCOMEFLOW_MAINTENANCE_MODE === "true" || process.env.WELCOMEFLOW_UAT_EXTERNAL_ACTIONS_DISABLED === "true") {
   module.exports = async function maintenanceHandler(req, res) {
@@ -19,6 +21,12 @@ const MAX_REQUEST_BYTES = Math.ceil(MAX_UPLOAD_BYTES * 4 / 3) + 16 * 1024;
 const MAX_ARCHIVE_ENTRIES = 500;
 const MAX_ARCHIVE_ENTRY_BYTES = 16 * 1024 * 1024;
 const MAX_ARCHIVE_TOTAL_BYTES = 32 * 1024 * 1024;
+const MAX_ARCHIVE_COMPRESSION_RATIO = resumeSecurityLimits.maxArchiveCompressionRatio;
+const MAX_ARCHIVE_CUMULATIVE_COMPRESSION_RATIO = resumeSecurityLimits.maxArchiveCumulativeCompressionRatio;
+const ARCHIVE_UNSAFE_ERROR_CODE = "RESUME_ARCHIVE_UNSAFE";
+const MAX_PDF_PAGES = resumeSecurityLimits.maxPdfPages;
+const PDF_PAGE_LIMIT_ERROR_CODE = "RESUME_PDF_PAGE_LIMIT";
+const PDF_INVALID_ERROR_CODE = "RESUME_PDF_INVALID";
 if (typeof global.DOMMatrix === "undefined") {
   global.DOMMatrix = class DOMMatrix {
     constructor() {
@@ -53,6 +61,26 @@ try {
   reportServerFailure("PDF_WORKER_SETUP_FAILED", error, { provider: "pdf-parse" });
 }
 let pdfjsLibraryPromise = null;
+
+function pdfSecurityError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function assertPdfPageCount(pageCount) {
+  if (!Number.isInteger(pageCount) || pageCount < 1) {
+    throw pdfSecurityError(PDF_INVALID_ERROR_CODE, "The PDF document is malformed or contains no pages.");
+  }
+  if (pageCount > MAX_PDF_PAGES) {
+    throw pdfSecurityError(PDF_PAGE_LIMIT_ERROR_CODE, `The PDF exceeds the ${MAX_PDF_PAGES}-page processing limit.`);
+  }
+  return pageCount;
+}
+
+function isPdfSecurityError(error) {
+  return [PDF_PAGE_LIMIT_ERROR_CODE, PDF_INVALID_ERROR_CODE].includes(error?.code);
+}
 
 async function loadPdfJsLibrary() {
   if (!pdfjsLibraryPromise) {
@@ -130,6 +158,65 @@ function stripXml(value = "") {
   return xmlDecode(String(value || "").replace(/<[^>]+>/g, " ")).replace(/\s{2,}/g, " ").trim();
 }
 
+function archiveSecurityError(message) {
+  const error = new Error(message);
+  error.code = ARCHIVE_UNSAFE_ERROR_CODE;
+  return error;
+}
+
+function safeArchiveEntryName(name = "") {
+  const normalized = String(name || "");
+  const segments = normalized.split("/");
+  if (!normalized
+      || normalized.includes("\\")
+      || normalized.startsWith("/")
+      || /^[a-z]:/i.test(normalized)
+      || segments.some((segment) => segment === "..")) {
+    throw archiveSecurityError("Archive entry path is unsafe.");
+  }
+  if (/\.(?:zip|rar|7z|tar|tgz|gz|bz2|xz)$/i.test(normalized)) {
+    throw archiveSecurityError("Nested archives are not accepted.");
+  }
+  return normalized;
+}
+
+function validateArchiveEntryMetadata({
+  compressedSize,
+  uncompressedSize,
+  method,
+  totalCompressedBytes = 0,
+  totalUncompressedBytes = 0,
+} = {}) {
+  const sizes = [compressedSize, uncompressedSize, totalCompressedBytes, totalUncompressedBytes];
+  if (!sizes.every((value) => Number.isSafeInteger(value) && value >= 0)
+      || compressedSize === 0xffffffff
+      || uncompressedSize === 0xffffffff) {
+    throw archiveSecurityError("Archive entry size metadata is invalid.");
+  }
+  if (![0, 8].includes(method)) throw archiveSecurityError("Archive compression method is not supported.");
+  if (uncompressedSize > MAX_ARCHIVE_ENTRY_BYTES) throw archiveSecurityError("Archive entry declares too much output.");
+  if (compressedSize === 0 && uncompressedSize > 0) throw archiveSecurityError("Archive entry compression metadata is unsafe.");
+  if (method === 0 && compressedSize !== uncompressedSize) throw archiveSecurityError("Stored archive entry sizes do not match.");
+  if (compressedSize > 0 && uncompressedSize / compressedSize > MAX_ARCHIVE_COMPRESSION_RATIO) {
+    throw archiveSecurityError("Archive entry compression ratio is unsafe.");
+  }
+
+  const nextCompressedBytes = totalCompressedBytes + compressedSize;
+  const nextUncompressedBytes = totalUncompressedBytes + uncompressedSize;
+  if (!Number.isSafeInteger(nextCompressedBytes) || !Number.isSafeInteger(nextUncompressedBytes)
+      || nextUncompressedBytes > MAX_ARCHIVE_TOTAL_BYTES) {
+    throw archiveSecurityError("Archive declares too much total output.");
+  }
+  if (nextCompressedBytes === 0 && nextUncompressedBytes > 0) {
+    throw archiveSecurityError("Archive cumulative compression metadata is unsafe.");
+  }
+  if (nextCompressedBytes > 0
+      && nextUncompressedBytes / nextCompressedBytes > MAX_ARCHIVE_CUMULATIVE_COMPRESSION_RATIO) {
+    throw archiveSecurityError("Archive cumulative compression ratio is unsafe.");
+  }
+  return { totalCompressedBytes: nextCompressedBytes, totalUncompressedBytes: nextUncompressedBytes };
+}
+
 function readZipEntries(buffer) {
   const source = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || []);
   let eocd = -1;
@@ -139,36 +226,67 @@ function readZipEntries(buffer) {
       break;
     }
   }
-  if (eocd < 0) throw new Error("ZIP directory was not found.");
+  if (eocd < 0) throw archiveSecurityError("ZIP directory was not found.");
   const totalEntries = source.readUInt16LE(eocd + 10);
-  if (totalEntries > MAX_ARCHIVE_ENTRIES) throw new Error("Archive contains too many entries.");
-  let offset = source.readUInt32LE(eocd + 16);
+  if (totalEntries > MAX_ARCHIVE_ENTRIES) throw archiveSecurityError("Archive contains too many entries.");
+  const directoryOffset = source.readUInt32LE(eocd + 16);
+  let offset = directoryOffset;
+  const directorySize = source.readUInt32LE(eocd + 12);
+  const directoryEnd = offset + directorySize;
+  if (!Number.isSafeInteger(directoryEnd) || offset < 0 || directoryEnd > eocd || directoryEnd > source.length) {
+    throw archiveSecurityError("Archive directory metadata is invalid.");
+  }
   const entries = new Map();
   let totalOutputBytes = 0;
+  let declaredTotals = { totalCompressedBytes: 0, totalUncompressedBytes: 0 };
   for (let item = 0; item < totalEntries; item += 1) {
-    if (offset < 0 || offset + 46 > source.length) throw new Error("Archive directory is invalid.");
-    if (source.readUInt32LE(offset) !== 0x02014b50) break;
+    if (offset < 0 || offset + 46 > directoryEnd) throw archiveSecurityError("Archive directory is invalid.");
+    if (source.readUInt32LE(offset) !== 0x02014b50) throw archiveSecurityError("Archive directory entry is invalid.");
+    const flags = source.readUInt16LE(offset + 8);
     const method = source.readUInt16LE(offset + 10);
     const compressedSize = source.readUInt32LE(offset + 20);
+    const uncompressedSize = source.readUInt32LE(offset + 24);
     const nameLength = source.readUInt16LE(offset + 28);
     const extraLength = source.readUInt16LE(offset + 30);
     const commentLength = source.readUInt16LE(offset + 32);
     const localOffset = source.readUInt32LE(offset + 42);
-    if (localOffset < 0 || localOffset + 30 > source.length) throw new Error("Archive entry is invalid.");
-    const name = source.slice(offset + 46, offset + 46 + nameLength).toString("utf8");
+    const directoryEntryEnd = offset + 46 + nameLength + extraLength + commentLength;
+    if (directoryEntryEnd > directoryEnd) throw archiveSecurityError("Archive directory entry is truncated.");
+    if (flags & 0x1) throw archiveSecurityError("Encrypted archive entries are not accepted.");
+    if (localOffset < 0 || localOffset + 30 > source.length) throw archiveSecurityError("Archive entry is invalid.");
+    if (source.readUInt32LE(localOffset) !== 0x04034b50) throw archiveSecurityError("Archive local entry is invalid.");
+    const name = safeArchiveEntryName(source.slice(offset + 46, offset + 46 + nameLength).toString("utf8"));
+    declaredTotals = validateArchiveEntryMetadata({
+      compressedSize,
+      uncompressedSize,
+      method,
+      ...declaredTotals,
+    });
     const localNameLength = source.readUInt16LE(localOffset + 26);
     const localExtraLength = source.readUInt16LE(localOffset + 28);
     const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    const dataEnd = dataStart + compressedSize;
+    if (!Number.isSafeInteger(dataEnd) || dataStart < 0 || dataEnd > directoryOffset || dataEnd > source.length) {
+      throw archiveSecurityError("Archive entry data is truncated.");
+    }
     const raw = source.slice(dataStart, dataStart + compressedSize);
     let content = Buffer.alloc(0);
     if (method === 0) content = raw;
-    else if (method === 8) content = zlib.inflateRawSync(raw, { maxOutputLength: MAX_ARCHIVE_ENTRY_BYTES });
-    if (content.length > MAX_ARCHIVE_ENTRY_BYTES) throw new Error("Archive entry is too large.");
+    else if (method === 8) {
+      try {
+        content = zlib.inflateRawSync(raw, { maxOutputLength: MAX_ARCHIVE_ENTRY_BYTES });
+      } catch {
+        throw archiveSecurityError("Archive entry could not be inflated safely.");
+      }
+    }
+    if (content.length !== uncompressedSize) throw archiveSecurityError("Archive entry output does not match declared size.");
+    if (content.length > MAX_ARCHIVE_ENTRY_BYTES) throw archiveSecurityError("Archive entry is too large.");
     totalOutputBytes += content.length;
-    if (totalOutputBytes > MAX_ARCHIVE_TOTAL_BYTES) throw new Error("Archive expands beyond the safe processing limit.");
+    if (totalOutputBytes > MAX_ARCHIVE_TOTAL_BYTES) throw archiveSecurityError("Archive expands beyond the safe processing limit.");
     if (content.length) entries.set(name, content);
-    offset += 46 + nameLength + extraLength + commentLength;
+    offset = directoryEntryEnd;
   }
+  if (offset !== directoryEnd) throw archiveSecurityError("Archive directory length is inconsistent.");
   return entries;
 }
 
@@ -379,49 +497,71 @@ function normalizeAffinda(payload = {}) {
   };
 }
 
+async function inspectPdfPageCountServer(buffer) {
+  const parser = new PDFParse({ data: buffer, isEvalSupported: false });
+  try {
+    const info = await parser.getInfo();
+    return assertPdfPageCount(info?.total);
+  } finally {
+    await parser.destroy?.();
+  }
+}
+
+async function extractPdfTextWithPdfJs(pdfjsLib, buffer) {
+  const loadingTask = pdfjsLib.getDocument({
+    data: new Uint8Array(buffer),
+    disableWorker: true,
+    isEvalSupported: false,
+    useSystemFonts: true,
+  });
+  const pdf = await loadingTask.promise;
+  assertPdfPageCount(pdf.numPages);
+  const pages = [];
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    const positioned = (content.items || [])
+      .map((item) => ({
+        text: String(item.str || "").trim(),
+        x: Number(item.transform?.[4] || 0),
+        y: Number(item.transform?.[5] || 0),
+      }))
+      .filter((item) => item.text);
+    positioned.sort((a, b) => Math.abs(b.y - a.y) > 4 ? b.y - a.y : a.x - b.x);
+    const lines = [];
+    positioned.forEach((item) => {
+      const last = lines[lines.length - 1];
+      if (!last || Math.abs(last.y - item.y) > 4) lines.push({ y: item.y, text: item.text });
+      else last.text = `${last.text} ${item.text}`.replace(/\s{2,}/g, " ");
+    });
+    const text = lines.map((line) => line.text).join("\n");
+    if (text.trim()) pages.push(text.trim());
+  }
+  return pages.join("\n").replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 async function extractPdfTextServer(buffer) {
   try {
     const parser = new PDFParse({ data: buffer, isEvalSupported: false });
-    const result = await parser.getText();
-    await parser.destroy?.();
-    const parsed = String(result?.text || "").replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
-    if (parsed) return parsed;
+    try {
+      const info = await parser.getInfo();
+      assertPdfPageCount(info?.total);
+      const result = await parser.getText({ first: info.total });
+      const parsed = String(result?.text || "").replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+      if (parsed) return parsed;
+    } finally {
+      await parser.destroy?.();
+    }
   } catch (error) {
+    if (isPdfSecurityError(error)) throw error;
     reportServerFailure("PDF_PARSE_EXTRACTION_FAILED", error, { provider: "pdf-parse" });
     // Fall through to PDF.js below.
   }
   try {
     const pdfjsLib = await loadPdfJsLibrary();
-    const loadingTask = pdfjsLib.getDocument({
-      data: new Uint8Array(buffer),
-      disableWorker: true,
-      isEvalSupported: false,
-      useSystemFonts: true,
-    });
-    const pdf = await loadingTask.promise;
-    const pages = [];
-    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-      const page = await pdf.getPage(pageNumber);
-      const content = await page.getTextContent();
-      const positioned = (content.items || [])
-        .map((item) => ({
-          text: String(item.str || "").trim(),
-          x: Number(item.transform?.[4] || 0),
-          y: Number(item.transform?.[5] || 0),
-        }))
-        .filter((item) => item.text);
-      positioned.sort((a, b) => Math.abs(b.y - a.y) > 4 ? b.y - a.y : a.x - b.x);
-      const lines = [];
-      positioned.forEach((item) => {
-        const last = lines[lines.length - 1];
-        if (!last || Math.abs(last.y - item.y) > 4) lines.push({ y: item.y, text: item.text });
-        else last.text = `${last.text} ${item.text}`.replace(/\s{2,}/g, " ");
-      });
-      const text = lines.map((line) => line.text).join("\n");
-      if (text.trim()) pages.push(text.trim());
-    }
-    return pages.join("\n").replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+    return await extractPdfTextWithPdfJs(pdfjsLib, buffer);
   } catch (error) {
+    if (isPdfSecurityError(error)) throw error;
     reportServerFailure("PDFJS_EXTRACTION_FAILED", error, { provider: "pdfjs" });
     return "";
   }
@@ -493,6 +633,14 @@ module.exports = async function handler(req, res) {
   try {
     if (requestPayloadBytes(req) > MAX_REQUEST_BYTES) return json(res, 413, { ok: false, error: "Resume file is too large for parsing. Maximum is 8MB." });
 
+    const preAuthRateLimit = await consumePreAuthenticationRateLimit(req, {
+      action: "parse-resume",
+      limit: process.env.WELCOMEFLOW_PREAUTH_RATE_LIMIT_PER_MINUTE || 30,
+      windowSeconds: 60,
+    });
+    if (preAuthRateLimit.unavailable) return json(res, 503, { ok: false, error: preAuthRateLimit.error });
+    if (!preAuthRateLimit.ok) return json(res, 429, { ok: false, error: "Too many authentication attempts. Try again shortly." });
+
     const authorization = await authorizedRecruiter(req);
     if (!authorization.user) {
       return json(res, authorization.unavailable ? 503 : authorization.forbidden ? 403 : 401, { ok: false, error: authorization.error });
@@ -522,6 +670,9 @@ module.exports = async function handler(req, res) {
       return json(res, 415, { ok: false, code: fileValidation.code, error: fileValidation.error });
     }
     const provider = String(process.env.RESUME_PARSER_PROVIDER || "affinda").toLowerCase();
+    if (provider === "affinda" && (/\.pdf$/i.test(filename) || /pdf/i.test(mimeType))) {
+      await inspectPdfPageCountServer(buffer);
+    }
     const result = provider === "affinda"
       ? await parseWithAffinda({ buffer, filename, mimeType })
       : provider === "local"
@@ -530,10 +681,32 @@ module.exports = async function handler(req, res) {
 
     return json(res, result.ok ? 200 : result.status || 502, result);
   } catch (error) {
+    if (error?.code === ARCHIVE_UNSAFE_ERROR_CODE) {
+      return json(res, 422, {
+        ok: false,
+        code: ARCHIVE_UNSAFE_ERROR_CODE,
+        error: "The archive could not be processed safely.",
+      });
+    }
+    if (isPdfSecurityError(error)) {
+      return json(res, error.code === PDF_PAGE_LIMIT_ERROR_CODE ? 413 : 422, {
+        ok: false,
+        code: error.code,
+        error: error.code === PDF_PAGE_LIMIT_ERROR_CODE
+          ? `PDF documents are limited to ${MAX_PDF_PAGES} pages.`
+          : "The PDF document could not be validated safely.",
+      });
+    }
     reportServerFailure("RESUME_PARSING_FAILED", error, { provider: process.env.RESUME_PARSER_PROVIDER || "adapter" });
     return json(res, 500, { ok: false, error: "Resume parsing could not be completed safely.", provider: process.env.RESUME_PARSER_PROVIDER || "adapter" });
   }
 };
+module.exports.__test = {
+  assertPdfPageCount,
+  extractPdfTextServer,
+  extractPdfTextWithPdfJs,
+  inspectPdfPageCountServer,
+  readZipEntries,
+  validateArchiveEntryMetadata,
+};
 }
-
-

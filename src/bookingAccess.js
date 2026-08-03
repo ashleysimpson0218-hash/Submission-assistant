@@ -66,6 +66,7 @@ export async function issueBookingAccess(scope = {}, options = {}) {
       bookingAccessIssuedAt: issuedAt,
       bookingAccessExpiresAt: expiresAt,
       bookingAccessRevokedAt: "",
+      bookingAccessConsumedAt: "",
     },
   };
 }
