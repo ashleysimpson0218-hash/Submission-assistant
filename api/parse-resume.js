@@ -710,5 +710,3 @@ module.exports.__test = {
   validateArchiveEntryMetadata,
 };
 }
-
-

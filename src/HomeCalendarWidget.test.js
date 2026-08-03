@@ -50,4 +50,3 @@ test("filters the Home agenda to interviews and exposes scheduling actions", () 
   fireEvent.click(screen.getByRole("button", { name: "Schedule Interview" }));
   expect(onAddEvent).toHaveBeenCalled();
 });
-

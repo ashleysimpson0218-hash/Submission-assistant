@@ -42,4 +42,3 @@ describe("recruiter workspace task actions", () => {
     expect(applyWorkspaceTaskAction(candidate, WORKSPACE_TASK_ACTIONS.ADD_UPDATE, { now: NOW }).ok).toBe(false);
   });
 });
-
