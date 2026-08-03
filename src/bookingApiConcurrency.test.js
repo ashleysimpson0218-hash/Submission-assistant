@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 
 const BOOKING_TOKEN = "a".repeat(64);
 
@@ -14,15 +15,29 @@ function responseRecorder() {
 }
 
 function workspaceData(leadPatch = {}, requisitionPatch = {}) {
+  const scope = {
+    action: "book-screening",
+    workspaceId: "phase1-booking-test",
+    leadId: "lead-1",
+    candidateId: "lead-1",
+    requisitionId: "req-1",
+    facilityId: "facility-1",
+  };
   return {
     hotLeads: [{
       id: "lead-1",
-      bookingAccessToken: BOOKING_TOKEN,
+      leadId: "lead-1",
+      bookingAccessTokenHash: crypto.createHash("sha256").update(BOOKING_TOKEN).digest("hex"),
+      bookingAccessScope: scope,
+      bookingAccessScopeDigest: crypto.createHash("sha256").update(`${BOOKING_TOKEN}\n${JSON.stringify(scope)}`).digest("hex"),
+      bookingAccessIssuedAt: "2026-07-01T12:00:00.000Z",
       bookingAccessExpiresAt: "2026-08-30T12:00:00.000Z",
+      bookingAccessRevokedAt: "",
       candidateName: "Synthetic Candidate",
       email: "candidate@example.test",
       phone: "555-0101",
       selectedFacility: "Synthetic Facility",
+      facilityId: "facility-1",
       selectedRequisitionId: "req-1",
       ...leadPatch,
     }],
@@ -138,6 +153,37 @@ describe("booking API secure public scheduling", () => {
     expect(fixture.state.updates).toHaveLength(0);
   });
 
+  test.each([
+    [{ bookingAccessRevokedAt: "2026-07-29T12:00:00.000Z" }, "revoked"],
+    [{ bookingAccessExpiresAt: "2026-07-29T12:00:00.000Z" }, "expired"],
+    [{ bookingAccessScopeDigest: "b".repeat(64) }, "changed scope"],
+    [{ bookingAccessTokenHash: "c".repeat(64) }, "unknown token"],
+  ])("returns the same inactive-link response for a %s token", async (leadPatch) => {
+    const fixture = mockClient({ data: workspaceData(leadPatch) });
+    currentClient = fixture.client;
+    const handler = require("../api/book-screening");
+    const res = responseRecorder();
+    await handler(bookingRequest({}, "phase1-booking-test", "GET"), res);
+    expect(res.statusCode).toBe(404);
+    expect(res.body).toBe('{"error":"This booking link is no longer active."}');
+  });
+
+  test.each([
+    [{ bookingAccessScope: { action: "book-screening", workspaceId: "other", leadId: "lead-1", candidateId: "lead-1", requisitionId: "req-1", facilityId: "facility-1" } }, "workspace"],
+    [{ selectedRequisitionId: "req-2" }, "requisition"],
+    [{ facilityId: "facility-2" }, "facility"],
+  ])("does not let token scope follow a later %s change", async (leadPatch) => {
+    const data = workspaceData(leadPatch);
+    const scope = data.hotLeads[0].bookingAccessScope;
+    data.hotLeads[0].bookingAccessScopeDigest = crypto.createHash("sha256").update(`${BOOKING_TOKEN}\n${JSON.stringify(scope)}`).digest("hex");
+    const fixture = mockClient({ data });
+    currentClient = fixture.client;
+    const handler = require("../api/book-screening");
+    const res = responseRecorder();
+    await handler(bookingRequest({}, "phase1-booking-test", "GET"), res);
+    expect(res.statusCode).toBe(404);
+  });
+
   test("returns a conflict instead of overwriting a concurrent recruiter update", async () => {
     const fixture = mockClient({ conflict: true });
     currentClient = fixture.client;
@@ -213,5 +259,7 @@ describe("booking API secure public scheduling", () => {
     expect(source).not.toMatch(/\.upsert\s*\(/);
     expect(source).toMatch(/\.eq\("updated_at",\s*expectedUpdatedAt\)/);
     expect(source).not.toMatch(/SUPABASE_ANON_KEY[\s\S]*serviceSupabaseClient/);
+    expect(source).not.toMatch(/bookingAccessToken\s*===/);
+    expect(source).toContain("timingSafeEqual");
   });
 });

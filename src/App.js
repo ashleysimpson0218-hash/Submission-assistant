@@ -22,6 +22,7 @@ import {
 import { isFeatureFlagEnabled } from "./featureFlags";
 import { readRuntimeConfig, workspacePersistenceMode } from "./runtimeConfig";
 import { getRuntimeSupabaseClient } from "./supabaseRuntimeClient";
+import { issueBookingAccess } from "./bookingAccess";
 import { workspaceCounts, workspaceFingerprint, verifyAcceptanceWorkspace } from "./acceptanceWorkspace";
 import { AcceptanceWorkspaceGate } from "./AcceptanceWorkspaceGate";
 import { readSavedIntakeDraftIdentity, savedDraftArray } from "./intakeDraftCompatibility";
@@ -2139,8 +2140,10 @@ function migrateTrackerRecords(records, settings) {
 function migrateHotLeadRecords(records) {
   return (records || [])
     .filter((lead) => lead && typeof lead === "object")
-    .map((lead) => ({
-    ...lead,
+    .map((lead) => {
+    const safeLead = Object.fromEntries(Object.entries(lead).filter(([key]) => key !== "bookingAccessToken"));
+    return {
+    ...safeLead,
     appliedPosition: normalizeCommonSpelling(lead.appliedPosition),
     selectedRole: normalizeCommonSpelling(lead.selectedRole),
     bookedScreeningTime: lead.bookedScreeningTime || lead.screeningTime || "",
@@ -2155,7 +2158,8 @@ function migrateHotLeadRecords(records) {
     communicationEvents: Array.isArray(lead.communicationEvents) ? lead.communicationEvents : [],
     archiveNote: lead.archiveNote || lead.archiveNotes || "",
     archiveNotes: lead.archiveNotes || lead.archiveNote || "",
-  }));
+  };
+  });
 }
 
 function mailtoLink(to, subject, body, options = {}) {
@@ -2185,22 +2189,27 @@ function appOrigin() {
 }
 
 function bookingRequestLinkForLead(lead = {}) {
-  if (!/^[a-f0-9]{64}$/i.test(String(lead?.bookingAccessToken || ""))) return lead.bookingLink || "";
-  return `${appOrigin()}/schedule/${encodeURIComponent(lead.bookingAccessToken)}?workspace=${encodeURIComponent(CLOUD_WORKSPACE_ID)}`;
+  const rawToken = transientBookingTokens.get(String(lead?.id || "")) || "";
+  if (!/^[a-f0-9]{64}$/i.test(rawToken)) return lead.bookingLink || "";
+  return `${appOrigin()}/schedule/${encodeURIComponent(rawToken)}?workspace=${encodeURIComponent(CLOUD_WORKSPACE_ID)}`;
 }
 
 function bookingApiUrl(token = "") {
   return `/api/book-screening?token=${encodeURIComponent(token)}&workspaceId=${encodeURIComponent(CLOUD_WORKSPACE_ID)}`;
 }
 
-function createBookingAccess() {
-  if (typeof window === "undefined" || typeof window.crypto?.getRandomValues !== "function") return { bookingAccessToken: "", bookingAccessExpiresAt: "" };
-  const bytes = new Uint8Array(32);
-  window.crypto.getRandomValues(bytes);
-  return {
-    bookingAccessToken: Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join(""),
-    bookingAccessExpiresAt: new Date(Date.now() + (30 * 24 * 60 * 60 * 1000)).toISOString(),
-  };
+const transientBookingTokens = new Map();
+
+async function createBookingAccess(lead = {}, requisition = {}) {
+  const result = await issueBookingAccess({
+    workspaceId: CLOUD_WORKSPACE_ID,
+    leadId: lead.leadId || lead.id,
+    candidateId: lead.leadId || lead.id,
+    requisitionId: lead.selectedRequisitionId || lead.requisitionId || requisition.id || requisition.requisitionId,
+    facilityId: lead.facilityId || lead.canonicalFacilityId || requisition.facilityId || requisition.canonicalFacilityId,
+  });
+  if (result.rawToken && lead.id) transientBookingTokens.set(String(lead.id), result.rawToken);
+  return result.record;
 }
 
 function LoginPage({ mode, setMode, onEnter, soundEnabled, setSoundEnabled }) {
@@ -8143,6 +8152,7 @@ function RecruiterApp() {
       uniqueIdNumber: req.uniqueIdNumber || "",
       positionTitle: normalizeCommonSpelling(req.positionTitle || ""),
       siteName: req.siteName || "",
+      facilityId: req.facilityId || req.canonicalFacilityId || "",
       siteType: req.siteType || req.locationType || "",
       facilityOperationHours: req.facilityOperationHours || req.operationHours || "",
       employmentType: req.employmentType || "",
@@ -8180,6 +8190,7 @@ function RecruiterApp() {
       appliedPosition: snapshot.positionTitle,
       selectedRole: snapshot.positionTitle,
       selectedFacility: snapshot.siteName,
+      facilityId: snapshot.facilityId,
       reqSnapshot: snapshot,
       fte: snapshot.fte,
       shiftPreference: snapshot.shiftPreference,
@@ -8196,6 +8207,7 @@ function RecruiterApp() {
         appliedPosition: sourceLabel,
         selectedRole: sourceLabel,
         selectedFacility: sourceLabel,
+        facilityId: sourceLabel,
         reqSnapshot: sourceLabel,
         fte: sourceLabel,
         shiftPreference: sourceLabel,
@@ -8466,7 +8478,7 @@ function RecruiterApp() {
     };
   }
 
-  function saveHotLead() {
+  async function saveHotLead() {
     const name = hotLeadDraft.candidateName.trim();
     if (!name) {
       setCopyNotice("Candidate name is required for a Hot Candidate lead.");
@@ -8509,11 +8521,16 @@ function RecruiterApp() {
       createdBy: settings.general.recruiterName || "Recruiter",
       source: hotLeadDraft.resumeImportSource || "resume_import",
     } : null;
+    const leadIdentity = { id: makeId("hot"), leadId: makeId("lead") };
+    const bookingAccess = await createBookingAccess({
+      ...leadIdentity,
+      selectedRequisitionId: hotLeadDraft.selectedRequisitionId || req?.id || req?.requisitionId || "",
+      facilityId: hotLeadDraft.facilityId || hotLeadDraft.canonicalFacilityId || req?.facilityId || req?.canonicalFacilityId || "",
+    }, req);
     const lead = applyHotLeadReqPatch({
-      id: makeId("hot"),
-      leadId: makeId("lead"),
+      ...leadIdentity,
       ...hotLeadDraft,
-      ...createBookingAccess(),
+      ...bookingAccess,
       selectedRequisitionId: hotLeadDraft.selectedRequisitionId || "",
       reqNumber: hotLeadDraft.reqNumber || "",
       uniqueIdNumber: hotLeadDraft.uniqueIdNumber || "",
@@ -8698,7 +8715,7 @@ function RecruiterApp() {
     };
   }
 
-  function hotLeadFromBulkReviewDraft(draft = {}) {
+  async function hotLeadFromBulkReviewDraft(draft = {}) {
     const {
       bulkDraftId,
       importBatchName,
@@ -8712,11 +8729,17 @@ function RecruiterApp() {
       ...leadBase
     } = draft;
     const now = new Date().toISOString();
+    const requisition = resolveHotLeadReq(leadBase);
+    const leadIdentity = { id: leadBase.id || makeId("hot"), leadId: leadBase.leadId || makeId("lead") };
+    const bookingAccess = await createBookingAccess({
+      ...leadBase,
+      ...leadIdentity,
+      facilityId: leadBase.facilityId || leadBase.canonicalFacilityId || requisition?.facilityId || requisition?.canonicalFacilityId || "",
+    }, requisition);
     return {
       ...leadBase,
-      id: leadBase.id || makeId("hot"),
-      leadId: leadBase.leadId || makeId("lead"),
-      ...createBookingAccess(),
+      ...leadIdentity,
+      ...bookingAccess,
       outreachStatus: "Outreach Needed",
       responseStatus: "",
       outreachAttempts: Number(leadBase.outreachAttempts || 0),
@@ -8834,14 +8857,14 @@ function RecruiterApp() {
     setCopyNotice("Bulk draft loaded into Manual Lead Details for correction.");
   }
 
-  function createHotLeadFromBulkDraft(draftId) {
+  async function createHotLeadFromBulkDraft(draftId) {
     const draftItem = hotLeadBulkDrafts.find((item) => (item.bulkDraftId || item.id) === draftId);
     if (!draftItem) return;
     if (!String(draftItem.candidateName || "").trim()) {
       setCopyNotice("Candidate name is required before creating this Hot Lead.");
       return;
     }
-    const lead = hotLeadFromBulkReviewDraft(draftItem);
+    const lead = await hotLeadFromBulkReviewDraft(draftItem);
     if (hotLeadBulkDuplicate(lead, hotLeads)) {
       setCopyNotice("Possible duplicate found. Review name, phone, or email before creating this lead.");
       return;
@@ -8851,7 +8874,7 @@ function RecruiterApp() {
     setCopyNotice(`${lead.candidateName || "Hot Lead"} moved to the Smart Work Queue.`);
   }
 
-  function createAllHotLeadsFromBulkDrafts() {
+  async function createAllHotLeadsFromBulkDrafts() {
     const readyDrafts = hotLeadBulkDrafts.filter((item) => String(item.candidateName || "").trim());
     if (!readyDrafts.length) {
       setCopyNotice("No bulk drafts have a candidate name yet. Review or extract first.");
@@ -8859,15 +8882,15 @@ function RecruiterApp() {
     }
     const created = [];
     const skippedIds = new Set();
-    readyDrafts.forEach((draftItem) => {
-      const lead = hotLeadFromBulkReviewDraft(draftItem);
+    for (const draftItem of readyDrafts) {
+      const lead = await hotLeadFromBulkReviewDraft(draftItem);
       if (hotLeadBulkDuplicate(lead, [...hotLeads, ...created])) {
         skippedIds.add(draftItem.bulkDraftId || draftItem.id);
-        return;
+        continue;
       }
       created.push(lead);
       skippedIds.add(draftItem.bulkDraftId || draftItem.id);
-    });
+    }
     if (created.length) setHotLeads((prev) => [...created, ...prev].slice(0, 300));
     setHotLeadBulkDrafts((prev) => prev.filter((item) => !skippedIds.has(item.bulkDraftId || item.id)));
     setCopyNotice(`${created.length} reviewed Bulk Lead draft${created.length === 1 ? "" : "s"} moved to the Smart Work Queue.`);
@@ -14778,16 +14801,22 @@ function rowifyCandidate(item = {}) {
       return next;
     });
   }
-  function saveSnapshotAsLead() {
+  async function saveSnapshotAsLead() {
     if (!form.fullName && !form.phoneNumber && !form.emailAddress) {
       setCopyNotice("Add at least a candidate name, phone, or email before saving as a lead.");
       return;
     }
     const now = new Date().toISOString();
+    const leadIdentity = { id: makeId("hot"), leadId: makeId("lead") };
+    const bookingAccess = await createBookingAccess({
+      ...leadIdentity,
+      selectedRequisitionId: form.selectedRequisitionId || selectedRequisition?.id || selectedRequisition?.requisitionId || "",
+      facilityId: form.facilityId || form.canonicalFacilityId || selectedRequisition?.facilityId || selectedRequisition?.canonicalFacilityId || "",
+    }, selectedRequisition);
     const lead = {
       ...DEFAULT_HOT_LEAD_DRAFT,
-      id: makeId("hot"),
-      ...createBookingAccess(),
+      ...leadIdentity,
+      ...bookingAccess,
       candidateName: form.fullName || "Unnamed candidate",
       phone: form.phoneNumber || "",
       email: form.emailAddress || "",

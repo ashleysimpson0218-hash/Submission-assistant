@@ -4,6 +4,7 @@ const {
   requestIp,
   serviceSupabaseClient,
 } = require("../server/welcomeflowApiSecurity");
+const crypto = require("crypto");
 
 const CLOUD_TABLE = "welcomeflow_workspace_state";
 const BOOKING_TOKEN_PATTERN = /^[a-f0-9]{64}$/i;
@@ -99,6 +100,30 @@ function leadRequisitionId(lead = {}) {
   return cleanText(lead.requisitionId || lead.selectedRequisitionId || lead.reqId || lead.workingRequisitionId || "", 120);
 }
 
+function leadFacilityId(lead = {}) {
+  return cleanText(lead.facilityId || lead.canonicalFacilityId || lead.selectedFacilityId || lead.reqSnapshot?.facilityId || "", 120);
+}
+
+function canonicalBookingScope(scope = {}) {
+  return JSON.stringify({
+    action: cleanText(scope.action, 40),
+    workspaceId: cleanText(scope.workspaceId, 80),
+    leadId: cleanText(scope.leadId, 120),
+    candidateId: cleanText(scope.candidateId, 120),
+    requisitionId: cleanText(scope.requisitionId, 120),
+    facilityId: cleanText(scope.facilityId, 120),
+  });
+}
+
+function sha256(value) {
+  return crypto.createHash("sha256").update(String(value), "utf8").digest("hex");
+}
+
+function equalHex(left, right) {
+  if (!/^[a-f0-9]{64}$/i.test(String(left || "")) || !/^[a-f0-9]{64}$/i.test(String(right || ""))) return false;
+  return crypto.timingSafeEqual(Buffer.from(String(left).toLowerCase(), "hex"), Buffer.from(String(right).toLowerCase(), "hex"));
+}
+
 function activeRequisitionForLead(data = {}, lead = {}) {
   const requisitionId = leadRequisitionId(lead);
   if (!requisitionId) return null;
@@ -144,11 +169,20 @@ function bookingConfiguration() {
   };
 }
 
-function activeBookingLead(leads, token, now = new Date()) {
-  const lead = leads.find((item) => item?.bookingAccessToken === token);
+function activeBookingLead(leads, token, workspaceId, now = new Date()) {
+  const tokenHash = sha256(token);
+  const lead = leads.find((item) => equalHex(item?.bookingAccessTokenHash, tokenHash));
   if (!lead || lead.archivedAt || lead.status === "Archived") return null;
+  const scope = lead.bookingAccessScope || {};
+  const expectedScopeDigest = sha256(`${token}\n${canonicalBookingScope(scope)}`);
+  if (!equalHex(lead.bookingAccessScopeDigest, expectedScopeDigest)) return null;
+  if (scope.action !== "book-screening" || scope.workspaceId !== workspaceId) return null;
+  if (scope.leadId !== cleanText(lead.leadId || lead.id, 120) || scope.candidateId !== cleanText(lead.leadId || lead.id, 120)) return null;
+  if (scope.requisitionId !== leadRequisitionId(lead) || scope.facilityId !== leadFacilityId(lead)) return null;
+  if (lead.bookingAccessRevokedAt) return null;
+  const issuedAt = Date.parse(lead.bookingAccessIssuedAt || "");
   const expiresAt = Date.parse(lead.bookingAccessExpiresAt || "");
-  if (!Number.isFinite(expiresAt) || expiresAt <= now.getTime()) return null;
+  if (!Number.isFinite(issuedAt) || issuedAt > now.getTime() || !Number.isFinite(expiresAt) || expiresAt <= now.getTime()) return null;
   return lead;
 }
 
@@ -236,7 +270,7 @@ module.exports = async function handler(req, res) {
     }
     const data = workspace.data;
     const leads = Array.isArray(data.hotLeads) ? data.hotLeads : [];
-    const lead = activeBookingLead(leads, token);
+    const lead = activeBookingLead(leads, token, workspaceId);
     if (!lead || !activeRequisitionForLead(data, lead)) {
       json(res, 404, { error: "This booking link is no longer active." });
       return;

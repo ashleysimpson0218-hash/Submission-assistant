@@ -14,10 +14,11 @@ test("acceptance mode never reads browser-local workspace values or uses them as
 
 test("internal booking links require opaque random tokens and do not expose lead IDs", () => {
   const bookingLinkFunction = appSource.match(/function bookingRequestLinkForLead[\s\S]*?\n}/)?.[0] || "";
-  expect(bookingLinkFunction).toMatch(/bookingAccessToken/);
+  expect(bookingLinkFunction).toMatch(/transientBookingTokens/);
   expect(bookingLinkFunction).toMatch(/\{64\}/);
   expect(bookingLinkFunction).not.toMatch(/lead\.id/);
-  expect(appSource).toContain("crypto.getRandomValues");
+  expect(appSource).not.toMatch(/bookingAccessToken:\s*Array\.from/);
+  expect(appSource).toContain('key !== "bookingAccessToken"');
 });
 
 test("active application defaults contain no real recipient or personal contact values", () => {
