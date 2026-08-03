@@ -23,6 +23,7 @@ import { isFeatureFlagEnabled } from "./featureFlags";
 import { readRuntimeConfig, workspacePersistenceMode } from "./runtimeConfig";
 import { getRuntimeSupabaseClient } from "./supabaseRuntimeClient";
 import { reportActionFailure, safeActionFailure } from "./runtimeErrors";
+import { openApprovedExternalUrl } from "./safeExternalUrl";
 import { issueBookingAccess } from "./bookingAccess";
 import { workspaceCounts, workspaceFingerprint, verifyAcceptanceWorkspace } from "./acceptanceWorkspace";
 import { AcceptanceWorkspaceGate } from "./AcceptanceWorkspaceGate";
@@ -1241,7 +1242,11 @@ function safeOpenExternalUrl(url, target = "_blank") {
     if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "External links and communication actions are disabled in Owner UAT." }));
     return;
   }
-  if (url && typeof window !== "undefined") window.open(url, target, "noopener,noreferrer");
+  const opened = openApprovedExternalUrl(url, { target });
+  if (!opened && typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "This external link is not on the approved secure-host list." }));
+  }
+  return opened;
 }
 
 async function saveCloudWorkspaceState(data) {
