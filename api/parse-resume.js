@@ -5,6 +5,7 @@ const {
   requestPayloadBytes,
 } = require("../server/welcomeflowApiSecurity");
 const { validateResumeFile } = require("../server/resumeFileValidation");
+const { reportServerFailure } = require("../server/safeServerError");
 
 if (process.env.WELCOMEFLOW_MAINTENANCE_MODE === "true" || process.env.WELCOMEFLOW_UAT_EXTERNAL_ACTIONS_DISABLED === "true") {
   module.exports = async function maintenanceHandler(req, res) {
@@ -49,7 +50,7 @@ const { pathToFileURL } = require("url");
 try {
   PDFParse.setWorker(pathToFileURL(path.join(path.dirname(require.resolve("pdf-parse")), "pdf.worker.mjs")).href);
 } catch (error) {
-  console.error("WelcomeFlow pdf-parse worker setup failed", error?.message || error);
+  reportServerFailure("PDF_WORKER_SETUP_FAILED", error, { provider: "pdf-parse" });
 }
 let pdfjsLibraryPromise = null;
 
@@ -386,7 +387,7 @@ async function extractPdfTextServer(buffer) {
     const parsed = String(result?.text || "").replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
     if (parsed) return parsed;
   } catch (error) {
-    console.error("WelcomeFlow pdf-parse extraction failed", error?.message || error);
+    reportServerFailure("PDF_PARSE_EXTRACTION_FAILED", error, { provider: "pdf-parse" });
     // Fall through to PDF.js below.
   }
   try {
@@ -421,7 +422,7 @@ async function extractPdfTextServer(buffer) {
     }
     return pages.join("\n").replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
   } catch (error) {
-    console.error("WelcomeFlow pdfjs extraction failed", error?.message || error);
+    reportServerFailure("PDFJS_EXTRACTION_FAILED", error, { provider: "pdfjs" });
     return "";
   }
 }
@@ -529,7 +530,7 @@ module.exports = async function handler(req, res) {
 
     return json(res, result.ok ? 200 : result.status || 502, result);
   } catch (error) {
-    console.error("WelcomeFlow resume parsing failed", { code: error?.code || "", provider: process.env.RESUME_PARSER_PROVIDER || "adapter" });
+    reportServerFailure("RESUME_PARSING_FAILED", error, { provider: process.env.RESUME_PARSER_PROVIDER || "adapter" });
     return json(res, 500, { ok: false, error: "Resume parsing could not be completed safely.", provider: process.env.RESUME_PARSER_PROVIDER || "adapter" });
   }
 };

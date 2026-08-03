@@ -171,7 +171,13 @@ describe("email API authorization and abuse protection", () => {
     await handler(request({ to: "recruiter@example.test", subject: "Subject", body: "Body" }), res);
     expect(res.statusCode).toBe(502);
     expect(res.body).not.toMatch(/provider-secret-detail|do-not-return/);
-    expect(errorSpy).toHaveBeenCalledWith("WelcomeFlow email provider rejected a request", expect.objectContaining({ status: 422, userId: "user-1" }));
+    expect(errorSpy).toHaveBeenCalledWith("WelcomeFlow server action failed", {
+      code: "EMAIL_PROVIDER_REJECTED",
+      category: "Error",
+      provider: "resend",
+      status: 422,
+    });
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toMatch(/user-1|provider-secret-detail|do-not-return/);
   });
 
   test("rate limits repeated requests from the same verified user", async () => {

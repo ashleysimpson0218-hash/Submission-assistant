@@ -22,6 +22,7 @@ import {
 import { isFeatureFlagEnabled } from "./featureFlags";
 import { readRuntimeConfig, workspacePersistenceMode } from "./runtimeConfig";
 import { getRuntimeSupabaseClient } from "./supabaseRuntimeClient";
+import { reportActionFailure, safeActionFailure } from "./runtimeErrors";
 import { issueBookingAccess } from "./bookingAccess";
 import { workspaceCounts, workspaceFingerprint, verifyAcceptanceWorkspace } from "./acceptanceWorkspace";
 import { AcceptanceWorkspaceGate } from "./AcceptanceWorkspaceGate";
@@ -4830,7 +4831,7 @@ function ResumeImportButton({ onImport, children = "Import Resume", style }) {
             const text = await extractResumeFileText(file);
             onImport(text, file.name);
           } catch (error) {
-            window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: error.message || "Resume import failed" }));
+            window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: safeActionFailure("RESUME_IMPORT_FAILED", "Resume import could not be completed safely.", error) }));
             onImport("", file.name);
           }
         }
@@ -4847,7 +4848,7 @@ function BulkResumeImportButton({ onImportFiles, children = "Bulk Import Resumes
     try {
       await onImportFiles(files);
     } catch (error) {
-      window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: error.message || "Bulk resume import failed" }));
+      window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: safeActionFailure("BULK_RESUME_IMPORT_FAILED", "Bulk resume import could not be completed safely.", error) }));
     }
   }
   return (
@@ -4870,7 +4871,7 @@ function ResumeDropZone({ onImport, children = "Drag/drop resume or application 
       const text = await extractResumeFileText(file);
       onImport(text, file.name);
     } catch (error) {
-      window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: error.message || "Resume import failed" }));
+      window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: safeActionFailure("RESUME_DROP_IMPORT_FAILED", "Resume import could not be completed safely.", error) }));
       onImport("", file.name);
     }
   }
@@ -6368,7 +6369,7 @@ function RecruiterApp() {
               browserPersistenceEnabled,
             });
           } catch (error) {
-            setAcceptanceError(error?.message || "WelcomeFlow could not fingerprint the requested workspace.");
+            setAcceptanceError(safeActionFailure("ACCEPTANCE_FINGERPRINT_FAILED", "WelcomeFlow could not verify the requested workspace fingerprint.", error));
             setAcceptanceDiagnostics((previous) => ({ ...previous, status: "failed", updatedAt: cloud.updatedAt, source: "Cloud" }));
             return;
           }
@@ -8803,7 +8804,8 @@ function RecruiterApp() {
         else accepted.push(makeHotLeadBulkReviewDraft(built, file.name || "resume", "Bulk resume import"));
       } catch (error) {
         const built = buildBulkResumeHotLead("", file.name || "resume", [...hotLeads, ...hotLeadBulkDrafts, ...accepted]);
-        accepted.push(makeHotLeadBulkReviewDraft({ ...built, extractionWarnings: [...(built.extractionWarnings || []), error.message || "Resume parser failed. Review manually."] }, file.name || "resume", "Bulk resume import"));
+        reportActionFailure("BULK_RESUME_ITEM_FAILED", error);
+        accepted.push(makeHotLeadBulkReviewDraft({ ...built, extractionWarnings: [...(built.extractionWarnings || []), "Resume parser failed. Review this file manually."] }, file.name || "resume", "Bulk resume import"));
       }
     }
     if (accepted.length) setHotLeadBulkDrafts((prev) => [...accepted, ...prev].slice(0, 200));
@@ -9136,7 +9138,7 @@ function RecruiterApp() {
       markHotLeadOutreachChannel(lead, "email", "Sent", attemptNumber);
       setCopyNotice(`Email attempt ${attemptNumber} sent to ${recipient}.`);
     } catch (error) {
-      setCopyNotice(`${error?.message || "Email send failed"} Use Open Fallback if you need to send from your email app.`);
+      setCopyNotice(safeActionFailure("HOT_LEAD_EMAIL_FAILED", "Email sending failed safely. Use Open Fallback if you need to send from your email app.", error));
     }
   }
 
@@ -10205,8 +10207,7 @@ function RecruiterApp() {
       setCommunicationPreviewOpen(true);
       setCopyNotice(outOfDate ? "Submission preview is out of date. Refresh it before continuing review." : currentPreview.canConfirm ? "Submission preview complete. Nothing has been saved or submitted." : "Submission preview opened with blockers. Nothing has been saved or submitted.");
     } catch (error) {
-      console.error("WelcomeFlow communication preview failed", error);
-      setCopyNotice(`Submission preview could not generate: ${error?.message || "unknown resolver issue"}`);
+      setCopyNotice(safeActionFailure("COMMUNICATION_PREVIEW_FAILED", "Submission preview could not be generated safely.", error));
     }
   }
 
@@ -10217,8 +10218,7 @@ function RecruiterApp() {
       setCommunicationPreviewOutOfDate(false);
       setCopyNotice("Submission preview refreshed. Nothing has been saved or submitted.");
     } catch (error) {
-      console.error("WelcomeFlow communication preview refresh failed", error);
-      setCopyNotice(`Submission preview could not refresh: ${error?.message || "unknown resolver issue"}`);
+      setCopyNotice(safeActionFailure("COMMUNICATION_PREVIEW_REFRESH_FAILED", "Submission preview could not be refreshed safely.", error));
     }
   }
 
@@ -10288,9 +10288,9 @@ function RecruiterApp() {
       setCloudStatus(confirmation.idempotent ? "Reviewed package already confirmed" : "Saved to WelcomeFlow Test");
       setCopyNotice(confirmation.idempotent ? "This exact reviewed package was already confirmed. No duplicate record or history was created." : "Candidate Ready for Facility Submission. The reviewed package has been saved. No communication has been sent.");
     } catch (error) {
-      console.error("WelcomeFlow reviewed Candidate Ready confirmation failed", error);
+      reportActionFailure("CANDIDATE_READY_CONFIRMATION_FAILED", error);
       setCloudStatus("Candidate Ready confirmation blocked");
-      setCopyNotice(`Candidate Ready confirmation was blocked: ${error?.message || "unknown error"}`);
+      setCopyNotice("Candidate Ready confirmation was blocked safely. Reload the workspace and review the package before trying again.");
     } finally {
       setCandidateReadyConfirmationProcessing(false);
     }
@@ -10346,9 +10346,9 @@ function RecruiterApp() {
       if (openMailto && actionResult.mailtoUrl) window.open(actionResult.mailtoUrl, "_self");
       return actionResult;
     } catch (error) {
-      console.error("WelcomeFlow reviewed communication action failed", error);
+      reportActionFailure("REVIEWED_COMMUNICATION_ACTION_FAILED", error);
       setCloudStatus("Communication action blocked");
-      setCopyNotice(error?.message || "The communication action was blocked.");
+      setCopyNotice("The communication action was blocked safely. No status was changed.");
       return null;
     } finally {
       setCommunicationActionProcessing(false);
@@ -10419,8 +10419,7 @@ function RecruiterApp() {
     try {
       generated = buildOutput();
     } catch (error) {
-      console.error("WelcomeFlow submission output failed", error);
-      setCopyNotice(`Submission emails could not generate: ${error?.message || "unknown template issue"}`);
+      setCopyNotice(safeActionFailure("SUBMISSION_OUTPUT_FAILED", "Submission emails could not be generated safely.", error));
       return;
     }
     const exactDuplicate = duplicateCandidates.find((item) => {
@@ -21638,7 +21637,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
         return;
       }
     } catch (error) {
-      setCommunicationSaveError(error?.message || SAFE_REQUISITION_ERROR);
+      setCommunicationSaveError(safeActionFailure("REQUISITION_COMMUNICATION_SAVE_FAILED", SAFE_REQUISITION_ERROR, error));
       return;
     }
     window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "Communication Details saved to the selected test requisition." }));

@@ -7,6 +7,7 @@ const {
   requestIp,
   requestPayloadBytes,
 } = require("../server/welcomeflowApiSecurity");
+const { reportServerFailure } = require("../server/safeServerError");
 
 function json(res, status, payload) {
   res.statusCode = status;
@@ -164,13 +165,13 @@ module.exports = async function handler(req, res) {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      console.error("WelcomeFlow email provider rejected a request", { status: response.status, userId: authorization.user.id });
+      reportServerFailure("EMAIL_PROVIDER_REJECTED", null, { status: response.status, provider: "resend" });
       json(res, 502, { error: "The email provider could not complete this request." });
       return;
     }
     json(res, 200, { ok: true, id: data?.id || "", provider: "resend" });
   } catch (error) {
-    console.error("WelcomeFlow email provider request failed", { userId: authorization.user.id });
+    reportServerFailure("EMAIL_PROVIDER_REQUEST_FAILED", null, { provider: "resend" });
     json(res, 502, { error: "The email provider could not complete this request." });
   }
 };

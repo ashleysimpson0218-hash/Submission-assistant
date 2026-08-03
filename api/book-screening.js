@@ -4,6 +4,7 @@ const {
   requestIp,
   serviceSupabaseClient,
 } = require("../server/welcomeflowApiSecurity");
+const { reportServerFailure } = require("../server/safeServerError");
 const crypto = require("crypto");
 
 const CLOUD_TABLE = "welcomeflow_workspace_state";
@@ -404,7 +405,7 @@ module.exports = async function handler(req, res) {
     }
     json(res, 200, { ok: true, duplicate: false, lead: publicLead(nextLeads.find((item) => item.id === lead.id), nextWorkspace, configuration.allowedSlots, configuration.timeZone) });
   } catch (error) {
-    console.error("WelcomeFlow booking request failed", { code: error?.code || "", workspaceId });
+    reportServerFailure("BOOKING_REQUEST_FAILED", error);
     json(res, 503, { error: "The booking request could not be completed safely." });
   }
 };
