@@ -20,7 +20,11 @@ function bytesToHex(bytes) {
   return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
-export async function sha256Hex(value, cryptoImpl = globalThis.crypto) {
+function browserCrypto() {
+  return typeof window !== "undefined" ? window.crypto : null;
+}
+
+export async function sha256Hex(value, cryptoImpl = browserCrypto()) {
   if (!cryptoImpl?.subtle) return "";
   const bytes = typeof TextEncoder !== "undefined"
     ? new TextEncoder().encode(String(value))
@@ -30,7 +34,7 @@ export async function sha256Hex(value, cryptoImpl = globalThis.crypto) {
 }
 
 export async function issueBookingAccess(scope = {}, options = {}) {
-  const cryptoImpl = options.cryptoImpl || globalThis.crypto;
+  const cryptoImpl = options.cryptoImpl || browserCrypto();
   const now = options.now instanceof Date ? options.now : new Date();
   const canonicalScope = canonicalBookingScope(scope);
   const parsedScope = JSON.parse(canonicalScope);
