@@ -30,7 +30,8 @@ test("acceptance authentication is in-memory and never consumes the persistent l
 });
 
 test("active application defaults contain no real recipient or personal contact values", () => {
-  expect(appSource).not.toMatch(/teamcenturion\.com|ashley@central54recruiting\.com|Ashleysimpson0218@gmail\.com/i);
+  const prohibitedContacts = ["teamcenturion.com", ["ashley", "central54recruiting.com"].join("@"), [["Ashley", "simpson0218"].join(""), "gmail.com"].join("@")];
+  prohibitedContacts.forEach((value) => expect(appSource.toLowerCase()).not.toContain(value.toLowerCase()));
 });
 
 test("production runtime errors render a generic message instead of stack details", () => {

@@ -2261,7 +2261,7 @@ function LoginPage({ mode, setMode, onEnter, soundEnabled, setSoundEnabled }) {
                     {[["42", "Active"], ["8", "Ready"], ["15", "Pending"], ["4", "Interviews"]].map(([value, label]) => <div key={label} style={{ border: "1px solid #ebe6f8", borderRadius: 8, padding: 10, background: "#fff" }}><strong>{value}</strong><span style={{ display: "block", fontSize: 9, color: "#635b7c" }}>{label}</span></div>)}
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    <div style={{ border: "1px solid #ebe6f8", borderRadius: 8, padding: 12, background: "#fff" }}><strong>Recent Candidates</strong>{["Alisa Franks", "Joshua Simpson", "Nittaya Everheart"].map((name) => <div key={name} style={{ marginTop: 10, fontSize: 10, color: "#635b7c" }}>{name}</div>)}</div>
+                    <div style={{ border: "1px solid #ebe6f8", borderRadius: 8, padding: 12, background: "#fff" }}><strong>Recent Candidates</strong>{["Synthetic Candidate 001", "Synthetic Candidate 002", "Synthetic Candidate 003"].map((name) => <div key={name} style={{ marginTop: 10, fontSize: 10, color: "#635b7c" }}>{name}</div>)}</div>
                     <div style={{ border: "1px solid #ebe6f8", borderRadius: 8, padding: 12, background: "#fff" }}><strong>Upcoming Actions</strong>{["Send onboarding roadmap", "Schedule intake call", "Follow up via email"].map((name) => <div key={name} style={{ marginTop: 10, fontSize: 10, color: "#635b7c" }}>{name}</div>)}</div>
                   </div>
                 </div>
@@ -2283,7 +2283,7 @@ function LoginPage({ mode, setMode, onEnter, soundEnabled, setSoundEnabled }) {
               <label style={{ display: "grid", gap: 8, color: "#635b7c", fontWeight: 800 }}>Email address
                 <div style={{ display: "grid", gridTemplateColumns: "32px 1fr", alignItems: "center", border: "1px solid #ded7f1", borderRadius: 8, padding: "0 14px", minHeight: 54, background: "#fff" }}>
                   <span style={{ fontSize: 14, color: "#6b5f93", fontWeight: 950 }}>Mail</span>
-                  <input aria-label="Email address" placeholder="you@company.com" style={{ border: 0, outline: 0, font: "inherit", fontWeight: 700, color: "#160a43" }} />
+                  <input aria-label="Email address" placeholder="you@example.test" style={{ border: 0, outline: 0, font: "inherit", fontWeight: 700, color: "#160a43" }} />
                 </div>
               </label>
               <label style={{ display: "grid", gap: 8, color: "#635b7c", fontWeight: 800 }}>Password
@@ -2401,9 +2401,9 @@ function HotLeadWorkflowMockup({
   const mockLeads = [
     {
       id: "mock-lead-1",
-      candidate: "Chelsea Warthen",
-      phone: "555-218-4421",
-      email: "chelsea.w@example.com",
+      candidate: "Synthetic Candidate 001",
+      phone: "202-555-0101",
+      email: "synthetic001@example.test",
       position: "Registered Nurse",
       facility: "Baldwin State Prison",
       bookingStatus: "Call Booked",
@@ -2419,9 +2419,9 @@ function HotLeadWorkflowMockup({
     },
     {
       id: "mock-lead-2",
-      candidate: "Talitha Quarterman",
-      phone: "555-654-2210",
-      email: "talitha.q@example.com",
+      candidate: "Synthetic Candidate 002",
+      phone: "202-555-0102",
+      email: "synthetic002@example.test",
       position: "Licensed Practical Nurse",
       facility: "Hancock State Prison",
       bookingStatus: "Link Clicked",
@@ -2437,9 +2437,9 @@ function HotLeadWorkflowMockup({
     },
     {
       id: "mock-lead-3",
-      candidate: "Marcus Green",
-      phone: "555-876-4412",
-      email: "marcus.g@example.com",
+      candidate: "Synthetic Candidate 003",
+      phone: "202-555-0103",
+      email: "synthetic003@example.test",
       position: "CNA",
       facility: "GDCP",
       bookingStatus: "Link Sent",
@@ -2455,9 +2455,9 @@ function HotLeadWorkflowMockup({
     },
     {
       id: "mock-lead-4",
-      candidate: "Jasmine Morgan",
-      phone: "555-333-8899",
-      email: "jasmine.m@example.com",
+      candidate: "Synthetic Candidate 004",
+      phone: "202-555-0104",
+      email: "synthetic004@example.test",
       position: "Charge RN",
       facility: "Metro Re-entry Facility",
       bookingStatus: "Manual Scheduled",
@@ -3184,7 +3184,7 @@ function HotLeadWorkflowMockup({
                     <Button primary onClick={() => { if (onBulkImport) onBulkImport(bulkText, "pasted bulk rows"); else mockNotice("Bulk leads added"); setBulkText(""); }} disabled={!bulkText.trim()}>Review Pasted Leads</Button>
                   </div>
                   <Field label="Paste Bulk Lead Rows">
-                    <TextArea value={bulkText} onChange={(event) => setBulkText(event.target.value)} minHeight={92} placeholder={"Candidate Name,Phone,Email,Req Number,Position,Facility,Source,Notes\nJane Candidate,(555) 123-4567,jane@example.com,1001,Registered Nurse,Baldwin State Prison,Indeed,Available days"} />
+                    <TextArea value={bulkText} onChange={(event) => setBulkText(event.target.value)} minHeight={92} placeholder={"Candidate Name,Phone,Email,Req Number,Position,Facility,Source,Notes\nSynthetic Candidate 001,202-555-0101,synthetic001@example.test,1001,Registered Nurse,Synthetic Facility 01,Synthetic Source,Available days"} />
                   </Field>
                   <div style={{ color: THEME.muted, fontSize: 12, lineHeight: 1.5 }}>
                     Bulk import creates review drafts first. Review each row, re-extract if needed, correct wrong fields, then create the Smart Work Queue leads.
@@ -16218,7 +16218,7 @@ function rowifyCandidate(item = {}) {
                       <Field label="Candidate Name*"><TextInput value={form.fullName} onChange={(event) => updateForm("fullName", event.target.value)} placeholder="Candidate legal name" /></Field>
                       <Field label="Preferred Contact*"><SelectInput value={form.preferredContact || ""} onChange={(event) => updateForm("preferredContact", event.target.value)} options={["Phone", "Email", "Text"]} placeholder="Select" /></Field>
                       <Field label="Phone*"><TextInput value={form.phoneNumber} onChange={(event) => updateForm("phoneNumber", formatCandidatePhone(event.target.value))} placeholder="(000) 000-0000" /></Field>
-                      <Field label="Email"><TextInput value={form.emailAddress} onChange={(event) => updateForm("emailAddress", event.target.value)} placeholder="candidate@email.com" /></Field>
+                      <Field label="Email"><TextInput value={form.emailAddress} onChange={(event) => updateForm("emailAddress", event.target.value)} placeholder="candidate@example.test" /></Field>
                       <Field label="Source*"><SelectInput value={form.candidateSource} onChange={(event) => updateForm("candidateSource", event.target.value)} options={snapshotSourceOptions} placeholder="Select source" /></Field>
                       <Field label="Candidate Type"><SelectInput value={form.candidateType} onChange={(event) => updateForm("candidateType", event.target.value)} options={["External", "Internal", "Rehire"]} /></Field>
                       <Field label="Date Added"><TextInput type="date" value={submissionDate} onChange={(event) => setSubmissionDate(event.target.value)} /></Field>
@@ -16236,7 +16236,7 @@ function rowifyCandidate(item = {}) {
                     <div style={{ padding: 16 }}>
                       {snapshotSelectedTypeKey === "Internal" ? (
                         <div style={{ display: "grid", gap: 12, gridTemplateColumns: formCompact ? "1fr" : "repeat(4, minmax(0, 1fr))" }}>
-                          <Field label="Work Email"><TextInput value={form.workEmail} onChange={(event) => updateForm("workEmail", event.target.value)} placeholder="employee@company.com" /></Field>
+                          <Field label="Work Email"><TextInput value={form.workEmail} onChange={(event) => updateForm("workEmail", event.target.value)} placeholder="employee@example.test" /></Field>
                           <Field label="Current Facility"><TextInput value={form.currentFacility} onChange={(event) => updateForm("currentFacility", event.target.value)} /></Field>
                           <Field label="Current Role"><TextInput value={form.currentRole} onChange={(event) => updateForm("currentRole", event.target.value)} /></Field>
                           <Field label="Current Manager*"><TextInput value={form.currentManager} onChange={(event) => updateForm("currentManager", event.target.value)} /></Field>
@@ -16619,7 +16619,7 @@ function rowifyCandidate(item = {}) {
                     <Field label="Current Facility"><TextInput value={form.currentFacility} onChange={(event) => updateForm("currentFacility", event.target.value)} /></Field>
                     <Field label="Current Role"><TextInput value={form.currentRole} onChange={(event) => updateForm("currentRole", event.target.value)} /></Field>
                     <Field label="Current Manager*"><TextInput value={form.currentManager} onChange={(event) => updateForm("currentManager", event.target.value)} /></Field>
-                    <Field label="Work Email"><TextInput value={form.workEmail} onChange={(event) => updateForm("workEmail", event.target.value)} placeholder="employee@company.com" /></Field>
+                    <Field label="Work Email"><TextInput value={form.workEmail} onChange={(event) => updateForm("workEmail", event.target.value)} placeholder="employee@example.test" /></Field>
                     <Field label="Current Employment Status"><TextInput value={form.currentEmploymentStatus} onChange={(event) => updateForm("currentEmploymentStatus", event.target.value)} /></Field>
                     <Field label="Current Shift"><TextInput value={form.currentShift} onChange={(event) => updateForm("currentShift", event.target.value)} /></Field>
                     <Field label="Current Pay Rate"><TextInput value={form.currentPayRate} onChange={(event) => updateForm("currentPayRate", event.target.value)} /></Field>
@@ -19462,7 +19462,7 @@ function rowifyCandidate(item = {}) {
               <Card compact title="Manual Candidate Details" subtitle="These fields create the tracker profile and preserve the same save/history logic.">
                 <div style={{ display: "grid", gap: 12, gridTemplateColumns: isNarrow ? "1fr" : "repeat(2, minmax(0, 1fr))", alignItems: "end" }}>
                   <Field label="Candidate Name*"><TextInput value={manualTrackerDraft.candidate} onChange={(event) => updateManualTrackerDraft("candidate", event.target.value)} placeholder="Candidate name" /></Field>
-                  <Field label="Email"><TextInput value={manualTrackerDraft.candidateEmail} onChange={(event) => updateManualTrackerDraft("candidateEmail", event.target.value)} placeholder="candidate@email.com" /></Field>
+                  <Field label="Email"><TextInput value={manualTrackerDraft.candidateEmail} onChange={(event) => updateManualTrackerDraft("candidateEmail", event.target.value)} placeholder="candidate@example.test" /></Field>
                   <Field label="Phone"><TextInput value={manualTrackerDraft.phoneNumber} onChange={(event) => updateManualTrackerDraft("phoneNumber", formatCandidatePhone(event.target.value))} placeholder="(000) 000-0000" /></Field>
                   <Field label="Candidate Type"><SelectInput value={manualTrackerDraft.candidateType || "External"} onChange={(event) => updateManualTrackerDraft("candidateType", event.target.value)} options={["External", "Internal", "Rehire"]} /></Field>
                   <Field label="Screening Completed With"><SelectInput value={manualTrackerDraft.screeningCompletedBy || "Recruiter"} onChange={(event) => updateManualTrackerDraft("screeningCompletedBy", event.target.value)} options={["Recruiter", "Manager"]} /></Field>
@@ -23148,7 +23148,7 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
   }
 
   function downloadSitesTemplate() {
-    downloadExcelWorkbook("welcomeflow-sites-template.xls", [{ name: "Sites Template", columns: SITE_TEMPLATE_COLUMNS, rows: [{ "Site Name": "Metro Reentry", "Location Type": "Standard Operation", "Location": "123 Main St, Atlanta, GA 30303", "Address": "123 Main St", "City": "Atlanta", "State": "GA", "Zip Code": "30303", "Hiring Manager Name": "Jane Manager", "Hiring Manager Position Title": "Director of Nursing", "Hiring Manager Email": "manager@example.com", "Hiring Manager Phone": "555-555-5555", "Additional Manager Name": "Backup Manager", "Additional Manager Title": "Assistant Director of Nursing", "Additional Manager Email": "backup@example.com", "Additional Manager Phone": "555-555-5556", "Administrative Contact Name": "Admin Contact", "Administrative Contact Email": "admin@example.com", "Administrative Contact Phone": "555-555-5557", "Site-Specific Screening Questions": "Can work weekends?::Yes/No::weekend:: | Any site restrictions?::Text::::", "Status": "Active", "Notes": "Example row" }] }]);
+    downloadExcelWorkbook("welcomeflow-sites-template.xls", [{ name: "Sites Template", columns: SITE_TEMPLATE_COLUMNS, rows: [{ "Site Name": "Synthetic Facility 01", "Location Type": "Standard Operation", "Location": "001 Test Data Way, Example City, ZZ 00001", "Address": "001 Test Data Way", "City": "Example City", "State": "ZZ", "Zip Code": "00001", "Hiring Manager Name": "Synthetic Manager 001", "Hiring Manager Position Title": "Director of Nursing", "Hiring Manager Email": "manager001@example.test", "Hiring Manager Phone": "202-555-0105", "Additional Manager Name": "Synthetic Manager 002", "Additional Manager Title": "Assistant Director of Nursing", "Additional Manager Email": "manager002@example.test", "Additional Manager Phone": "202-555-0106", "Administrative Contact Name": "Synthetic Contact 001", "Administrative Contact Email": "contact001@example.test", "Administrative Contact Phone": "202-555-0107", "Site-Specific Screening Questions": "Can work weekends?::Yes/No::weekend:: | Any site restrictions?::Text::::", "Status": "Active", "Notes": "Synthetic example row" }] }]);
   }
 
   function downloadContactsTemplate() {
