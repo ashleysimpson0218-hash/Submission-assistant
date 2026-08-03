@@ -14,6 +14,10 @@ create table if not exists public.welcomeflow_screening_slot_reservations (
 );
 
 alter table public.welcomeflow_screening_slot_reservations enable row level security;
+create unique index if not exists welcomeflow_screening_reservation_lead_unique
+  on public.welcomeflow_screening_slot_reservations (workspace_id, lead_id);
+create unique index if not exists welcomeflow_screening_reservation_token_unique
+  on public.welcomeflow_screening_slot_reservations (workspace_id, token_hash);
 revoke all privileges on table public.welcomeflow_screening_slot_reservations from public, anon, authenticated;
 grant select, insert, update, delete on table public.welcomeflow_screening_slot_reservations to service_role;
 
@@ -41,8 +45,13 @@ declare
   v_lead jsonb;
   v_scope jsonb;
   v_requisition jsonb;
-  v_existing_lead_id text;
-  v_existing_token_hash text;
+  v_capability_lead_id text;
+  v_capability_token_hash text;
+  v_capability_recruiter_key text;
+  v_capability_date date;
+  v_capability_time time without time zone;
+  v_slot_lead_id text;
+  v_slot_token_hash text;
   v_rows integer := 0;
   v_status text;
 begin
@@ -65,6 +74,28 @@ begin
 
   if v_data is null then return 'inactive'; end if;
 
+  select reservation.lead_id, reservation.token_hash, reservation.recruiter_key,
+         reservation.requested_date, reservation.requested_time
+    into v_capability_lead_id, v_capability_token_hash, v_capability_recruiter_key,
+         v_capability_date, v_capability_time
+  from public.welcomeflow_screening_slot_reservations as reservation
+  where reservation.workspace_id = p_workspace_id
+    and (reservation.lead_id = p_lead_id or reservation.token_hash = p_token_hash)
+  order by case when reservation.token_hash = p_token_hash then 0 else 1 end
+  limit 1
+  for update;
+
+  if v_capability_lead_id is not null then
+    if v_capability_lead_id = p_lead_id
+       and v_capability_token_hash = p_token_hash
+       and v_capability_recruiter_key = p_recruiter_key
+       and v_capability_date = p_requested_date
+       and v_capability_time = p_requested_time::time then
+      return 'duplicate';
+    end if;
+    return 'already_booked';
+  end if;
+
   select item
     into v_lead
   from jsonb_array_elements(coalesce(v_data -> 'hotLeads', '[]'::jsonb)) as item
@@ -78,6 +109,7 @@ begin
   if coalesce(v_lead ->> 'archivedAt', '') <> ''
      or coalesce((v_lead ->> 'archived')::boolean, false)
      or coalesce(v_lead ->> 'bookingAccessRevokedAt', '') <> ''
+     or coalesce(v_lead ->> 'bookingAccessConsumedAt', '') <> ''
      or coalesce((v_lead ->> 'bookingAccessIssuedAt')::timestamptz, 'infinity'::timestamptz) > clock_timestamp()
      or coalesce((v_lead ->> 'bookingAccessExpiresAt')::timestamptz, '-infinity'::timestamptz) <= clock_timestamp()
      or v_status not in (
@@ -123,7 +155,7 @@ begin
   end if;
 
   select reservation.lead_id, reservation.token_hash
-    into v_existing_lead_id, v_existing_token_hash
+    into v_slot_lead_id, v_slot_token_hash
   from public.welcomeflow_screening_slot_reservations as reservation
   where reservation.workspace_id = p_workspace_id
     and reservation.recruiter_key = p_recruiter_key
@@ -131,8 +163,8 @@ begin
     and reservation.requested_time = p_requested_time::time
   for update;
 
-  if v_existing_lead_id is not null then
-    if v_existing_lead_id = p_lead_id and v_existing_token_hash = p_token_hash then return 'duplicate'; end if;
+  if v_slot_lead_id is not null then
+    if v_slot_lead_id = p_lead_id and v_slot_token_hash = p_token_hash then return 'duplicate'; end if;
     return 'slot_taken';
   end if;
 
@@ -146,7 +178,25 @@ begin
     p_lead_id, p_token_hash, p_requisition_id, p_facility_id
   ) on conflict do nothing;
   get diagnostics v_rows = row_count;
-  if v_rows <> 1 then return 'slot_taken'; end if;
+  if v_rows <> 1 then
+    select reservation.lead_id, reservation.token_hash, reservation.recruiter_key,
+           reservation.requested_date, reservation.requested_time
+      into v_capability_lead_id, v_capability_token_hash, v_capability_recruiter_key,
+           v_capability_date, v_capability_time
+    from public.welcomeflow_screening_slot_reservations as reservation
+    where reservation.workspace_id = p_workspace_id
+      and (reservation.lead_id = p_lead_id or reservation.token_hash = p_token_hash)
+    limit 1;
+    if v_capability_lead_id = p_lead_id
+       and v_capability_token_hash = p_token_hash
+       and v_capability_recruiter_key = p_recruiter_key
+       and v_capability_date = p_requested_date
+       and v_capability_time = p_requested_time::time then
+      return 'duplicate';
+    end if;
+    if v_capability_lead_id is not null then return 'already_booked'; end if;
+    return 'slot_taken';
+  end if;
 
   update public.welcomeflow_workspace_state
   set data = p_next_data, updated_at = p_next_updated_at

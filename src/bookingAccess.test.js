@@ -24,6 +24,7 @@ describe("booking access issuance", () => {
       bookingAccessIssuedAt: "2026-07-30T12:00:00.000Z",
       bookingAccessExpiresAt: "2026-08-29T12:00:00.000Z",
       bookingAccessRevokedAt: "",
+      bookingAccessConsumedAt: "",
     });
     expect(result.record).not.toHaveProperty("bookingAccessToken");
     expect(result.record.bookingAccessTokenHash).toBe(await sha256Hex(result.rawToken, webcrypto));

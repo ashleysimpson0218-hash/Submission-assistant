@@ -243,6 +243,10 @@ function duplicateBooking(lead = {}, requestedDate = "", requestedTime = "") {
     && ["Requested", "Scheduling Request Received"].includes(lead.bookingStatus || lead.phoneScreenStatus);
 }
 
+function bookingAccessConsumed(lead = {}) {
+  return Boolean(cleanText(lead.bookingAccessConsumedAt, 80));
+}
+
 module.exports = async function handler(req, res) {
   if (process.env.WELCOMEFLOW_UAT_EXTERNAL_ACTIONS_DISABLED === "true") {
     json(res, 503, { error: "Booking is disabled in Owner UAT." });
@@ -340,6 +344,10 @@ module.exports = async function handler(req, res) {
       json(res, 200, { ok: true, duplicate: true, lead: publicLead(lead, data, configuration.allowedSlots, configuration.timeZone) });
       return;
     }
+    if (bookingAccessConsumed(lead)) {
+      json(res, 409, { error: "This booking link has already been used for another screening time." });
+      return;
+    }
 
     const now = new Date().toISOString();
     const messageSummary = `Candidate requested screen: ${requestedDate} at ${requestedTime} ${configuration.timeZone}${preferredContactMethod ? ` | Preferred: ${preferredContactMethod}` : ""}${notes ? ` | Notes: ${notes}` : ""}`;
@@ -353,6 +361,7 @@ module.exports = async function handler(req, res) {
         phoneScreenType: meetingType,
         phoneScreenStatus: "Scheduling Request Received",
         bookingStatus: "Requested",
+        bookingAccessConsumedAt: now,
         candidateInterested: "Responded",
         candidateInterestStatus: "Scheduling Request Received",
         candidateAvailability: `${requestedDate} ${requestedTime}`,
@@ -395,6 +404,10 @@ module.exports = async function handler(req, res) {
       json(res, 409, { error: "That screening time was just reserved. Choose another available time." });
       return;
     }
+    if (reservationResult === "already_booked") {
+      json(res, 409, { error: "This booking link has already been used for another screening time." });
+      return;
+    }
     if (reservationResult === "duplicate") {
       json(res, 200, { ok: true, duplicate: true, lead: publicLead(lead, data, configuration.allowedSlots, configuration.timeZone) });
       return;
@@ -413,6 +426,7 @@ module.exports = async function handler(req, res) {
 module.exports.__test = {
   activeBookingLead,
   activeRequisitionForLead,
+  bookingAccessConsumed,
   bookingLeadIsEligible,
   bookingConfiguration,
   daysFromToday,

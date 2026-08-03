@@ -34,6 +34,7 @@ function workspaceData(leadPatch = {}, requisitionPatch = {}) {
       bookingAccessIssuedAt: "2026-07-01T12:00:00.000Z",
       bookingAccessExpiresAt: "2026-08-30T12:00:00.000Z",
       bookingAccessRevokedAt: "",
+      bookingAccessConsumedAt: "",
       status: "Booking Link Sent",
       candidateName: "Synthetic Candidate",
       email: "candidate@example.test",
@@ -136,7 +137,7 @@ describe("booking API secure public scheduling", () => {
     expect(fixture.state.reservations).toHaveLength(1);
     expect(fixture.state.reservations[0]).toMatchObject({ p_workspace_id: "phase1-booking-test", p_expected_updated_at: "2026-07-30T12:00:00.000Z", p_requisition_id: "req-1", p_facility_id: "facility-1" });
     expect(fixture.state.row.data.unrelatedRecruiterState).toEqual({ keep: true, revision: 7 });
-    expect(fixture.state.row.data.hotLeads[0]).toMatchObject({ id: "lead-1", candidateName: "Synthetic Candidate", bookedScreeningDate: "2026-07-31", bookedScreeningTime: "10:30", bookingStatus: "Requested" });
+    expect(fixture.state.row.data.hotLeads[0]).toMatchObject({ id: "lead-1", candidateName: "Synthetic Candidate", bookedScreeningDate: "2026-07-31", bookedScreeningTime: "10:30", bookingStatus: "Requested", bookingAccessConsumedAt: "2026-07-30T16:00:00.000Z" });
   });
 
   test("returns public scheduling context without candidate PII or internal identifiers", async () => {
@@ -155,7 +156,7 @@ describe("booking API secure public scheduling", () => {
   });
 
   test("treats an identical repeated booking as idempotent", async () => {
-    const fixture = mockClient({ data: workspaceData({ bookedScreeningDate: "2026-07-31", bookedScreeningTime: "10:30", bookingStatus: "Requested" }) });
+    const fixture = mockClient({ data: workspaceData({ bookedScreeningDate: "2026-07-31", bookedScreeningTime: "10:30", bookingStatus: "Requested", bookingAccessConsumedAt: "2026-07-30T16:00:00.000Z" }) });
     currentClient = fixture.client;
     const handler = require("../api/book-screening");
     const res = responseRecorder();
@@ -163,6 +164,29 @@ describe("booking API secure public scheduling", () => {
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toMatchObject({ ok: true, duplicate: true });
     expect(fixture.state.reservations).toHaveLength(0);
+  });
+
+  test("rejects a different slot after the booking capability is consumed", async () => {
+    const fixture = mockClient({ data: workspaceData({ bookedScreeningDate: "2026-07-31", bookedScreeningTime: "10:30", bookingStatus: "Requested", bookingAccessConsumedAt: "2026-07-30T16:00:00.000Z" }) });
+    currentClient = fixture.client;
+    const handler = require("../api/book-screening");
+    const res = responseRecorder();
+    await handler(bookingRequest({ requestedTime: "14:30" }), res);
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toMatch(/already been used/i);
+    expect(fixture.state.reservations).toHaveLength(0);
+  });
+
+  test("rejects a different slot when the atomic layer finds the token already booked", async () => {
+    const fixture = mockClient({ reservationResult: "already_booked" });
+    currentClient = fixture.client;
+    const handler = require("../api/book-screening");
+    const res = responseRecorder();
+    await handler(bookingRequest({ requestedTime: "14:30" }), res);
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toMatch(/already been used/i);
+    expect(fixture.state.reservations).toHaveLength(1);
+    expect(fixture.state.row.data.hotLeads[0].bookedScreeningTime).toBeUndefined();
   });
 
   test.each([
@@ -311,6 +335,10 @@ describe("booking API secure public scheduling", () => {
   test("the reservation migration makes recruiter slots unique and rechecks scope under a row lock", () => {
     const sql = fs.readFileSync(path.resolve(__dirname, "..", "supabase", "migrations", "20260802090000_reserve_screening_slots.sql"), "utf8").toLowerCase();
     expect(sql).toContain("primary key (workspace_id, recruiter_key, requested_date, requested_time)");
+    expect(sql).toContain("welcomeflow_screening_reservation_lead_unique");
+    expect(sql).toContain("welcomeflow_screening_reservation_token_unique");
+    expect(sql).toContain("return 'already_booked'");
+    expect(sql).toContain("bookingaccessconsumedat");
     expect(sql).toContain("for update");
     expect(sql).toContain("v_status not in");
     expect(sql).toContain("v_scope ->> 'requisitionid' <> p_requisition_id");
