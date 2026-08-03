@@ -21,6 +21,9 @@ const MAX_REQUEST_BYTES = Math.ceil(MAX_UPLOAD_BYTES * 4 / 3) + 16 * 1024;
 const MAX_ARCHIVE_ENTRIES = 500;
 const MAX_ARCHIVE_ENTRY_BYTES = 16 * 1024 * 1024;
 const MAX_ARCHIVE_TOTAL_BYTES = 32 * 1024 * 1024;
+const MAX_ARCHIVE_COMPRESSION_RATIO = resumeSecurityLimits.maxArchiveCompressionRatio;
+const MAX_ARCHIVE_CUMULATIVE_COMPRESSION_RATIO = resumeSecurityLimits.maxArchiveCumulativeCompressionRatio;
+const ARCHIVE_UNSAFE_ERROR_CODE = "RESUME_ARCHIVE_UNSAFE";
 const MAX_PDF_PAGES = resumeSecurityLimits.maxPdfPages;
 const PDF_PAGE_LIMIT_ERROR_CODE = "RESUME_PDF_PAGE_LIMIT";
 const PDF_INVALID_ERROR_CODE = "RESUME_PDF_INVALID";
@@ -155,6 +158,65 @@ function stripXml(value = "") {
   return xmlDecode(String(value || "").replace(/<[^>]+>/g, " ")).replace(/\s{2,}/g, " ").trim();
 }
 
+function archiveSecurityError(message) {
+  const error = new Error(message);
+  error.code = ARCHIVE_UNSAFE_ERROR_CODE;
+  return error;
+}
+
+function safeArchiveEntryName(name = "") {
+  const normalized = String(name || "");
+  const segments = normalized.split("/");
+  if (!normalized
+      || normalized.includes("\\")
+      || normalized.startsWith("/")
+      || /^[a-z]:/i.test(normalized)
+      || segments.some((segment) => segment === "..")) {
+    throw archiveSecurityError("Archive entry path is unsafe.");
+  }
+  if (/\.(?:zip|rar|7z|tar|tgz|gz|bz2|xz)$/i.test(normalized)) {
+    throw archiveSecurityError("Nested archives are not accepted.");
+  }
+  return normalized;
+}
+
+function validateArchiveEntryMetadata({
+  compressedSize,
+  uncompressedSize,
+  method,
+  totalCompressedBytes = 0,
+  totalUncompressedBytes = 0,
+} = {}) {
+  const sizes = [compressedSize, uncompressedSize, totalCompressedBytes, totalUncompressedBytes];
+  if (!sizes.every((value) => Number.isSafeInteger(value) && value >= 0)
+      || compressedSize === 0xffffffff
+      || uncompressedSize === 0xffffffff) {
+    throw archiveSecurityError("Archive entry size metadata is invalid.");
+  }
+  if (![0, 8].includes(method)) throw archiveSecurityError("Archive compression method is not supported.");
+  if (uncompressedSize > MAX_ARCHIVE_ENTRY_BYTES) throw archiveSecurityError("Archive entry declares too much output.");
+  if (compressedSize === 0 && uncompressedSize > 0) throw archiveSecurityError("Archive entry compression metadata is unsafe.");
+  if (method === 0 && compressedSize !== uncompressedSize) throw archiveSecurityError("Stored archive entry sizes do not match.");
+  if (compressedSize > 0 && uncompressedSize / compressedSize > MAX_ARCHIVE_COMPRESSION_RATIO) {
+    throw archiveSecurityError("Archive entry compression ratio is unsafe.");
+  }
+
+  const nextCompressedBytes = totalCompressedBytes + compressedSize;
+  const nextUncompressedBytes = totalUncompressedBytes + uncompressedSize;
+  if (!Number.isSafeInteger(nextCompressedBytes) || !Number.isSafeInteger(nextUncompressedBytes)
+      || nextUncompressedBytes > MAX_ARCHIVE_TOTAL_BYTES) {
+    throw archiveSecurityError("Archive declares too much total output.");
+  }
+  if (nextCompressedBytes === 0 && nextUncompressedBytes > 0) {
+    throw archiveSecurityError("Archive cumulative compression metadata is unsafe.");
+  }
+  if (nextCompressedBytes > 0
+      && nextUncompressedBytes / nextCompressedBytes > MAX_ARCHIVE_CUMULATIVE_COMPRESSION_RATIO) {
+    throw archiveSecurityError("Archive cumulative compression ratio is unsafe.");
+  }
+  return { totalCompressedBytes: nextCompressedBytes, totalUncompressedBytes: nextUncompressedBytes };
+}
+
 function readZipEntries(buffer) {
   const source = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || []);
   let eocd = -1;
@@ -164,36 +226,67 @@ function readZipEntries(buffer) {
       break;
     }
   }
-  if (eocd < 0) throw new Error("ZIP directory was not found.");
+  if (eocd < 0) throw archiveSecurityError("ZIP directory was not found.");
   const totalEntries = source.readUInt16LE(eocd + 10);
-  if (totalEntries > MAX_ARCHIVE_ENTRIES) throw new Error("Archive contains too many entries.");
-  let offset = source.readUInt32LE(eocd + 16);
+  if (totalEntries > MAX_ARCHIVE_ENTRIES) throw archiveSecurityError("Archive contains too many entries.");
+  const directoryOffset = source.readUInt32LE(eocd + 16);
+  let offset = directoryOffset;
+  const directorySize = source.readUInt32LE(eocd + 12);
+  const directoryEnd = offset + directorySize;
+  if (!Number.isSafeInteger(directoryEnd) || offset < 0 || directoryEnd > eocd || directoryEnd > source.length) {
+    throw archiveSecurityError("Archive directory metadata is invalid.");
+  }
   const entries = new Map();
   let totalOutputBytes = 0;
+  let declaredTotals = { totalCompressedBytes: 0, totalUncompressedBytes: 0 };
   for (let item = 0; item < totalEntries; item += 1) {
-    if (offset < 0 || offset + 46 > source.length) throw new Error("Archive directory is invalid.");
-    if (source.readUInt32LE(offset) !== 0x02014b50) break;
+    if (offset < 0 || offset + 46 > directoryEnd) throw archiveSecurityError("Archive directory is invalid.");
+    if (source.readUInt32LE(offset) !== 0x02014b50) throw archiveSecurityError("Archive directory entry is invalid.");
+    const flags = source.readUInt16LE(offset + 8);
     const method = source.readUInt16LE(offset + 10);
     const compressedSize = source.readUInt32LE(offset + 20);
+    const uncompressedSize = source.readUInt32LE(offset + 24);
     const nameLength = source.readUInt16LE(offset + 28);
     const extraLength = source.readUInt16LE(offset + 30);
     const commentLength = source.readUInt16LE(offset + 32);
     const localOffset = source.readUInt32LE(offset + 42);
-    if (localOffset < 0 || localOffset + 30 > source.length) throw new Error("Archive entry is invalid.");
-    const name = source.slice(offset + 46, offset + 46 + nameLength).toString("utf8");
+    const directoryEntryEnd = offset + 46 + nameLength + extraLength + commentLength;
+    if (directoryEntryEnd > directoryEnd) throw archiveSecurityError("Archive directory entry is truncated.");
+    if (flags & 0x1) throw archiveSecurityError("Encrypted archive entries are not accepted.");
+    if (localOffset < 0 || localOffset + 30 > source.length) throw archiveSecurityError("Archive entry is invalid.");
+    if (source.readUInt32LE(localOffset) !== 0x04034b50) throw archiveSecurityError("Archive local entry is invalid.");
+    const name = safeArchiveEntryName(source.slice(offset + 46, offset + 46 + nameLength).toString("utf8"));
+    declaredTotals = validateArchiveEntryMetadata({
+      compressedSize,
+      uncompressedSize,
+      method,
+      ...declaredTotals,
+    });
     const localNameLength = source.readUInt16LE(localOffset + 26);
     const localExtraLength = source.readUInt16LE(localOffset + 28);
     const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    const dataEnd = dataStart + compressedSize;
+    if (!Number.isSafeInteger(dataEnd) || dataStart < 0 || dataEnd > directoryOffset || dataEnd > source.length) {
+      throw archiveSecurityError("Archive entry data is truncated.");
+    }
     const raw = source.slice(dataStart, dataStart + compressedSize);
     let content = Buffer.alloc(0);
     if (method === 0) content = raw;
-    else if (method === 8) content = zlib.inflateRawSync(raw, { maxOutputLength: MAX_ARCHIVE_ENTRY_BYTES });
-    if (content.length > MAX_ARCHIVE_ENTRY_BYTES) throw new Error("Archive entry is too large.");
+    else if (method === 8) {
+      try {
+        content = zlib.inflateRawSync(raw, { maxOutputLength: MAX_ARCHIVE_ENTRY_BYTES });
+      } catch {
+        throw archiveSecurityError("Archive entry could not be inflated safely.");
+      }
+    }
+    if (content.length !== uncompressedSize) throw archiveSecurityError("Archive entry output does not match declared size.");
+    if (content.length > MAX_ARCHIVE_ENTRY_BYTES) throw archiveSecurityError("Archive entry is too large.");
     totalOutputBytes += content.length;
-    if (totalOutputBytes > MAX_ARCHIVE_TOTAL_BYTES) throw new Error("Archive expands beyond the safe processing limit.");
+    if (totalOutputBytes > MAX_ARCHIVE_TOTAL_BYTES) throw archiveSecurityError("Archive expands beyond the safe processing limit.");
     if (content.length) entries.set(name, content);
-    offset += 46 + nameLength + extraLength + commentLength;
+    offset = directoryEntryEnd;
   }
+  if (offset !== directoryEnd) throw archiveSecurityError("Archive directory length is inconsistent.");
   return entries;
 }
 
@@ -588,6 +681,13 @@ module.exports = async function handler(req, res) {
 
     return json(res, result.ok ? 200 : result.status || 502, result);
   } catch (error) {
+    if (error?.code === ARCHIVE_UNSAFE_ERROR_CODE) {
+      return json(res, 422, {
+        ok: false,
+        code: ARCHIVE_UNSAFE_ERROR_CODE,
+        error: "The archive could not be processed safely.",
+      });
+    }
     if (isPdfSecurityError(error)) {
       return json(res, error.code === PDF_PAGE_LIMIT_ERROR_CODE ? 413 : 422, {
         ok: false,
@@ -606,6 +706,8 @@ module.exports.__test = {
   extractPdfTextServer,
   extractPdfTextWithPdfJs,
   inspectPdfPageCountServer,
+  readZipEntries,
+  validateArchiveEntryMetadata,
 };
 }
 
