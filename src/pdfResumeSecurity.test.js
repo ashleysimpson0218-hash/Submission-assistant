@@ -12,6 +12,7 @@ describe("PDF resume parsing safety", () => {
 
   test("disables PDF.js evaluation in the browser parser", () => {
     expect(appSource).toContain('pdfjs-dist/legacy/build/pdf.mjs');
+    expect(appSource).toContain('browserPdfJsPromise = import("pdfjs-dist/legacy/build/pdf.mjs")');
     expect(appSource).toMatch(/pdfjsLib\.getDocument\(\{\s*data,\s*isEvalSupported: false\s*}\)/);
   });
 

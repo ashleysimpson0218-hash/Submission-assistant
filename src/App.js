@@ -2,7 +2,6 @@
 // Premium Purple Precision Polish - squared UI, cleaner header, dark mode contrast, glossary-first help
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import {
   buildCompleteProcessArchivePatch,
   buildHireWorkflowPatch,
@@ -97,6 +96,12 @@ import {
 } from "./weeklyCleanupReportTemplates";
 
 const NL = String.fromCharCode(10);
+let browserPdfJsPromise = null;
+
+function loadBrowserPdfJs() {
+  if (!browserPdfJsPromise) browserPdfJsPromise = import("pdfjs-dist/legacy/build/pdf.mjs");
+  return browserPdfJsPromise;
+}
 
 const STORAGE_KEY = "welcomeflow-settings-v2";
 const TRACKER_KEY = "welcomeflow-tracker-v2";
@@ -651,6 +656,7 @@ async function extractResumeFileText(file) {
   if (name.endsWith(".pdf") || type === "application/pdf") {
     try {
       const data = await file.arrayBuffer();
+      const pdfjsLib = await loadBrowserPdfJs();
       const pdf = await pdfjsLib.getDocument({ data, isEvalSupported: false }).promise;
       const pages = [];
       for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
