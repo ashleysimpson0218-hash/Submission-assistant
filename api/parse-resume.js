@@ -1,8 +1,11 @@
 const {
-  authenticatedUser,
-  consumeSharedRateLimit,
+  authorizedRecruiter,
+  consumeSharedRateLimits,
+  requestIp,
   requestPayloadBytes,
 } = require("../server/welcomeflowApiSecurity");
+const { validateResumeFile } = require("../server/resumeFileValidation");
+const { reportServerFailure } = require("../server/safeServerError");
 
 if (process.env.WELCOMEFLOW_MAINTENANCE_MODE === "true" || process.env.WELCOMEFLOW_UAT_EXTERNAL_ACTIONS_DISABLED === "true") {
   module.exports = async function maintenanceHandler(req, res) {
@@ -39,7 +42,6 @@ if (typeof global.ImageData === "undefined") {
     }
   };
 }
-const pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
 const { PDFParse } = require("pdf-parse");
 const path = require("path");
 const zlib = require("zlib");
@@ -48,12 +50,20 @@ const { pathToFileURL } = require("url");
 try {
   PDFParse.setWorker(pathToFileURL(path.join(path.dirname(require.resolve("pdf-parse")), "pdf.worker.mjs")).href);
 } catch (error) {
-  console.error("WelcomeFlow pdf-parse worker setup failed", error?.message || error);
+  reportServerFailure("PDF_WORKER_SETUP_FAILED", error, { provider: "pdf-parse" });
 }
-try {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(path.join(path.dirname(require.resolve("pdfjs-dist/legacy/build/pdf.js")), "pdf.worker.js")).href;
-} catch (error) {
-  console.error("WelcomeFlow pdfjs worker setup failed", error?.message || error);
+let pdfjsLibraryPromise = null;
+
+async function loadPdfJsLibrary() {
+  if (!pdfjsLibraryPromise) {
+    pdfjsLibraryPromise = import("pdfjs-dist/legacy/build/pdf.mjs").then((pdfjsLib) => {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(
+        path.join(path.dirname(require.resolve("pdfjs-dist/legacy/build/pdf.mjs")), "pdf.worker.mjs"),
+      ).href;
+      return pdfjsLib;
+    });
+  }
+  return pdfjsLibraryPromise;
 }
 
 function json(res, status, payload) {
@@ -371,17 +381,23 @@ function normalizeAffinda(payload = {}) {
 
 async function extractPdfTextServer(buffer) {
   try {
-    const parser = new PDFParse({ data: buffer });
+    const parser = new PDFParse({ data: buffer, isEvalSupported: false });
     const result = await parser.getText();
     await parser.destroy?.();
     const parsed = String(result?.text || "").replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
     if (parsed) return parsed;
   } catch (error) {
-    console.error("WelcomeFlow pdf-parse extraction failed", error?.message || error);
+    reportServerFailure("PDF_PARSE_EXTRACTION_FAILED", error, { provider: "pdf-parse" });
     // Fall through to PDF.js below.
   }
   try {
-    const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer), disableWorker: true, useSystemFonts: true });
+    const pdfjsLib = await loadPdfJsLibrary();
+    const loadingTask = pdfjsLib.getDocument({
+      data: new Uint8Array(buffer),
+      disableWorker: true,
+      isEvalSupported: false,
+      useSystemFonts: true,
+    });
     const pdf = await loadingTask.promise;
     const pages = [];
     for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
@@ -406,7 +422,7 @@ async function extractPdfTextServer(buffer) {
     }
     return pages.join("\n").replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
   } catch (error) {
-    console.error("WelcomeFlow pdfjs extraction failed", error?.message || error);
+    reportServerFailure("PDFJS_EXTRACTION_FAILED", error, { provider: "pdfjs" });
     return "";
   }
 }
@@ -477,12 +493,14 @@ module.exports = async function handler(req, res) {
   try {
     if (requestPayloadBytes(req) > MAX_REQUEST_BYTES) return json(res, 413, { ok: false, error: "Resume file is too large for parsing. Maximum is 8MB." });
 
-    const authorization = await authenticatedUser(req);
-    if (!authorization.user) return json(res, authorization.unavailable ? 503 : 401, { ok: false, error: authorization.error });
+    const authorization = await authorizedRecruiter(req);
+    if (!authorization.user) {
+      return json(res, authorization.unavailable ? 503 : authorization.forbidden ? 403 : 401, { ok: false, error: authorization.error });
+    }
 
-    const rateLimit = await consumeSharedRateLimit({
+    const rateLimit = await consumeSharedRateLimits({
       action: "parse-resume",
-      subject: `user:${authorization.user.id}`,
+      subjects: [`user:${authorization.user.id}`, `ip:${requestIp(req)}`],
       limit: process.env.WELCOMEFLOW_RESUME_RATE_LIMIT_PER_MINUTE || 6,
       windowSeconds: 60,
     });
@@ -499,6 +517,10 @@ module.exports = async function handler(req, res) {
     if (buffer.length > MAX_UPLOAD_BYTES || (Number(size || 0) > 0 && Number(size) !== buffer.length)) {
       return json(res, 413, { ok: false, error: "Resume file size validation failed." });
     }
+    const fileValidation = validateResumeFile({ buffer, filename, mimeType });
+    if (!fileValidation.ok) {
+      return json(res, 415, { ok: false, code: fileValidation.code, error: fileValidation.error });
+    }
     const provider = String(process.env.RESUME_PARSER_PROVIDER || "affinda").toLowerCase();
     const result = provider === "affinda"
       ? await parseWithAffinda({ buffer, filename, mimeType })
@@ -508,7 +530,7 @@ module.exports = async function handler(req, res) {
 
     return json(res, result.ok ? 200 : result.status || 502, result);
   } catch (error) {
-    console.error("WelcomeFlow resume parsing failed", { code: error?.code || "", provider: process.env.RESUME_PARSER_PROVIDER || "adapter" });
+    reportServerFailure("RESUME_PARSING_FAILED", error, { provider: process.env.RESUME_PARSER_PROVIDER || "adapter" });
     return json(res, 500, { ok: false, error: "Resume parsing could not be completed safely.", provider: process.env.RESUME_PARSER_PROVIDER || "adapter" });
   }
 };

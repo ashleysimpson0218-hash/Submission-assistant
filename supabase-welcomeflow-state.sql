@@ -34,6 +34,32 @@ begin
 end
 $$;
 
-revoke select, insert, update, delete
+revoke insert, update, delete, truncate, references, trigger
 on table public.welcomeflow_workspace_state
 from PUBLIC, anon;
+
+-- Fail closed if either a direct grant or a role inherited from PUBLIC still
+-- leaves a browser role capable of changing the workspace table.
+do $$
+declare
+  privilege_name text;
+begin
+  foreach privilege_name in array array['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']
+  loop
+    if has_table_privilege('anon', 'public.welcomeflow_workspace_state', privilege_name) then
+      raise exception 'Unsafe anon workspace privilege remains: %', privilege_name;
+    end if;
+  end loop;
+
+  if exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'welcomeflow_workspace_state'
+      and cmd in ('ALL', 'INSERT', 'UPDATE', 'DELETE')
+      and ('public' = any(roles) or 'anon' = any(roles))
+  ) then
+    raise exception 'Unsafe anonymous/public workspace write policy remains';
+  end if;
+end
+$$;

@@ -2,10 +2,12 @@ const MAX_BODY_CHARS = 12000;
 const MAX_PAYLOAD_BYTES = 64 * 1024;
 const MAX_RECIPIENTS = 20;
 const {
-  authenticatedUser,
-  consumeSharedRateLimit,
+  authorizedRecruiter,
+  consumeSharedRateLimits,
+  requestIp,
   requestPayloadBytes,
 } = require("../server/welcomeflowApiSecurity");
+const { reportServerFailure } = require("../server/safeServerError");
 
 function json(res, status, payload) {
   res.statusCode = status;
@@ -68,14 +70,14 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  const authorization = await authenticatedUser(req);
+  const authorization = await authorizedRecruiter(req);
   if (!authorization.user) {
-    json(res, authorization.unavailable ? 503 : 401, { error: authorization.error });
+    json(res, authorization.unavailable ? 503 : authorization.forbidden ? 403 : 401, { error: authorization.error });
     return;
   }
-  const rateLimit = await consumeSharedRateLimit({
+  const rateLimit = await consumeSharedRateLimits({
     action: "send-email",
-    subject: `user:${authorization.user.id}`,
+    subjects: [`user:${authorization.user.id}`, `ip:${requestIp(req)}`],
     limit: process.env.WELCOMEFLOW_EMAIL_RATE_LIMIT_PER_MINUTE || 10,
     windowSeconds: 60,
   });
@@ -163,13 +165,13 @@ module.exports = async function handler(req, res) {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      console.error("WelcomeFlow email provider rejected a request", { status: response.status, userId: authorization.user.id });
+      reportServerFailure("EMAIL_PROVIDER_REJECTED", null, { status: response.status, provider: "resend" });
       json(res, 502, { error: "The email provider could not complete this request." });
       return;
     }
     json(res, 200, { ok: true, id: data?.id || "", provider: "resend" });
   } catch (error) {
-    console.error("WelcomeFlow email provider request failed", { userId: authorization.user.id });
+    reportServerFailure("EMAIL_PROVIDER_REQUEST_FAILED", null, { provider: "resend" });
     json(res, 502, { error: "The email provider could not complete this request." });
   }
 };

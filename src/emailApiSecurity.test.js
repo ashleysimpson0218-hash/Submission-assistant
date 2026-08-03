@@ -12,7 +12,11 @@ function responseRecorder() {
   };
 }
 
-function authorizedSupabase(user = { id: "user-1", email: "recruiter@example.test" }, rateResults = [true]) {
+function authorizedSupabase(user = {
+  id: "user-1",
+  email: "recruiter@example.test",
+  app_metadata: { welcomeflow_role: "recruiter", welcomeflow_workspace_ids: ["workspace-1"] },
+}, rateResults = [true]) {
   const rpc = jest.fn();
   rateResults.forEach((result) => rpc.mockResolvedValueOnce({ data: result, error: null }));
   jest.doMock("@supabase/supabase-js", () => ({
@@ -26,7 +30,7 @@ function authorizedSupabase(user = { id: "user-1", email: "recruiter@example.tes
 function request(body = {}, authorization = "Bearer valid-token") {
   return {
     method: "POST",
-    headers: { authorization },
+    headers: { authorization, "x-welcomeflow-workspace-id": "workspace-1" },
     body,
   };
 }
@@ -47,6 +51,8 @@ describe("email API authorization and abuse protection", () => {
     process.env.WELCOMEFLOW_EMAIL_ALLOWED_RECIPIENTS = "recruiter@example.test";
     process.env.WELCOMEFLOW_EMAIL_ALLOWED_DOMAINS = "example.test";
     process.env.WELCOMEFLOW_EMAIL_RATE_LIMIT_PER_MINUTE = "10";
+    process.env.WELCOMEFLOW_AUTHORIZED_RECRUITER_ROLES = "recruiter,admin";
+    process.env.WELCOMEFLOW_API_WORKSPACE_IDS = "workspace-1";
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -78,6 +84,37 @@ describe("email API authorization and abuse protection", () => {
     const res = responseRecorder();
     await handler(request({ to: "recruiter@example.test", subject: "Subject", body: "Body" }), res);
     expect(res.statusCode).toBe(401);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test("rejects a token issued by a different Supabase project", async () => {
+    jest.doMock("@supabase/supabase-js", () => ({
+      createClient: jest.fn((url, key) => key === "server-secret-key"
+        ? { rpc: jest.fn() }
+        : { auth: { getUser: jest.fn().mockResolvedValue({ data: { user: null }, error: new Error("issuer mismatch") }) } }),
+    }));
+    const handler = require("../api/send-email");
+    const res = responseRecorder();
+    await handler(request({ to: "recruiter@example.test", subject: "Subject", body: "Body" }), res);
+    expect(res.statusCode).toBe(401);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test("rejects a valid user without an authorized application role", async () => {
+    authorizedSupabase({ id: "user-2", app_metadata: { welcomeflow_workspace_ids: ["workspace-1"] } });
+    const handler = require("../api/send-email");
+    const res = responseRecorder();
+    await handler(request({ to: "recruiter@example.test", subject: "Subject", body: "Body" }), res);
+    expect(res.statusCode).toBe(403);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test("rejects an authorized role without membership in the requested workspace", async () => {
+    authorizedSupabase({ id: "user-3", app_metadata: { welcomeflow_role: "recruiter", welcomeflow_workspace_ids: ["workspace-2"] } });
+    const handler = require("../api/send-email");
+    const res = responseRecorder();
+    await handler(request({ to: "recruiter@example.test", subject: "Subject", body: "Body" }), res);
+    expect(res.statusCode).toBe(403);
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
@@ -134,7 +171,13 @@ describe("email API authorization and abuse protection", () => {
     await handler(request({ to: "recruiter@example.test", subject: "Subject", body: "Body" }), res);
     expect(res.statusCode).toBe(502);
     expect(res.body).not.toMatch(/provider-secret-detail|do-not-return/);
-    expect(errorSpy).toHaveBeenCalledWith("WelcomeFlow email provider rejected a request", expect.objectContaining({ status: 422, userId: "user-1" }));
+    expect(errorSpy).toHaveBeenCalledWith("WelcomeFlow server action failed", {
+      code: "EMAIL_PROVIDER_REJECTED",
+      category: "Error",
+      provider: "resend",
+      status: 422,
+    });
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toMatch(/user-1|provider-secret-detail|do-not-return/);
   });
 
   test("rate limits repeated requests from the same verified user", async () => {
@@ -155,7 +198,7 @@ describe("email API authorization and abuse protection", () => {
     jest.doMock("@supabase/supabase-js", () => ({
       createClient: jest.fn((url, key) => key === "server-secret-key"
         ? { rpc: jest.fn().mockResolvedValue({ data: null, error: new Error("missing function") }) }
-        : { auth: { getUser: jest.fn().mockResolvedValue({ data: { user: { id: "user-1" } }, error: null }) } }),
+        : { auth: { getUser: jest.fn().mockResolvedValue({ data: { user: { id: "user-1", app_metadata: { welcomeflow_role: "recruiter", welcomeflow_workspace_ids: ["workspace-1"] } } }, error: null }) } }),
     }));
     const handler = require("../api/send-email");
     const res = responseRecorder();

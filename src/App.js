@@ -2,7 +2,6 @@
 // Premium Purple Precision Polish - squared UI, cleaner header, dark mode contrast, glossary-first help
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
 import {
   buildCompleteProcessArchivePatch,
   buildHireWorkflowPatch,
@@ -22,6 +21,9 @@ import {
 import { isFeatureFlagEnabled } from "./featureFlags";
 import { readRuntimeConfig, workspacePersistenceMode } from "./runtimeConfig";
 import { getRuntimeSupabaseClient } from "./supabaseRuntimeClient";
+import { reportActionFailure, safeActionFailure } from "./runtimeErrors";
+import { openApprovedExternalUrl } from "./safeExternalUrl";
+import { issueBookingAccess } from "./bookingAccess";
 import { workspaceCounts, workspaceFingerprint, verifyAcceptanceWorkspace } from "./acceptanceWorkspace";
 import { AcceptanceWorkspaceGate } from "./AcceptanceWorkspaceGate";
 import { readSavedIntakeDraftIdentity, savedDraftArray } from "./intakeDraftCompatibility";
@@ -145,6 +147,12 @@ import {
 } from "./weeklyCleanupReportTemplates";
 
 const NL = String.fromCharCode(10);
+let browserPdfJsPromise = null;
+
+function loadBrowserPdfJs() {
+  if (!browserPdfJsPromise) browserPdfJsPromise = import("pdfjs-dist/legacy/build/pdf.mjs");
+  return browserPdfJsPromise;
+}
 
 const STORAGE_KEY = "welcomeflow-settings-v2";
 const TRACKER_KEY = "welcomeflow-tracker-v2";
@@ -647,17 +655,37 @@ async function parseResumeFileWithApi(file) {
   if (ownerUatMode) return null;
   if (!file || typeof fetch !== "function") return null;
   try {
+    if (!supabase) {
+      return { __resumeParserError: true, code: "RESUME_AUTH_REQUIRED", error: "Sign in with an authorized WelcomeFlow recruiter account before parsing a resume." };
+    }
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    const accessToken = sessionData?.session?.access_token || "";
+    if (sessionError || !accessToken) {
+      return { __resumeParserError: true, code: "RESUME_AUTH_REQUIRED", error: "Sign in with an authorized WelcomeFlow recruiter account before parsing a resume." };
+    }
     const base64 = await fileToBase64(file);
     const response = await fetch("/api/parse-resume", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        "X-WelcomeFlow-Workspace-Id": CLOUD_WORKSPACE_ID,
+      },
       body: JSON.stringify({ filename: file.name || "resume", mimeType: file.type || "application/octet-stream", size: file.size || 0, base64 }),
     });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok || payload?.ok === false) throw new Error(payload?.error || "Resume parser unavailable");
+    if (!response.ok || payload?.ok === false) {
+      return {
+        __resumeParserError: true,
+        code: response.status === 401 || response.status === 403 ? "RESUME_AUTH_DENIED" : "RESUME_REMOTE_FAILED",
+        error: response.status === 401 || response.status === 403
+          ? "This account is not authorized to parse resumes for the active workspace."
+          : "Resume parsing is temporarily unavailable.",
+      };
+    }
     return { __resumeParserResult: true, provider: payload.provider || "WelcomeFlow Parser", text: payload.text || "", fields: payload.fields || {}, confidence: payload.confidence || 0, warnings: payload.warnings || [] };
-  } catch (error) {
-    return null;
+  } catch {
+    return { __resumeParserError: true, code: "RESUME_REMOTE_FAILED", error: "Resume parsing is temporarily unavailable." };
   }
 }
 
@@ -670,11 +698,17 @@ async function extractResumeFileText(file) {
   const name = String(file.name || "").toLowerCase();
   const type = String(file.type || "").toLowerCase();
   const apiResult = await parseResumeFileWithApi(file);
+  if (apiResult?.__resumeParserError) {
+    const error = new Error(apiResult.error);
+    error.code = apiResult.code;
+    throw error;
+  }
   if (apiResult?.text || Object.keys(apiResult?.fields || {}).length) return apiResult;
   if (name.endsWith(".pdf") || type === "application/pdf") {
     try {
       const data = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data }).promise;
+      const pdfjsLib = await loadBrowserPdfJs();
+      const pdf = await pdfjsLib.getDocument({ data, isEvalSupported: false }).promise;
       const pages = [];
       for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
         const page = await pdf.getPage(pageNumber);
@@ -1265,7 +1299,11 @@ function safeOpenExternalUrl(url, target = "_blank") {
     if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "External links and communication actions are disabled in Owner UAT." }));
     return;
   }
-  if (url && typeof window !== "undefined") window.open(url, target, "noopener,noreferrer");
+  const opened = openApprovedExternalUrl(url, { target });
+  if (!opened && typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "This external link is not on the approved secure-host list." }));
+  }
+  return opened;
 }
 
 async function saveCloudWorkspaceState(data) {
@@ -2166,8 +2204,10 @@ function migrateTrackerRecords(records, settings) {
 function migrateHotLeadRecords(records) {
   return (records || [])
     .filter((lead) => lead && typeof lead === "object")
-    .map((lead) => ({
-    ...lead,
+    .map((lead) => {
+    const safeLead = Object.fromEntries(Object.entries(lead).filter(([key]) => key !== "bookingAccessToken"));
+    return {
+    ...safeLead,
     appliedPosition: normalizeCommonSpelling(lead.appliedPosition),
     selectedRole: normalizeCommonSpelling(lead.selectedRole),
     bookedScreeningTime: lead.bookedScreeningTime || lead.screeningTime || "",
@@ -2182,7 +2222,8 @@ function migrateHotLeadRecords(records) {
     communicationEvents: Array.isArray(lead.communicationEvents) ? lead.communicationEvents : [],
     archiveNote: lead.archiveNote || lead.archiveNotes || "",
     archiveNotes: lead.archiveNotes || lead.archiveNote || "",
-  }));
+  };
+  });
 }
 
 function mailtoLink(to, subject, body, options = {}) {
@@ -2212,22 +2253,28 @@ function appOrigin() {
 }
 
 function bookingRequestLinkForLead(lead = {}) {
-  if (!/^[a-f0-9]{64}$/i.test(String(lead?.bookingAccessToken || ""))) return lead.bookingLink || "";
-  return `${appOrigin()}/schedule/${encodeURIComponent(lead.bookingAccessToken)}?workspace=${encodeURIComponent(CLOUD_WORKSPACE_ID)}`;
+  const rawToken = transientBookingTokens.get(String(lead?.id || "")) || "";
+  if (!/^[a-f0-9]{64}$/i.test(rawToken)) return lead.bookingLink || "";
+  return `${appOrigin()}/schedule/${encodeURIComponent(rawToken)}?workspace=${encodeURIComponent(CLOUD_WORKSPACE_ID)}`;
 }
 
 function bookingApiUrl(token = "") {
   return `/api/book-screening?token=${encodeURIComponent(token)}&workspaceId=${encodeURIComponent(CLOUD_WORKSPACE_ID)}`;
 }
 
-function createBookingAccess() {
-  if (typeof window === "undefined" || typeof window.crypto?.getRandomValues !== "function") return { bookingAccessToken: "", bookingAccessExpiresAt: "" };
-  const bytes = new Uint8Array(32);
-  window.crypto.getRandomValues(bytes);
-  return {
-    bookingAccessToken: Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join(""),
-    bookingAccessExpiresAt: new Date(Date.now() + (30 * 24 * 60 * 60 * 1000)).toISOString(),
-  };
+const transientBookingTokens = new Map();
+
+async function createBookingAccess(lead = {}, requisition = {}) {
+  const result = await issueBookingAccess({
+    workspaceId: CLOUD_WORKSPACE_ID,
+    leadId: lead.leadId || lead.id,
+    candidateId: lead.leadId || lead.id,
+    requisitionId: lead.selectedRequisitionId || lead.requisitionId || requisition.id || requisition.requisitionId,
+    facilityId: lead.facilityId || lead.canonicalFacilityId || requisition.facilityId || requisition.canonicalFacilityId,
+    recruiterId: lead.recruiterId || lead.recruiterOwner || requisition.recruiterId || requisition.recruiterOwner || `workspace:${CLOUD_WORKSPACE_ID}`,
+  });
+  if (result.rawToken && lead.id) transientBookingTokens.set(String(lead.id), result.rawToken);
+  return result.record;
 }
 
 function LoginPage({ mode, setMode, onEnter, soundEnabled, setSoundEnabled }) {
@@ -2278,7 +2325,7 @@ function LoginPage({ mode, setMode, onEnter, soundEnabled, setSoundEnabled }) {
                     {[["42", "Active"], ["8", "Ready"], ["15", "Pending"], ["4", "Interviews"]].map(([value, label]) => <div key={label} style={{ border: "1px solid #ebe6f8", borderRadius: 8, padding: 10, background: "#fff" }}><strong>{value}</strong><span style={{ display: "block", fontSize: 9, color: "#635b7c" }}>{label}</span></div>)}
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    <div style={{ border: "1px solid #ebe6f8", borderRadius: 8, padding: 12, background: "#fff" }}><strong>Recent Candidates</strong>{["Alisa Franks", "Joshua Simpson", "Nittaya Everheart"].map((name) => <div key={name} style={{ marginTop: 10, fontSize: 10, color: "#635b7c" }}>{name}</div>)}</div>
+                    <div style={{ border: "1px solid #ebe6f8", borderRadius: 8, padding: 12, background: "#fff" }}><strong>Recent Candidates</strong>{["Synthetic Candidate 001", "Synthetic Candidate 002", "Synthetic Candidate 003"].map((name) => <div key={name} style={{ marginTop: 10, fontSize: 10, color: "#635b7c" }}>{name}</div>)}</div>
                     <div style={{ border: "1px solid #ebe6f8", borderRadius: 8, padding: 12, background: "#fff" }}><strong>Upcoming Actions</strong>{["Send onboarding roadmap", "Schedule intake call", "Follow up via email"].map((name) => <div key={name} style={{ marginTop: 10, fontSize: 10, color: "#635b7c" }}>{name}</div>)}</div>
                   </div>
                 </div>
@@ -2300,7 +2347,7 @@ function LoginPage({ mode, setMode, onEnter, soundEnabled, setSoundEnabled }) {
               <label style={{ display: "grid", gap: 8, color: "#635b7c", fontWeight: 800 }}>Email address
                 <div style={{ display: "grid", gridTemplateColumns: "32px 1fr", alignItems: "center", border: "1px solid #ded7f1", borderRadius: 8, padding: "0 14px", minHeight: 54, background: "#fff" }}>
                   <span style={{ fontSize: 14, color: "#6b5f93", fontWeight: 950 }}>Mail</span>
-                  <input aria-label="Email address" placeholder="you@company.com" style={{ border: 0, outline: 0, font: "inherit", fontWeight: 700, color: "#160a43" }} />
+                  <input aria-label="Email address" placeholder="you@example.test" style={{ border: 0, outline: 0, font: "inherit", fontWeight: 700, color: "#160a43" }} />
                 </div>
               </label>
               <label style={{ display: "grid", gap: 8, color: "#635b7c", fontWeight: 800 }}>Password
@@ -2418,9 +2465,9 @@ function HotLeadWorkflowMockup({
   const mockLeads = [
     {
       id: "mock-lead-1",
-      candidate: "Chelsea Warthen",
-      phone: "555-218-4421",
-      email: "chelsea.w@example.com",
+      candidate: "Synthetic Candidate 001",
+      phone: "202-555-0101",
+      email: "synthetic001@example.test",
       position: "Registered Nurse",
       facility: "Baldwin State Prison",
       bookingStatus: "Call Booked",
@@ -2436,9 +2483,9 @@ function HotLeadWorkflowMockup({
     },
     {
       id: "mock-lead-2",
-      candidate: "Talitha Quarterman",
-      phone: "555-654-2210",
-      email: "talitha.q@example.com",
+      candidate: "Synthetic Candidate 002",
+      phone: "202-555-0102",
+      email: "synthetic002@example.test",
       position: "Licensed Practical Nurse",
       facility: "Hancock State Prison",
       bookingStatus: "Link Clicked",
@@ -2454,9 +2501,9 @@ function HotLeadWorkflowMockup({
     },
     {
       id: "mock-lead-3",
-      candidate: "Marcus Green",
-      phone: "555-876-4412",
-      email: "marcus.g@example.com",
+      candidate: "Synthetic Candidate 003",
+      phone: "202-555-0103",
+      email: "synthetic003@example.test",
       position: "CNA",
       facility: "GDCP",
       bookingStatus: "Link Sent",
@@ -2472,9 +2519,9 @@ function HotLeadWorkflowMockup({
     },
     {
       id: "mock-lead-4",
-      candidate: "Jasmine Morgan",
-      phone: "555-333-8899",
-      email: "jasmine.m@example.com",
+      candidate: "Synthetic Candidate 004",
+      phone: "202-555-0104",
+      email: "synthetic004@example.test",
       position: "Charge RN",
       facility: "Metro Re-entry Facility",
       bookingStatus: "Manual Scheduled",
@@ -3201,7 +3248,7 @@ function HotLeadWorkflowMockup({
                     <Button primary onClick={() => { if (onBulkImport) onBulkImport(bulkText, "pasted bulk rows"); else mockNotice("Bulk leads added"); setBulkText(""); }} disabled={!bulkText.trim()}>Review Pasted Leads</Button>
                   </div>
                   <Field label="Paste Bulk Lead Rows">
-                    <TextArea value={bulkText} onChange={(event) => setBulkText(event.target.value)} minHeight={92} placeholder={"Candidate Name,Phone,Email,Req Number,Position,Facility,Source,Notes\nJane Candidate,(555) 123-4567,jane@example.com,1001,Registered Nurse,Baldwin State Prison,Indeed,Available days"} />
+                    <TextArea value={bulkText} onChange={(event) => setBulkText(event.target.value)} minHeight={92} placeholder={"Candidate Name,Phone,Email,Req Number,Position,Facility,Source,Notes\nSynthetic Candidate 001,202-555-0101,synthetic001@example.test,1001,Registered Nurse,Synthetic Facility 01,Synthetic Source,Available days"} />
                   </Field>
                   <div style={{ color: THEME.muted, fontSize: 12, lineHeight: 1.5 }}>
                     Bulk import creates review drafts first. Review each row, re-extract if needed, correct wrong fields, then create the Smart Work Queue leads.
@@ -3623,8 +3670,12 @@ async function sendWelcomeFlowEmail({ to, subject, body, cc, replyTo, metadata }
   if (sessionError || !accessToken) throw new Error("Sign in with an authenticated WelcomeFlow account before sending email.");
   const response = await fetch("/api/send-email", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-    body: JSON.stringify({ to, subject, body, cc, replyTo, metadata }),
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      "X-WelcomeFlow-Workspace-Id": CLOUD_WORKSPACE_ID,
+    },
+    body: JSON.stringify({ to, subject, body, cc, replyTo, metadata, workspaceId: CLOUD_WORKSPACE_ID }),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -4845,7 +4896,7 @@ function ResumeImportButton({ onImport, children = "Import Resume", style }) {
             const text = await extractResumeFileText(file);
             onImport(text, file.name);
           } catch (error) {
-            window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: error.message || "Resume import failed" }));
+            window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: safeActionFailure("RESUME_IMPORT_FAILED", "Resume import could not be completed safely.", error) }));
             onImport("", file.name);
           }
         }
@@ -4862,7 +4913,7 @@ function BulkResumeImportButton({ onImportFiles, children = "Bulk Import Resumes
     try {
       await onImportFiles(files);
     } catch (error) {
-      window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: error.message || "Bulk resume import failed" }));
+      window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: safeActionFailure("BULK_RESUME_IMPORT_FAILED", "Bulk resume import could not be completed safely.", error) }));
     }
   }
   return (
@@ -4885,7 +4936,7 @@ function ResumeDropZone({ onImport, children = "Drag/drop resume or application 
       const text = await extractResumeFileText(file);
       onImport(text, file.name);
     } catch (error) {
-      window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: error.message || "Resume import failed" }));
+      window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: safeActionFailure("RESUME_DROP_IMPORT_FAILED", "Resume import could not be completed safely.", error) }));
       onImport("", file.name);
     }
   }
@@ -5965,7 +6016,7 @@ function RecruiterApp() {
     return () => window.clearTimeout(timer);
   }, []);
   const viewportWidth = useWindowWidth();
-  const [isAuthenticated, setIsAuthenticated] = useState(() => window.localStorage.getItem("welcomeflow-session") === "active");
+  const [isAuthenticated, setIsAuthenticated] = useState(() => acceptanceMode || window.localStorage.getItem("welcomeflow-session") === "active");
   const [loginMode, setLoginMode] = useState("signin");
   const [selectedPricingPlanId, setSelectedPricingPlanId] = useState("professional");
   const [pricingBillingCycle, setPricingBillingCycle] = useState("monthly");
@@ -6428,7 +6479,7 @@ function RecruiterApp() {
               browserPersistenceEnabled,
             });
           } catch (error) {
-            setAcceptanceError(error?.message || "WelcomeFlow could not fingerprint the requested workspace.");
+            setAcceptanceError(safeActionFailure("ACCEPTANCE_FINGERPRINT_FAILED", "WelcomeFlow could not verify the requested workspace fingerprint.", error));
             setAcceptanceDiagnostics((previous) => ({ ...previous, status: "failed", updatedAt: cloud.updatedAt, source: "Cloud" }));
             return;
           }
@@ -8224,6 +8275,7 @@ function RecruiterApp() {
       uniqueIdNumber: req.uniqueIdNumber || "",
       positionTitle: normalizeCommonSpelling(req.positionTitle || ""),
       siteName: req.siteName || "",
+      facilityId: req.facilityId || req.canonicalFacilityId || "",
       siteType: req.siteType || req.locationType || "",
       facilityOperationHours: req.facilityOperationHours || req.operationHours || "",
       employmentType: req.employmentType || "",
@@ -8261,6 +8313,7 @@ function RecruiterApp() {
       appliedPosition: snapshot.positionTitle,
       selectedRole: snapshot.positionTitle,
       selectedFacility: snapshot.siteName,
+      facilityId: snapshot.facilityId,
       reqSnapshot: snapshot,
       fte: snapshot.fte,
       shiftPreference: snapshot.shiftPreference,
@@ -8277,6 +8330,7 @@ function RecruiterApp() {
         appliedPosition: sourceLabel,
         selectedRole: sourceLabel,
         selectedFacility: sourceLabel,
+        facilityId: sourceLabel,
         reqSnapshot: sourceLabel,
         fte: sourceLabel,
         shiftPreference: sourceLabel,
@@ -8547,7 +8601,7 @@ function RecruiterApp() {
     };
   }
 
-  function saveHotLead() {
+  async function saveHotLead() {
     const name = hotLeadDraft.candidateName.trim();
     if (!name) {
       setCopyNotice("Candidate name is required for a Hot Candidate lead.");
@@ -8590,11 +8644,16 @@ function RecruiterApp() {
       createdBy: settings.general.recruiterName || "Recruiter",
       source: hotLeadDraft.resumeImportSource || "resume_import",
     } : null;
+    const leadIdentity = { id: makeId("hot"), leadId: makeId("lead") };
+    const bookingAccess = await createBookingAccess({
+      ...leadIdentity,
+      selectedRequisitionId: hotLeadDraft.selectedRequisitionId || req?.id || req?.requisitionId || "",
+      facilityId: hotLeadDraft.facilityId || hotLeadDraft.canonicalFacilityId || req?.facilityId || req?.canonicalFacilityId || "",
+    }, req);
     const lead = applyHotLeadReqPatch({
-      id: makeId("hot"),
-      leadId: makeId("lead"),
+      ...leadIdentity,
       ...hotLeadDraft,
-      ...createBookingAccess(),
+      ...bookingAccess,
       selectedRequisitionId: hotLeadDraft.selectedRequisitionId || "",
       reqNumber: hotLeadDraft.reqNumber || "",
       uniqueIdNumber: hotLeadDraft.uniqueIdNumber || "",
@@ -8779,7 +8838,7 @@ function RecruiterApp() {
     };
   }
 
-  function hotLeadFromBulkReviewDraft(draft = {}) {
+  async function hotLeadFromBulkReviewDraft(draft = {}) {
     const {
       bulkDraftId,
       importBatchName,
@@ -8793,11 +8852,17 @@ function RecruiterApp() {
       ...leadBase
     } = draft;
     const now = new Date().toISOString();
+    const requisition = resolveHotLeadReq(leadBase);
+    const leadIdentity = { id: leadBase.id || makeId("hot"), leadId: leadBase.leadId || makeId("lead") };
+    const bookingAccess = await createBookingAccess({
+      ...leadBase,
+      ...leadIdentity,
+      facilityId: leadBase.facilityId || leadBase.canonicalFacilityId || requisition?.facilityId || requisition?.canonicalFacilityId || "",
+    }, requisition);
     return {
       ...leadBase,
-      id: leadBase.id || makeId("hot"),
-      leadId: leadBase.leadId || makeId("lead"),
-      ...createBookingAccess(),
+      ...leadIdentity,
+      ...bookingAccess,
       outreachStatus: "Outreach Needed",
       responseStatus: "",
       outreachAttempts: Number(leadBase.outreachAttempts || 0),
@@ -8860,7 +8925,8 @@ function RecruiterApp() {
         else accepted.push(makeHotLeadBulkReviewDraft(built, file.name || "resume", "Bulk resume import"));
       } catch (error) {
         const built = buildBulkResumeHotLead("", file.name || "resume", [...hotLeads, ...hotLeadBulkDrafts, ...accepted]);
-        accepted.push(makeHotLeadBulkReviewDraft({ ...built, extractionWarnings: [...(built.extractionWarnings || []), error.message || "Resume parser failed. Review manually."] }, file.name || "resume", "Bulk resume import"));
+        reportActionFailure("BULK_RESUME_ITEM_FAILED", error);
+        accepted.push(makeHotLeadBulkReviewDraft({ ...built, extractionWarnings: [...(built.extractionWarnings || []), "Resume parser failed. Review this file manually."] }, file.name || "resume", "Bulk resume import"));
       }
     }
     if (accepted.length) setHotLeadBulkDrafts((prev) => [...accepted, ...prev].slice(0, 200));
@@ -8915,14 +8981,14 @@ function RecruiterApp() {
     setCopyNotice("Bulk draft loaded into Manual Lead Details for correction.");
   }
 
-  function createHotLeadFromBulkDraft(draftId) {
+  async function createHotLeadFromBulkDraft(draftId) {
     const draftItem = hotLeadBulkDrafts.find((item) => (item.bulkDraftId || item.id) === draftId);
     if (!draftItem) return;
     if (!String(draftItem.candidateName || "").trim()) {
       setCopyNotice("Candidate name is required before creating this Hot Lead.");
       return;
     }
-    const lead = hotLeadFromBulkReviewDraft(draftItem);
+    const lead = await hotLeadFromBulkReviewDraft(draftItem);
     if (hotLeadBulkDuplicate(lead, hotLeads)) {
       setCopyNotice("Possible duplicate found. Review name, phone, or email before creating this lead.");
       return;
@@ -8932,7 +8998,7 @@ function RecruiterApp() {
     setCopyNotice(`${lead.candidateName || "Hot Lead"} moved to the Smart Work Queue.`);
   }
 
-  function createAllHotLeadsFromBulkDrafts() {
+  async function createAllHotLeadsFromBulkDrafts() {
     const readyDrafts = hotLeadBulkDrafts.filter((item) => String(item.candidateName || "").trim());
     if (!readyDrafts.length) {
       setCopyNotice("No bulk drafts have a candidate name yet. Review or extract first.");
@@ -8940,15 +9006,15 @@ function RecruiterApp() {
     }
     const created = [];
     const skippedIds = new Set();
-    readyDrafts.forEach((draftItem) => {
-      const lead = hotLeadFromBulkReviewDraft(draftItem);
+    for (const draftItem of readyDrafts) {
+      const lead = await hotLeadFromBulkReviewDraft(draftItem);
       if (hotLeadBulkDuplicate(lead, [...hotLeads, ...created])) {
         skippedIds.add(draftItem.bulkDraftId || draftItem.id);
-        return;
+        continue;
       }
       created.push(lead);
       skippedIds.add(draftItem.bulkDraftId || draftItem.id);
-    });
+    }
     if (created.length) setHotLeads((prev) => [...created, ...prev].slice(0, 300));
     setHotLeadBulkDrafts((prev) => prev.filter((item) => !skippedIds.has(item.bulkDraftId || item.id)));
     setCopyNotice(`${created.length} reviewed Bulk Lead draft${created.length === 1 ? "" : "s"} moved to the Smart Work Queue.`);
@@ -9193,7 +9259,7 @@ function RecruiterApp() {
       markHotLeadOutreachChannel(lead, "email", "Sent", attemptNumber);
       setCopyNotice(`Email attempt ${attemptNumber} sent to ${recipient}.`);
     } catch (error) {
-      setCopyNotice(`${error?.message || "Email send failed"} Use Open Fallback if you need to send from your email app.`);
+      setCopyNotice(safeActionFailure("HOT_LEAD_EMAIL_FAILED", "Email sending failed safely. Use Open Fallback if you need to send from your email app.", error));
     }
   }
 
@@ -10262,8 +10328,7 @@ function RecruiterApp() {
       setCommunicationPreviewOpen(true);
       setCopyNotice(outOfDate ? "Submission preview is out of date. Refresh it before continuing review." : currentPreview.canConfirm ? "Submission preview complete. Nothing has been saved or submitted." : "Submission preview opened with blockers. Nothing has been saved or submitted.");
     } catch (error) {
-      console.error("WelcomeFlow communication preview failed", error);
-      setCopyNotice(`Submission preview could not generate: ${error?.message || "unknown resolver issue"}`);
+      setCopyNotice(safeActionFailure("COMMUNICATION_PREVIEW_FAILED", "Submission preview could not be generated safely.", error));
     }
   }
 
@@ -10274,8 +10339,7 @@ function RecruiterApp() {
       setCommunicationPreviewOutOfDate(false);
       setCopyNotice("Submission preview refreshed. Nothing has been saved or submitted.");
     } catch (error) {
-      console.error("WelcomeFlow communication preview refresh failed", error);
-      setCopyNotice(`Submission preview could not refresh: ${error?.message || "unknown resolver issue"}`);
+      setCopyNotice(safeActionFailure("COMMUNICATION_PREVIEW_REFRESH_FAILED", "Submission preview could not be refreshed safely.", error));
     }
   }
 
@@ -10345,9 +10409,9 @@ function RecruiterApp() {
       setCloudStatus(confirmation.idempotent ? "Reviewed package already confirmed" : "Saved to WelcomeFlow Test");
       setCopyNotice(confirmation.idempotent ? "This exact reviewed package was already confirmed. No duplicate record or history was created." : "Candidate Ready for Facility Submission. The reviewed package has been saved. No communication has been sent.");
     } catch (error) {
-      console.error("WelcomeFlow reviewed Candidate Ready confirmation failed", error);
+      reportActionFailure("CANDIDATE_READY_CONFIRMATION_FAILED", error);
       setCloudStatus("Candidate Ready confirmation blocked");
-      setCopyNotice(`Candidate Ready confirmation was blocked: ${error?.message || "unknown error"}`);
+      setCopyNotice("Candidate Ready confirmation was blocked safely. Reload the workspace and review the package before trying again.");
     } finally {
       setCandidateReadyConfirmationProcessing(false);
     }
@@ -10403,9 +10467,9 @@ function RecruiterApp() {
       if (openMailto && actionResult.mailtoUrl) window.open(actionResult.mailtoUrl, "_self");
       return actionResult;
     } catch (error) {
-      console.error("WelcomeFlow reviewed communication action failed", error);
+      reportActionFailure("REVIEWED_COMMUNICATION_ACTION_FAILED", error);
       setCloudStatus("Communication action blocked");
-      setCopyNotice(error?.message || "The communication action was blocked.");
+      setCopyNotice("The communication action was blocked safely. No status was changed.");
       return null;
     } finally {
       setCommunicationActionProcessing(false);
@@ -10476,8 +10540,7 @@ function RecruiterApp() {
     try {
       generated = buildOutput();
     } catch (error) {
-      console.error("WelcomeFlow submission output failed", error);
-      setCopyNotice(`Submission emails could not generate: ${error?.message || "unknown template issue"}`);
+      setCopyNotice(safeActionFailure("SUBMISSION_OUTPUT_FAILED", "Submission emails could not be generated safely.", error));
       return;
     }
     const exactDuplicate = duplicateCandidates.find((item) => {
@@ -15415,16 +15478,22 @@ function rowifyCandidate(item = {}) {
       return next;
     });
   }
-  function saveSnapshotAsLead() {
+  async function saveSnapshotAsLead() {
     if (!form.fullName && !form.phoneNumber && !form.emailAddress) {
       setCopyNotice("Add at least a candidate name, phone, or email before saving as a lead.");
       return;
     }
     const now = new Date().toISOString();
+    const leadIdentity = { id: makeId("hot"), leadId: makeId("lead") };
+    const bookingAccess = await createBookingAccess({
+      ...leadIdentity,
+      selectedRequisitionId: form.selectedRequisitionId || selectedRequisition?.id || selectedRequisition?.requisitionId || "",
+      facilityId: form.facilityId || form.canonicalFacilityId || selectedRequisition?.facilityId || selectedRequisition?.canonicalFacilityId || "",
+    }, selectedRequisition);
     const lead = {
       ...DEFAULT_HOT_LEAD_DRAFT,
-      id: makeId("hot"),
-      ...createBookingAccess(),
+      ...leadIdentity,
+      ...bookingAccess,
       candidateName: form.fullName || "Unnamed candidate",
       phone: form.phoneNumber || "",
       email: form.emailAddress || "",
@@ -15695,13 +15764,13 @@ function rowifyCandidate(item = {}) {
   }
 
   function enterAppFromLogin() {
-    window.localStorage.setItem("welcomeflow-session", "active");
+    if (!acceptanceMode) window.localStorage.setItem("welcomeflow-session", "active");
     setIsAuthenticated(true);
     playUiSound("ding", soundEnabled);
   }
 
   function logoutOfApp() {
-    window.localStorage.removeItem("welcomeflow-session");
+    if (!acceptanceMode) window.localStorage.removeItem("welcomeflow-session");
     setIsAuthenticated(false);
     setLoginMode("signin");
     setCopyNotice("");
@@ -16834,7 +16903,7 @@ function rowifyCandidate(item = {}) {
                       <Field label="Candidate Name*"><TextInput value={form.fullName} onChange={(event) => updateForm("fullName", event.target.value)} placeholder="Candidate legal name" /></Field>
                       <Field label="Preferred Contact*"><SelectInput value={form.preferredContact || ""} onChange={(event) => updateForm("preferredContact", event.target.value)} options={["Phone", "Email", "Text"]} placeholder="Select" /></Field>
                       <Field label="Phone*"><TextInput value={form.phoneNumber} onChange={(event) => updateForm("phoneNumber", formatCandidatePhone(event.target.value))} placeholder="(000) 000-0000" /></Field>
-                      <Field label="Email"><TextInput value={form.emailAddress} onChange={(event) => updateForm("emailAddress", event.target.value)} placeholder="candidate@email.com" /></Field>
+                      <Field label="Email"><TextInput value={form.emailAddress} onChange={(event) => updateForm("emailAddress", event.target.value)} placeholder="candidate@example.test" /></Field>
                       <Field label="Source*"><SelectInput value={form.candidateSource} onChange={(event) => updateForm("candidateSource", event.target.value)} options={snapshotSourceOptions} placeholder="Select source" /></Field>
                       <Field label="Candidate Type"><SelectInput value={form.candidateType} onChange={(event) => updateForm("candidateType", event.target.value)} options={["External", "Internal", "Rehire"]} /></Field>
                       <Field label="Date Added"><TextInput type="date" value={submissionDate} onChange={(event) => setSubmissionDate(event.target.value)} /></Field>
@@ -16852,7 +16921,7 @@ function rowifyCandidate(item = {}) {
                     <div style={{ padding: 16 }}>
                       {snapshotSelectedTypeKey === "Internal" ? (
                         <div style={{ display: "grid", gap: 12, gridTemplateColumns: formCompact ? "1fr" : "repeat(4, minmax(0, 1fr))" }}>
-                          <Field label="Work Email"><TextInput value={form.workEmail} onChange={(event) => updateForm("workEmail", event.target.value)} placeholder="employee@company.com" /></Field>
+                          <Field label="Work Email"><TextInput value={form.workEmail} onChange={(event) => updateForm("workEmail", event.target.value)} placeholder="employee@example.test" /></Field>
                           <Field label="Current Facility"><TextInput value={form.currentFacility} onChange={(event) => updateForm("currentFacility", event.target.value)} /></Field>
                           <Field label="Current Role"><TextInput value={form.currentRole} onChange={(event) => updateForm("currentRole", event.target.value)} /></Field>
                           <Field label="Current Manager*"><TextInput value={form.currentManager} onChange={(event) => updateForm("currentManager", event.target.value)} /></Field>
@@ -17235,7 +17304,7 @@ function rowifyCandidate(item = {}) {
                     <Field label="Current Facility"><TextInput value={form.currentFacility} onChange={(event) => updateForm("currentFacility", event.target.value)} /></Field>
                     <Field label="Current Role"><TextInput value={form.currentRole} onChange={(event) => updateForm("currentRole", event.target.value)} /></Field>
                     <Field label="Current Manager*"><TextInput value={form.currentManager} onChange={(event) => updateForm("currentManager", event.target.value)} /></Field>
-                    <Field label="Work Email"><TextInput value={form.workEmail} onChange={(event) => updateForm("workEmail", event.target.value)} placeholder="employee@company.com" /></Field>
+                    <Field label="Work Email"><TextInput value={form.workEmail} onChange={(event) => updateForm("workEmail", event.target.value)} placeholder="employee@example.test" /></Field>
                     <Field label="Current Employment Status"><TextInput value={form.currentEmploymentStatus} onChange={(event) => updateForm("currentEmploymentStatus", event.target.value)} /></Field>
                     <Field label="Current Shift"><TextInput value={form.currentShift} onChange={(event) => updateForm("currentShift", event.target.value)} /></Field>
                     <Field label="Current Pay Rate"><TextInput value={form.currentPayRate} onChange={(event) => updateForm("currentPayRate", event.target.value)} /></Field>
@@ -19744,7 +19813,7 @@ function rowifyCandidate(item = {}) {
               <Card compact title="Manual Candidate Details" subtitle="These fields create the tracker profile and preserve the same save/history logic.">
                 <div style={{ display: "grid", gap: 12, gridTemplateColumns: isNarrow ? "1fr" : "repeat(2, minmax(0, 1fr))", alignItems: "end" }}>
                   <Field label="Candidate Name*"><TextInput value={manualTrackerDraft.candidate} onChange={(event) => updateManualTrackerDraft("candidate", event.target.value)} placeholder="Candidate name" /></Field>
-                  <Field label="Email"><TextInput value={manualTrackerDraft.candidateEmail} onChange={(event) => updateManualTrackerDraft("candidateEmail", event.target.value)} placeholder="candidate@email.com" /></Field>
+                  <Field label="Email"><TextInput value={manualTrackerDraft.candidateEmail} onChange={(event) => updateManualTrackerDraft("candidateEmail", event.target.value)} placeholder="candidate@example.test" /></Field>
                   <Field label="Phone"><TextInput value={manualTrackerDraft.phoneNumber} onChange={(event) => updateManualTrackerDraft("phoneNumber", formatCandidatePhone(event.target.value))} placeholder="(000) 000-0000" /></Field>
                   <Field label="Candidate Type"><SelectInput value={manualTrackerDraft.candidateType || "External"} onChange={(event) => updateManualTrackerDraft("candidateType", event.target.value)} options={["External", "Internal", "Rehire"]} /></Field>
                   <Field label="Screening Completed With"><SelectInput value={manualTrackerDraft.screeningCompletedBy || "Recruiter"} onChange={(event) => updateManualTrackerDraft("screeningCompletedBy", event.target.value)} options={["Recruiter", "Manager"]} /></Field>
@@ -21969,7 +22038,7 @@ export function FacilityPositionSetupPage({ settings, setSettings, activeRoles =
         return;
       }
     } catch (error) {
-      setCommunicationSaveError(error?.message || SAFE_REQUISITION_ERROR);
+      setCommunicationSaveError(safeActionFailure("REQUISITION_COMMUNICATION_SAVE_FAILED", SAFE_REQUISITION_ERROR, error));
       return;
     }
     window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "Communication Details saved to the selected test requisition." }));
@@ -23502,7 +23571,7 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
   }
 
   function downloadSitesTemplate() {
-    downloadExcelWorkbook("welcomeflow-sites-template.xls", [{ name: "Sites Template", columns: SITE_TEMPLATE_COLUMNS, rows: [{ "Site Name": "Metro Reentry", "Location Type": "Standard Operation", "Location": "123 Main St, Atlanta, GA 30303", "Address": "123 Main St", "City": "Atlanta", "State": "GA", "Zip Code": "30303", "Hiring Manager Name": "Jane Manager", "Hiring Manager Position Title": "Director of Nursing", "Hiring Manager Email": "manager@example.com", "Hiring Manager Phone": "555-555-5555", "Additional Manager Name": "Backup Manager", "Additional Manager Title": "Assistant Director of Nursing", "Additional Manager Email": "backup@example.com", "Additional Manager Phone": "555-555-5556", "Administrative Contact Name": "Admin Contact", "Administrative Contact Email": "admin@example.com", "Administrative Contact Phone": "555-555-5557", "Site-Specific Screening Questions": "Can work weekends?::Yes/No::weekend:: | Any site restrictions?::Text::::", "Status": "Active", "Notes": "Example row" }] }]);
+    downloadExcelWorkbook("welcomeflow-sites-template.xls", [{ name: "Sites Template", columns: SITE_TEMPLATE_COLUMNS, rows: [{ "Site Name": "Synthetic Facility 01", "Location Type": "Standard Operation", "Location": "001 Test Data Way, Example City, ZZ 00001", "Address": "001 Test Data Way", "City": "Example City", "State": "ZZ", "Zip Code": "00001", "Hiring Manager Name": "Synthetic Manager 001", "Hiring Manager Position Title": "Director of Nursing", "Hiring Manager Email": "manager001@example.test", "Hiring Manager Phone": "202-555-0105", "Additional Manager Name": "Synthetic Manager 002", "Additional Manager Title": "Assistant Director of Nursing", "Additional Manager Email": "manager002@example.test", "Additional Manager Phone": "202-555-0106", "Administrative Contact Name": "Synthetic Contact 001", "Administrative Contact Email": "contact001@example.test", "Administrative Contact Phone": "202-555-0107", "Site-Specific Screening Questions": "Can work weekends?::Yes/No::weekend:: | Any site restrictions?::Text::::", "Status": "Active", "Notes": "Synthetic example row" }] }]);
   }
 
   function downloadContactsTemplate() {

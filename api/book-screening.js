@@ -1,14 +1,29 @@
 const {
-  consumeSharedRateLimit,
+  consumeSharedRateLimits,
   opaqueSubject,
   requestIp,
   serviceSupabaseClient,
 } = require("../server/welcomeflowApiSecurity");
+const { reportServerFailure } = require("../server/safeServerError");
+const crypto = require("crypto");
 
 const CLOUD_TABLE = "welcomeflow_workspace_state";
 const BOOKING_TOKEN_PATTERN = /^[a-f0-9]{64}$/i;
 const MEETING_TYPES = new Set(["Phone", "Teams", "Zoom"]);
 const CONTACT_METHODS = new Set(["Phone", "Email", "Text"]);
+const ELIGIBLE_BOOKING_STATUSES = new Set([
+  "new",
+  "outreach needed",
+  "outreach sent",
+  "second outreach sent",
+  "final outreach sent",
+  "follow-up due",
+  "call attempted",
+  "text sent",
+  "email sent",
+  "booking link sent",
+  "responded",
+]);
 
 function json(res, status, payload) {
   res.statusCode = status;
@@ -83,20 +98,33 @@ async function loadWorkspace(client, workspaceId) {
   return data || null;
 }
 
-async function saveWorkspaceIfUnchanged(client, workspaceId, expectedUpdatedAt, data, nextUpdatedAt) {
-  const { data: saved, error } = await client
-    .from(CLOUD_TABLE)
-    .update({ data, updated_at: nextUpdatedAt })
-    .eq("workspace_id", workspaceId)
-    .eq("updated_at", expectedUpdatedAt)
-    .select("updated_at")
-    .maybeSingle();
-  if (error) throw error;
-  return saved || null;
-}
-
 function leadRequisitionId(lead = {}) {
   return cleanText(lead.requisitionId || lead.selectedRequisitionId || lead.reqId || lead.workingRequisitionId || "", 120);
+}
+
+function leadFacilityId(lead = {}) {
+  return cleanText(lead.facilityId || lead.canonicalFacilityId || lead.selectedFacilityId || lead.reqSnapshot?.facilityId || "", 120);
+}
+
+function canonicalBookingScope(scope = {}) {
+  return JSON.stringify({
+    action: cleanText(scope.action, 40),
+    workspaceId: cleanText(scope.workspaceId, 80),
+    leadId: cleanText(scope.leadId, 120),
+    candidateId: cleanText(scope.candidateId, 120),
+    requisitionId: cleanText(scope.requisitionId, 120),
+    facilityId: cleanText(scope.facilityId, 120),
+    recruiterId: cleanText(scope.recruiterId, 120),
+  });
+}
+
+function sha256(value) {
+  return crypto.createHash("sha256").update(String(value), "utf8").digest("hex");
+}
+
+function equalHex(left, right) {
+  if (!/^[a-f0-9]{64}$/i.test(String(left || "")) || !/^[a-f0-9]{64}$/i.test(String(right || ""))) return false;
+  return crypto.timingSafeEqual(Buffer.from(String(left).toLowerCase(), "hex"), Buffer.from(String(right).toLowerCase(), "hex"));
 }
 
 function activeRequisitionForLead(data = {}, lead = {}) {
@@ -144,16 +172,59 @@ function bookingConfiguration() {
   };
 }
 
-function activeBookingLead(leads, token, now = new Date()) {
-  const lead = leads.find((item) => item?.bookingAccessToken === token);
+function activeBookingLead(leads, token, workspaceId, now = new Date()) {
+  const tokenHash = sha256(token);
+  const lead = leads.find((item) => equalHex(item?.bookingAccessTokenHash, tokenHash));
   if (!lead || lead.archivedAt || lead.status === "Archived") return null;
+  const scope = lead.bookingAccessScope || {};
+  const expectedScopeDigest = sha256(`${token}\n${canonicalBookingScope(scope)}`);
+  if (!equalHex(lead.bookingAccessScopeDigest, expectedScopeDigest)) return null;
+  if (scope.action !== "book-screening" || scope.workspaceId !== workspaceId || !scope.recruiterId) return null;
+  if (scope.leadId !== cleanText(lead.leadId || lead.id, 120) || scope.candidateId !== cleanText(lead.leadId || lead.id, 120)) return null;
+  if (scope.requisitionId !== leadRequisitionId(lead) || scope.facilityId !== leadFacilityId(lead)) return null;
+  if (lead.bookingAccessRevokedAt) return null;
+  const issuedAt = Date.parse(lead.bookingAccessIssuedAt || "");
   const expiresAt = Date.parse(lead.bookingAccessExpiresAt || "");
-  if (!Number.isFinite(expiresAt) || expiresAt <= now.getTime()) return null;
+  if (!Number.isFinite(issuedAt) || issuedAt > now.getTime() || !Number.isFinite(expiresAt) || expiresAt <= now.getTime()) return null;
   return lead;
 }
 
+function requisitionFacilityId(requisition = {}) {
+  return cleanText(requisition.facilityId || requisition.canonicalFacilityId || requisition.siteId || "", 120);
+}
+
+function bookingLeadIsEligible(lead = {}) {
+  if (lead.archivedAt || lead.archived === true) return false;
+  const status = cleanText(lead.status || lead.outreachStatus || "", 80).toLowerCase();
+  return ELIGIBLE_BOOKING_STATUSES.has(status);
+}
+
+async function reserveWorkspaceBooking(client, payload = {}) {
+  const { data, error } = await client.rpc("welcomeflow_reserve_screening_slot", {
+    p_workspace_id: payload.workspaceId,
+    p_expected_updated_at: payload.expectedUpdatedAt,
+    p_token_hash: payload.tokenHash,
+    p_lead_id: payload.leadId,
+    p_recruiter_key: payload.recruiterKey,
+    p_requisition_id: payload.requisitionId,
+    p_facility_id: payload.facilityId,
+    p_requested_date: payload.requestedDate,
+    p_requested_time: payload.requestedTime,
+    p_next_data: payload.nextData,
+    p_next_updated_at: payload.nextUpdatedAt,
+  });
+  if (error) throw error;
+  return String(data || "");
+}
+
 function validBookingRequest({ data, lead, payload, configuration, now = new Date() }) {
-  if (!activeRequisitionForLead(data, lead)) return "The linked requisition is no longer active.";
+  if (!bookingLeadIsEligible(lead)) return "This candidate is no longer eligible to schedule a screening.";
+  const requisition = activeRequisitionForLead(data, lead);
+  if (!requisition) return "The linked requisition is no longer active.";
+  const scope = lead.bookingAccessScope || {};
+  if (scope.requisitionId !== leadRequisitionId(lead) || scope.facilityId !== leadFacilityId(lead) || scope.facilityId !== requisitionFacilityId(requisition)) {
+    return "This booking link no longer matches the approved requisition and facility.";
+  }
   const requestedDate = cleanText(payload.requestedDate || payload.screenDate, 20);
   const requestedTime = cleanText(payload.requestedTime || payload.screenTime, 20);
   if (!isIsoDate(requestedDate) || !configuration.allowedSlots.includes(requestedTime)) return "Choose an available date and time.";
@@ -213,9 +284,9 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  const rateLimit = await consumeSharedRateLimit({
+  const rateLimit = await consumeSharedRateLimits({
     action: "book-screening",
-    subject: opaqueSubject(`ip:${requestIp(req)}`),
+    subjects: [`ip:${requestIp(req)}`, `token:${opaqueSubject(token)}`],
     limit: positiveInteger(process.env.WELCOMEFLOW_BOOKING_RATE_LIMIT_PER_MINUTE, 30, 300),
     windowSeconds: 60,
   });
@@ -236,8 +307,16 @@ module.exports = async function handler(req, res) {
     }
     const data = workspace.data;
     const leads = Array.isArray(data.hotLeads) ? data.hotLeads : [];
-    const lead = activeBookingLead(leads, token);
-    if (!lead || !activeRequisitionForLead(data, lead)) {
+    const lead = activeBookingLead(leads, token, workspaceId);
+    const linkedRequisition = lead ? activeRequisitionForLead(data, lead) : null;
+    if (
+      !lead
+      || !bookingLeadIsEligible(lead)
+      || !linkedRequisition
+      || lead.bookingAccessScope?.requisitionId !== leadRequisitionId(lead)
+      || lead.bookingAccessScope?.facilityId !== leadFacilityId(lead)
+      || lead.bookingAccessScope?.facilityId !== requisitionFacilityId(linkedRequisition)
+    ) {
       json(res, 404, { error: "This booking link is no longer active." });
       return;
     }
@@ -295,14 +374,38 @@ module.exports = async function handler(req, res) {
     });
 
     const nextWorkspace = { ...data, hotLeads: nextLeads, savedAt: now };
-    const saved = await saveWorkspaceIfUnchanged(client, workspaceId, workspace.updated_at, nextWorkspace, now);
-    if (!saved) {
+    const reservationResult = await reserveWorkspaceBooking(client, {
+      workspaceId,
+      expectedUpdatedAt: workspace.updated_at,
+      tokenHash: sha256(token),
+      leadId: lead.leadId || lead.id,
+      recruiterKey: lead.bookingAccessScope.recruiterId,
+      requisitionId: lead.bookingAccessScope.requisitionId,
+      facilityId: lead.bookingAccessScope.facilityId,
+      requestedDate,
+      requestedTime,
+      nextData: nextWorkspace,
+      nextUpdatedAt: now,
+    });
+    if (reservationResult === "conflict") {
       json(res, 409, { error: "The recruiter workspace changed while this request was being saved. Reload the booking link and try again." });
+      return;
+    }
+    if (reservationResult === "slot_taken") {
+      json(res, 409, { error: "That screening time was just reserved. Choose another available time." });
+      return;
+    }
+    if (reservationResult === "duplicate") {
+      json(res, 200, { ok: true, duplicate: true, lead: publicLead(lead, data, configuration.allowedSlots, configuration.timeZone) });
+      return;
+    }
+    if (reservationResult !== "booked") {
+      json(res, 404, { error: "This booking link is no longer active." });
       return;
     }
     json(res, 200, { ok: true, duplicate: false, lead: publicLead(nextLeads.find((item) => item.id === lead.id), nextWorkspace, configuration.allowedSlots, configuration.timeZone) });
   } catch (error) {
-    console.error("WelcomeFlow booking request failed", { code: error?.code || "", workspaceId });
+    reportServerFailure("BOOKING_REQUEST_FAILED", error);
     json(res, 503, { error: "The booking request could not be completed safely." });
   }
 };
@@ -310,12 +413,13 @@ module.exports = async function handler(req, res) {
 module.exports.__test = {
   activeBookingLead,
   activeRequisitionForLead,
+  bookingLeadIsEligible,
   bookingConfiguration,
   daysFromToday,
   duplicateBooking,
   isIsoDate,
   publicLead,
-  saveWorkspaceIfUnchanged,
+  reserveWorkspaceBooking,
   validBookingRequest,
   validWorkspaceId,
   workspaceIsAllowed,

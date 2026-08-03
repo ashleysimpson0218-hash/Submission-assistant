@@ -2,11 +2,11 @@ const { PRODUCTION_PROJECT_REF, buildSanitizedWorkspace, validateSanitizedWorksp
 
 const productionLikeWorkspace = {
   settings: {
-    sites: [{ siteName: "Test Facility", hiringManagerName: "Real Manager", hiringManagerEmail: "manager@company.org", hiringManagerPhone: "404-555-9999", notes: "private note" }],
+    sites: [{ siteName: "Test Facility", hiringManagerName: "Source Manager", hiringManagerEmail: "source.manager@example.test", hiringManagerPhone: "202-555-0110", notes: "private note" }],
     roles: [{ positionTitle: "Registered Nurse" }],
     requisitions: [{ reqNumber: "REQ-1", positionTitle: "Registered Nurse", siteName: "Test Facility" }],
-    contacts: [{ name: "Real Manager", email: "manager@company.org", phone: "404-555-9999", department: "Nursing" }],
-    templates: { candidateConfirmation: { subject: "Hello Jane Candidate", body: "Email manager@company.org or 404-555-9999" } },
+    contacts: [{ name: "Source Manager", email: "source.manager@example.test", phone: "202-555-0110", department: "Nursing" }],
+    templates: { candidateConfirmation: { subject: "Hello Source Candidate", body: "Email source.manager@example.test or 202-555-0110" } },
   },
   tracker: [{ candidate: "Jane Candidate", candidateNotes: "private" }],
   history: [{ candidate: "Jane Candidate" }],
@@ -26,7 +26,7 @@ test("sanitization retains configuration while excluding candidate data and real
   expect(sanitized.settings.requisitions).toHaveLength(1);
   expect(sanitized.tracker).toEqual([]);
   expect(sanitized.history).toEqual([]);
-  expect(JSON.stringify(sanitized)).not.toContain("manager@company.org");
+  expect(JSON.stringify(sanitized)).not.toContain("source.manager@example.test");
   expect(JSON.stringify(sanitized)).not.toContain("Jane Candidate");
   expect(sanitized.settings.featureFlags.communicationReadinessAudit).toBe(true);
 });

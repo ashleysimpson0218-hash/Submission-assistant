@@ -49,6 +49,47 @@ async function authenticatedUser(req = {}) {
   }
 }
 
+function configuredList(...names) {
+  return configuredValue(...names)
+    .split(/[;,\s]+/)
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function requestWorkspaceId(req = {}) {
+  const value = String(
+    req.headers?.["x-welcomeflow-workspace-id"]
+      || req.headers?.["X-WelcomeFlow-Workspace-Id"]
+      || "",
+  ).trim();
+  return /^[a-z0-9][a-z0-9_-]{0,79}$/i.test(value) ? value : "";
+}
+
+async function authorizedRecruiter(req = {}) {
+  const authentication = await authenticatedUser(req);
+  if (!authentication.user) return authentication;
+
+  const workspaceId = requestWorkspaceId(req);
+  const allowedRoles = new Set(configuredList("WELCOMEFLOW_AUTHORIZED_RECRUITER_ROLES"));
+  const allowedWorkspaces = new Set(configuredList("WELCOMEFLOW_API_WORKSPACE_IDS"));
+  if (!workspaceId || !allowedRoles.size || !allowedWorkspaces.size) {
+    return { error: "Recruiter authorization is not configured.", unavailable: true };
+  }
+
+  const appMetadata = authentication.user.app_metadata || {};
+  const role = String(appMetadata.welcomeflow_role || "").trim().toLowerCase();
+  const memberships = new Set(
+    (Array.isArray(appMetadata.welcomeflow_workspace_ids) ? appMetadata.welcomeflow_workspace_ids : [])
+      .map((value) => String(value || "").trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const normalizedWorkspaceId = workspaceId.toLowerCase();
+  if (!allowedRoles.has(role) || !allowedWorkspaces.has(normalizedWorkspaceId) || !memberships.has(normalizedWorkspaceId)) {
+    return { error: "This account is not authorized for the requested WelcomeFlow workspace.", forbidden: true };
+  }
+  return { user: authentication.user, role, workspaceId };
+}
+
 function serviceSupabaseClient() {
   const { url, key } = serviceSupabaseConfig();
   return createSupabaseClient(url, key);
@@ -69,17 +110,24 @@ function opaqueSubject(value = "") {
   return crypto.createHash("sha256").update(String(value), "utf8").digest("hex");
 }
 
-async function consumeSharedRateLimit({ action, subject, limit, windowSeconds = 60 } = {}) {
+async function consumeSharedRateLimits({ action, subjects, limit, windowSeconds = 60 } = {}) {
   const client = serviceSupabaseClient();
   if (!client) return { ok: false, unavailable: true, error: "Shared abuse protection is not configured." };
   const normalizedAction = String(action || "").trim().slice(0, 80);
-  const normalizedSubject = String(subject || "").trim().slice(0, 160);
-  if (!normalizedAction || !normalizedSubject) return { ok: false, unavailable: true, error: "Shared abuse protection could not identify this request." };
+  const subjectHashes = Array.from(new Set(
+    (Array.isArray(subjects) ? subjects : [])
+      .map((subject) => String(subject || "").trim().slice(0, 256))
+      .filter(Boolean)
+      .map(opaqueSubject),
+  )).sort();
+  if (!normalizedAction || subjectHashes.length < 2 || subjectHashes.length > 8) {
+    return { ok: false, unavailable: true, error: "Shared abuse protection could not identify this request." };
+  }
 
   try {
-    const { data, error } = await client.rpc("welcomeflow_consume_api_rate_limit", {
+    const { data, error } = await client.rpc("welcomeflow_consume_api_rate_limits", {
       p_action: normalizedAction,
-      p_subject: normalizedSubject,
+      p_subject_hashes: subjectHashes,
       p_limit: positiveInteger(limit, 10, 1000),
       p_window_seconds: positiveInteger(windowSeconds, 60, 86400),
     });
@@ -106,7 +154,8 @@ function requestPayloadBytes(req = {}) {
 
 module.exports = {
   authenticatedUser,
-  consumeSharedRateLimit,
+  authorizedRecruiter,
+  consumeSharedRateLimits,
   opaqueSubject,
   positiveInteger,
   requestIp,
