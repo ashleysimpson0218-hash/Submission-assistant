@@ -6,6 +6,7 @@ const {
 } = require("../server/welcomeflowApiSecurity");
 const { validateResumeFile } = require("../server/resumeFileValidation");
 const { reportServerFailure } = require("../server/safeServerError");
+const resumeSecurityLimits = require("../src/resumeSecurityLimits.json");
 
 if (process.env.WELCOMEFLOW_MAINTENANCE_MODE === "true" || process.env.WELCOMEFLOW_UAT_EXTERNAL_ACTIONS_DISABLED === "true") {
   module.exports = async function maintenanceHandler(req, res) {
@@ -19,6 +20,9 @@ const MAX_REQUEST_BYTES = Math.ceil(MAX_UPLOAD_BYTES * 4 / 3) + 16 * 1024;
 const MAX_ARCHIVE_ENTRIES = 500;
 const MAX_ARCHIVE_ENTRY_BYTES = 16 * 1024 * 1024;
 const MAX_ARCHIVE_TOTAL_BYTES = 32 * 1024 * 1024;
+const MAX_PDF_PAGES = resumeSecurityLimits.maxPdfPages;
+const PDF_PAGE_LIMIT_ERROR_CODE = "RESUME_PDF_PAGE_LIMIT";
+const PDF_INVALID_ERROR_CODE = "RESUME_PDF_INVALID";
 if (typeof global.DOMMatrix === "undefined") {
   global.DOMMatrix = class DOMMatrix {
     constructor() {
@@ -53,6 +57,26 @@ try {
   reportServerFailure("PDF_WORKER_SETUP_FAILED", error, { provider: "pdf-parse" });
 }
 let pdfjsLibraryPromise = null;
+
+function pdfSecurityError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function assertPdfPageCount(pageCount) {
+  if (!Number.isInteger(pageCount) || pageCount < 1) {
+    throw pdfSecurityError(PDF_INVALID_ERROR_CODE, "The PDF document is malformed or contains no pages.");
+  }
+  if (pageCount > MAX_PDF_PAGES) {
+    throw pdfSecurityError(PDF_PAGE_LIMIT_ERROR_CODE, `The PDF exceeds the ${MAX_PDF_PAGES}-page processing limit.`);
+  }
+  return pageCount;
+}
+
+function isPdfSecurityError(error) {
+  return [PDF_PAGE_LIMIT_ERROR_CODE, PDF_INVALID_ERROR_CODE].includes(error?.code);
+}
 
 async function loadPdfJsLibrary() {
   if (!pdfjsLibraryPromise) {
@@ -379,49 +403,71 @@ function normalizeAffinda(payload = {}) {
   };
 }
 
+async function inspectPdfPageCountServer(buffer) {
+  const parser = new PDFParse({ data: buffer, isEvalSupported: false });
+  try {
+    const info = await parser.getInfo();
+    return assertPdfPageCount(info?.total);
+  } finally {
+    await parser.destroy?.();
+  }
+}
+
+async function extractPdfTextWithPdfJs(pdfjsLib, buffer) {
+  const loadingTask = pdfjsLib.getDocument({
+    data: new Uint8Array(buffer),
+    disableWorker: true,
+    isEvalSupported: false,
+    useSystemFonts: true,
+  });
+  const pdf = await loadingTask.promise;
+  assertPdfPageCount(pdf.numPages);
+  const pages = [];
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    const positioned = (content.items || [])
+      .map((item) => ({
+        text: String(item.str || "").trim(),
+        x: Number(item.transform?.[4] || 0),
+        y: Number(item.transform?.[5] || 0),
+      }))
+      .filter((item) => item.text);
+    positioned.sort((a, b) => Math.abs(b.y - a.y) > 4 ? b.y - a.y : a.x - b.x);
+    const lines = [];
+    positioned.forEach((item) => {
+      const last = lines[lines.length - 1];
+      if (!last || Math.abs(last.y - item.y) > 4) lines.push({ y: item.y, text: item.text });
+      else last.text = `${last.text} ${item.text}`.replace(/\s{2,}/g, " ");
+    });
+    const text = lines.map((line) => line.text).join("\n");
+    if (text.trim()) pages.push(text.trim());
+  }
+  return pages.join("\n").replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 async function extractPdfTextServer(buffer) {
   try {
     const parser = new PDFParse({ data: buffer, isEvalSupported: false });
-    const result = await parser.getText();
-    await parser.destroy?.();
-    const parsed = String(result?.text || "").replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
-    if (parsed) return parsed;
+    try {
+      const info = await parser.getInfo();
+      assertPdfPageCount(info?.total);
+      const result = await parser.getText({ first: info.total });
+      const parsed = String(result?.text || "").replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+      if (parsed) return parsed;
+    } finally {
+      await parser.destroy?.();
+    }
   } catch (error) {
+    if (isPdfSecurityError(error)) throw error;
     reportServerFailure("PDF_PARSE_EXTRACTION_FAILED", error, { provider: "pdf-parse" });
     // Fall through to PDF.js below.
   }
   try {
     const pdfjsLib = await loadPdfJsLibrary();
-    const loadingTask = pdfjsLib.getDocument({
-      data: new Uint8Array(buffer),
-      disableWorker: true,
-      isEvalSupported: false,
-      useSystemFonts: true,
-    });
-    const pdf = await loadingTask.promise;
-    const pages = [];
-    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-      const page = await pdf.getPage(pageNumber);
-      const content = await page.getTextContent();
-      const positioned = (content.items || [])
-        .map((item) => ({
-          text: String(item.str || "").trim(),
-          x: Number(item.transform?.[4] || 0),
-          y: Number(item.transform?.[5] || 0),
-        }))
-        .filter((item) => item.text);
-      positioned.sort((a, b) => Math.abs(b.y - a.y) > 4 ? b.y - a.y : a.x - b.x);
-      const lines = [];
-      positioned.forEach((item) => {
-        const last = lines[lines.length - 1];
-        if (!last || Math.abs(last.y - item.y) > 4) lines.push({ y: item.y, text: item.text });
-        else last.text = `${last.text} ${item.text}`.replace(/\s{2,}/g, " ");
-      });
-      const text = lines.map((line) => line.text).join("\n");
-      if (text.trim()) pages.push(text.trim());
-    }
-    return pages.join("\n").replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+    return await extractPdfTextWithPdfJs(pdfjsLib, buffer);
   } catch (error) {
+    if (isPdfSecurityError(error)) throw error;
     reportServerFailure("PDFJS_EXTRACTION_FAILED", error, { provider: "pdfjs" });
     return "";
   }
@@ -522,6 +568,9 @@ module.exports = async function handler(req, res) {
       return json(res, 415, { ok: false, code: fileValidation.code, error: fileValidation.error });
     }
     const provider = String(process.env.RESUME_PARSER_PROVIDER || "affinda").toLowerCase();
+    if (provider === "affinda" && (/\.pdf$/i.test(filename) || /pdf/i.test(mimeType))) {
+      await inspectPdfPageCountServer(buffer);
+    }
     const result = provider === "affinda"
       ? await parseWithAffinda({ buffer, filename, mimeType })
       : provider === "local"
@@ -530,9 +579,24 @@ module.exports = async function handler(req, res) {
 
     return json(res, result.ok ? 200 : result.status || 502, result);
   } catch (error) {
+    if (isPdfSecurityError(error)) {
+      return json(res, error.code === PDF_PAGE_LIMIT_ERROR_CODE ? 413 : 422, {
+        ok: false,
+        code: error.code,
+        error: error.code === PDF_PAGE_LIMIT_ERROR_CODE
+          ? `PDF documents are limited to ${MAX_PDF_PAGES} pages.`
+          : "The PDF document could not be validated safely.",
+      });
+    }
     reportServerFailure("RESUME_PARSING_FAILED", error, { provider: process.env.RESUME_PARSER_PROVIDER || "adapter" });
     return json(res, 500, { ok: false, error: "Resume parsing could not be completed safely.", provider: process.env.RESUME_PARSER_PROVIDER || "adapter" });
   }
+};
+module.exports.__test = {
+  assertPdfPageCount,
+  extractPdfTextServer,
+  extractPdfTextWithPdfJs,
+  inspectPdfPageCountServer,
 };
 }
 

@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 
 const appSource = fs.readFileSync(path.resolve(__dirname, "App.js"), "utf8");
+const browserSecuritySource = fs.readFileSync(path.resolve(__dirname, "resumePdfSecurity.js"), "utf8");
 const apiSource = fs.readFileSync(path.resolve(__dirname, "../api/parse-resume.js"), "utf8");
 const packageJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../package.json"), "utf8"));
 
@@ -13,7 +14,7 @@ describe("PDF resume parsing safety", () => {
   test("disables PDF.js evaluation in the browser parser", () => {
     expect(appSource).toContain('pdfjs-dist/legacy/build/pdf.mjs');
     expect(appSource).toContain('browserPdfJsPromise = import("pdfjs-dist/legacy/build/pdf.mjs")');
-    expect(appSource).toMatch(/pdfjsLib\.getDocument\(\{\s*data,\s*isEvalSupported: false\s*}\)/);
+    expect(browserSecuritySource).toMatch(/pdfjsLib\.getDocument\(\{\s*data,\s*isEvalSupported: false\s*}\)/);
   });
 
   test("disables evaluation in both server PDF parser paths", () => {

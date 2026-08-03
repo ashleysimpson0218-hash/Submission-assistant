@@ -24,6 +24,7 @@ import { getRuntimeSupabaseClient } from "./supabaseRuntimeClient";
 import { reportActionFailure, safeActionFailure } from "./runtimeErrors";
 import { openApprovedExternalUrl } from "./safeExternalUrl";
 import { issueBookingAccess } from "./bookingAccess";
+import { extractBrowserPdfText, PDF_INVALID_ERROR_CODE, PDF_PAGE_LIMIT_ERROR_CODE } from "./resumePdfSecurity";
 import { workspaceCounts, workspaceFingerprint, verifyAcceptanceWorkspace } from "./acceptanceWorkspace";
 import { AcceptanceWorkspaceGate } from "./AcceptanceWorkspaceGate";
 import { readSavedIntakeDraftIdentity, savedDraftArray } from "./intakeDraftCompatibility";
@@ -657,15 +658,9 @@ async function extractResumeFileText(file) {
     try {
       const data = await file.arrayBuffer();
       const pdfjsLib = await loadBrowserPdfJs();
-      const pdf = await pdfjsLib.getDocument({ data, isEvalSupported: false }).promise;
-      const pages = [];
-      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-        const page = await pdf.getPage(pageNumber);
-        const content = await page.getTextContent();
-        pages.push(content.items.map((item) => item.str).join(" "));
-      }
-      return pages.join(NL).trim();
-    } catch {
+      return await extractBrowserPdfText(pdfjsLib, data);
+    } catch (error) {
+      if ([PDF_PAGE_LIMIT_ERROR_CODE, PDF_INVALID_ERROR_CODE].includes(error?.code)) throw error;
       return "";
     }
   }
