@@ -1,3 +1,5 @@
+import { getLocalCalendarDateKey } from "./calendarDate";
+
 export const INTERNAL_CALENDAR_PROVIDER = "internal";
 
 export const RECRUITING_EVENT_TYPES = Object.freeze([
@@ -164,10 +166,10 @@ export function updateInternalCalendarEvent(events = [], eventId, changes = {}, 
 }
 
 export function eventsForCalendarDate(events = [], date, filters = {}) {
-  const day = text(date).slice(0, 10);
+  const day = getLocalCalendarDateKey(date);
   return events.map(normalizeInternalCalendarEvent).filter((event) => {
     if (event.eventStatus === "Canceled" && filters.includeCanceled !== true) return false;
-    if (day && event.startDateTime.slice(0, 10) !== day) return false;
+    if (day && getLocalCalendarDateKey(event.startDateTime) !== day) return false;
     if (filters.eventType && filters.eventType !== "All" && event.eventType !== filters.eventType) return false;
     if (filters.facilityId && filters.facilityId !== "All" && event.facilityId !== filters.facilityId) return false;
     if (filters.candidateId && filters.candidateId !== "All" && event.candidateId !== filters.candidateId) return false;

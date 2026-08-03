@@ -4,6 +4,7 @@ import {
   calendarEventsMissingOutcomes,
   createInternalCalendarEvent,
   detectInternalCalendarConflicts,
+  eventsForCalendarDate,
   normalizeInternalCalendarEvent,
   updateInternalCalendarEvent,
   upcomingRecruitingEvents,
@@ -30,6 +31,17 @@ function syntheticEvent(overrides = {}) {
 }
 
 describe("internal WelcomeFlow calendar", () => {
+  test("filters calendar dates using the event's local calendar day without mutating it", () => {
+    const event = syntheticEvent({
+      startDateTime: "2026-07-28T01:00:00.000Z",
+      endDateTime: "2026-07-28T02:00:00.000Z",
+    });
+    const source = JSON.parse(JSON.stringify(event));
+    const expectedDate = process.env.TZ === "America/New_York" ? "2026-07-27" : "2026-07-28";
+    expect(eventsForCalendarDate([event], expectedDate)).toHaveLength(1);
+    expect(event).toEqual(source);
+  });
+
   test("creates an internal-only provider-neutral event", () => {
     const result = createInternalCalendarEvent([], syntheticEvent(), { id: "event-1" });
     expect(result.ok).toBe(true);

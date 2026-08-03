@@ -36,6 +36,15 @@ const commonProps = {
   onDownloadInvitation: jest.fn(),
 };
 
+beforeEach(() => {
+  jest.useFakeTimers();
+  jest.setSystemTime(new Date("2026-07-27T22:44:00.000Z"));
+});
+
+afterEach(() => {
+  jest.useRealTimers();
+});
+
 test("creates an internal calendar event from the full Calendar page", () => {
   const onCreateEvent = jest.fn(() => ({ ok: true, conflicts: [] }));
   render(<InternalCalendarPage {...commonProps} events={[]} onCreateEvent={onCreateEvent} onUpdateEvent={jest.fn()} />);
@@ -53,6 +62,7 @@ test("creates an internal calendar event from the full Calendar page", () => {
 
 test("records outcomes and exports an internal invitation without external sync controls", () => {
   const event = futureEvent();
+  const source = JSON.parse(JSON.stringify(event));
   const onUpdateEvent = jest.fn(() => ({ ok: true }));
   const onDownloadInvitation = jest.fn();
   render(<InternalCalendarPage {...commonProps} events={[event]} onCreateEvent={jest.fn()} onUpdateEvent={onUpdateEvent} onDownloadInvitation={onDownloadInvitation} />);
@@ -61,6 +71,7 @@ test("records outcomes and exports an internal invitation without external sync 
   fireEvent.click(screen.getByRole("button", { name: "Export .ics" }));
   expect(onDownloadInvitation).toHaveBeenCalledWith(expect.objectContaining({ id: "calendar-1" }));
   expect(screen.queryByText(/Connect Outlook|Connect Google|Microsoft 365/i)).not.toBeInTheDocument();
+  expect(event).toEqual(source);
 });
 
 test("opens a prefilled scheduling form from a connected candidate action", () => {
