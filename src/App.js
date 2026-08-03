@@ -2,7 +2,7 @@
 // Premium Purple Precision Polish - squared UI, cleaner header, dark mode contrast, glossary-first help
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
+import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import {
   buildCompleteProcessArchivePatch,
   buildHireWorkflowPatch,
@@ -623,7 +623,7 @@ async function extractResumeFileText(file) {
   if (name.endsWith(".pdf") || type === "application/pdf") {
     try {
       const data = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data }).promise;
+      const pdf = await pdfjsLib.getDocument({ data, isEvalSupported: false }).promise;
       const pages = [];
       for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
         const page = await pdf.getPage(pageNumber);

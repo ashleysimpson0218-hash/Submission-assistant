@@ -39,7 +39,6 @@ if (typeof global.ImageData === "undefined") {
     }
   };
 }
-const pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
 const { PDFParse } = require("pdf-parse");
 const path = require("path");
 const zlib = require("zlib");
@@ -50,10 +49,18 @@ try {
 } catch (error) {
   console.error("WelcomeFlow pdf-parse worker setup failed", error?.message || error);
 }
-try {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(path.join(path.dirname(require.resolve("pdfjs-dist/legacy/build/pdf.js")), "pdf.worker.js")).href;
-} catch (error) {
-  console.error("WelcomeFlow pdfjs worker setup failed", error?.message || error);
+let pdfjsLibraryPromise = null;
+
+async function loadPdfJsLibrary() {
+  if (!pdfjsLibraryPromise) {
+    pdfjsLibraryPromise = import("pdfjs-dist/legacy/build/pdf.mjs").then((pdfjsLib) => {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(
+        path.join(path.dirname(require.resolve("pdfjs-dist/legacy/build/pdf.mjs")), "pdf.worker.mjs"),
+      ).href;
+      return pdfjsLib;
+    });
+  }
+  return pdfjsLibraryPromise;
 }
 
 function json(res, status, payload) {
@@ -371,7 +378,7 @@ function normalizeAffinda(payload = {}) {
 
 async function extractPdfTextServer(buffer) {
   try {
-    const parser = new PDFParse({ data: buffer });
+    const parser = new PDFParse({ data: buffer, isEvalSupported: false });
     const result = await parser.getText();
     await parser.destroy?.();
     const parsed = String(result?.text || "").replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
@@ -381,7 +388,13 @@ async function extractPdfTextServer(buffer) {
     // Fall through to PDF.js below.
   }
   try {
-    const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer), disableWorker: true, useSystemFonts: true });
+    const pdfjsLib = await loadPdfJsLibrary();
+    const loadingTask = pdfjsLib.getDocument({
+      data: new Uint8Array(buffer),
+      disableWorker: true,
+      isEvalSupported: false,
+      useSystemFonts: true,
+    });
     const pdf = await loadingTask.promise;
     const pages = [];
     for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
