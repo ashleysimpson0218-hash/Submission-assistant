@@ -13,6 +13,7 @@ test("requires explicit wildcard configuration for subdomains", () => {
 });
 
 test.each([
+  // eslint-disable-next-line no-script-url -- verifies that the URL guard rejects this scheme
   "javascript:alert(1)",
   "data:text/html,unsafe",
   "ftp://calendly.com/file",

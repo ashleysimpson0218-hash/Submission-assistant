@@ -6,7 +6,7 @@ const appSource = fs.readFileSync(path.resolve(__dirname, "App.js"), "utf8");
 describe("protected recruiter API client boundary", () => {
   test("resume parsing sends the current bearer token and exact workspace", () => {
     expect(appSource).toContain("supabase.auth.getSession()");
-    expect(appSource).toContain("Authorization: `Bearer ${accessToken}`");
+    expect(appSource).toContain(["Authorization: `Bearer $", "{accessToken}`"].join(""));
     expect(appSource).toContain('"X-WelcomeFlow-Workspace-Id": CLOUD_WORKSPACE_ID');
   });
 
@@ -17,7 +17,7 @@ describe("protected recruiter API client boundary", () => {
   });
 
   test("email requests send the same bearer and workspace boundary", () => {
-    expect(appSource).toContain("Authorization: `Bearer ${accessToken}`");
+    expect(appSource).toContain(["Authorization: `Bearer $", "{accessToken}`"].join(""));
     expect(appSource).toContain('"X-WelcomeFlow-Workspace-Id": CLOUD_WORKSPACE_ID');
   });
 });
