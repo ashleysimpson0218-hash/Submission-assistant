@@ -5,7 +5,8 @@ const appSource = fs.readFileSync(path.resolve(__dirname, "App.js"), "utf8");
 const indexSource = fs.readFileSync(path.resolve(__dirname, "index.js"), "utf8");
 
 test("acceptance mode never reads browser-local workspace values or uses them as cloud fallbacks", () => {
-  const storedValueFunction = appSource.match(/function loadStoredValue[\s\S]*?\n}/)?.[0] || "";
+  const storedValueStart = appSource.indexOf("function loadStoredValue");
+  const storedValueFunction = storedValueStart >= 0 ? appSource.slice(storedValueStart, storedValueStart + 700) : "";
   expect(storedValueFunction).toContain("ownerUatMode || acceptanceMode");
   expect(appSource).toContain("acceptanceMode ? null : localIntakeDraft");
   expect(appSource).toContain("acceptanceMode ? [] : localCalendarEvents");
@@ -13,7 +14,8 @@ test("acceptance mode never reads browser-local workspace values or uses them as
 });
 
 test("internal booking links require opaque random tokens and do not expose lead IDs", () => {
-  const bookingLinkFunction = appSource.match(/function bookingRequestLinkForLead[\s\S]*?\n}/)?.[0] || "";
+  const bookingLinkStart = appSource.indexOf("function bookingRequestLinkForLead");
+  const bookingLinkFunction = bookingLinkStart >= 0 ? appSource.slice(bookingLinkStart, bookingLinkStart + 600) : "";
   expect(bookingLinkFunction).toMatch(/transientBookingTokens/);
   expect(bookingLinkFunction).toMatch(/\{64\}/);
   expect(bookingLinkFunction).not.toMatch(/lead\.id/);

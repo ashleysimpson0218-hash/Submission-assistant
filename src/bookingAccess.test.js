@@ -7,6 +7,7 @@ const scope = {
   candidateId: "lead-1",
   requisitionId: "req-1",
   facilityId: "facility-1",
+  recruiterId: "recruiter-1",
 };
 
 describe("booking access issuance", () => {

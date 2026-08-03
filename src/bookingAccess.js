@@ -12,6 +12,7 @@ export function canonicalBookingScope(scope = {}) {
     candidateId: normalizedScopeValue(scope.candidateId || scope.leadId, 120),
     requisitionId: normalizedScopeValue(scope.requisitionId, 120),
     facilityId: normalizedScopeValue(scope.facilityId, 120),
+    recruiterId: normalizedScopeValue(scope.recruiterId, 120),
   });
 }
 
@@ -38,6 +39,7 @@ export async function issueBookingAccess(scope = {}, options = {}) {
     && parsedScope.candidateId
     && parsedScope.requisitionId
     && parsedScope.facilityId
+    && parsedScope.recruiterId
     && parsedScope.action === BOOK_SCREENING_ACTION;
   if (!complete || !cryptoImpl?.getRandomValues || !cryptoImpl?.subtle) return { rawToken: "", record: {} };
 

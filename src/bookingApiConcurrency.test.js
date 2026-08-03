@@ -22,6 +22,7 @@ function workspaceData(leadPatch = {}, requisitionPatch = {}) {
     candidateId: "lead-1",
     requisitionId: "req-1",
     facilityId: "facility-1",
+    recruiterId: "recruiter-1",
   };
   return {
     hotLeads: [{
@@ -33,26 +34,37 @@ function workspaceData(leadPatch = {}, requisitionPatch = {}) {
       bookingAccessIssuedAt: "2026-07-01T12:00:00.000Z",
       bookingAccessExpiresAt: "2026-08-30T12:00:00.000Z",
       bookingAccessRevokedAt: "",
+      status: "Booking Link Sent",
       candidateName: "Synthetic Candidate",
       email: "candidate@example.test",
       phone: "555-0101",
       selectedFacility: "Synthetic Facility",
       facilityId: "facility-1",
+      recruiterOwner: "recruiter-1",
       selectedRequisitionId: "req-1",
       ...leadPatch,
     }],
     settings: {
-      requisitions: { one: { id: "req-1", reqNumber: "SYN-1001", status: "Active", ...requisitionPatch } },
+      requisitions: { one: { id: "req-1", reqNumber: "SYN-1001", facilityId: "facility-1", status: "Active", ...requisitionPatch } },
       general: { recruiterName: "Synthetic Recruiter", companyName: "Synthetic Company" },
     },
     unrelatedRecruiterState: { keep: true, revision: 7 },
   };
 }
 
-function mockClient({ data = workspaceData(), updatedAt = "2026-07-30T12:00:00.000Z", conflict = false, rateAllowed = true } = {}) {
-  const state = { row: { data, updated_at: updatedAt }, updates: [], conflict };
+function mockClient({ data = workspaceData(), updatedAt = "2026-07-30T12:00:00.000Z", conflict = false, rateAllowed = true, reservationResult = "booked" } = {}) {
+  const state = { row: { data, updated_at: updatedAt }, updates: [], reservations: [], conflict };
   const client = {
-    rpc: jest.fn().mockResolvedValue({ data: rateAllowed, error: null }),
+    rpc: jest.fn(async (name, args) => {
+      if (name === "welcomeflow_consume_api_rate_limit") return { data: rateAllowed, error: null };
+      if (name === "welcomeflow_reserve_screening_slot") {
+        state.reservations.push(args);
+        const result = conflict ? "conflict" : reservationResult;
+        if (result === "booked") state.row = { data: args.p_next_data, updated_at: args.p_next_updated_at };
+        return { data: result, error: null };
+      }
+      return { data: null, error: new Error("unexpected RPC") };
+    }),
     from: jest.fn(() => {
       let mode = "select";
       let updatePayload = null;
@@ -121,8 +133,8 @@ describe("booking API secure public scheduling", () => {
     const res = responseRecorder();
     await handler(bookingRequest(), res);
     expect(res.statusCode).toBe(200);
-    expect(fixture.state.updates).toHaveLength(1);
-    expect(fixture.state.updates[0].filters).toMatchObject({ workspace_id: "phase1-booking-test", updated_at: "2026-07-30T12:00:00.000Z" });
+    expect(fixture.state.reservations).toHaveLength(1);
+    expect(fixture.state.reservations[0]).toMatchObject({ p_workspace_id: "phase1-booking-test", p_expected_updated_at: "2026-07-30T12:00:00.000Z", p_requisition_id: "req-1", p_facility_id: "facility-1" });
     expect(fixture.state.row.data.unrelatedRecruiterState).toEqual({ keep: true, revision: 7 });
     expect(fixture.state.row.data.hotLeads[0]).toMatchObject({ id: "lead-1", candidateName: "Synthetic Candidate", bookedScreeningDate: "2026-07-31", bookedScreeningTime: "10:30", bookingStatus: "Requested" });
   });
@@ -150,7 +162,7 @@ describe("booking API secure public scheduling", () => {
     await handler(bookingRequest(), res);
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toMatchObject({ ok: true, duplicate: true });
-    expect(fixture.state.updates).toHaveLength(0);
+    expect(fixture.state.reservations).toHaveLength(0);
   });
 
   test.each([
@@ -169,7 +181,7 @@ describe("booking API secure public scheduling", () => {
   });
 
   test.each([
-    [{ bookingAccessScope: { action: "book-screening", workspaceId: "other", leadId: "lead-1", candidateId: "lead-1", requisitionId: "req-1", facilityId: "facility-1" } }, "workspace"],
+    [{ bookingAccessScope: { action: "book-screening", workspaceId: "other", leadId: "lead-1", candidateId: "lead-1", requisitionId: "req-1", facilityId: "facility-1", recruiterId: "recruiter-1" } }, "workspace"],
     [{ selectedRequisitionId: "req-2" }, "requisition"],
     [{ facilityId: "facility-2" }, "facility"],
   ])("does not let token scope follow a later %s change", async (leadPatch) => {
@@ -193,6 +205,38 @@ describe("booking API secure public scheduling", () => {
     expect(res.statusCode).toBe(409);
     expect(res.body).toMatch(/workspace changed/i);
     expect(fixture.state.row.data.unrelatedRecruiterState).toEqual({ keep: true, revision: 7 });
+  });
+
+  test.each([
+    "Hired",
+    "Rejected",
+    "Ineligible",
+    "Archived",
+    "Do Not Contact",
+    "Not Interested",
+    "Unresponsive",
+    "Converted to Candidate",
+    "Ready for Intake",
+    "Booked",
+  ])("rejects the ineligible candidate state %s", async (status) => {
+    const fixture = mockClient({ data: workspaceData({ status }) });
+    currentClient = fixture.client;
+    const handler = require("../api/book-screening");
+    const res = responseRecorder();
+    await handler(bookingRequest(), res);
+    expect(res.statusCode).toBe(404);
+    expect(fixture.state.reservations).toHaveLength(0);
+  });
+
+  test("prevents two leads from reserving the same recruiter slot", async () => {
+    const fixture = mockClient({ reservationResult: "slot_taken" });
+    currentClient = fixture.client;
+    const handler = require("../api/book-screening");
+    const res = responseRecorder();
+    await handler(bookingRequest(), res);
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toMatch(/just reserved/i);
+    expect(fixture.state.reservations).toHaveLength(1);
   });
 
   test("rejects a workspace outside the exact server allowlist", async () => {
@@ -231,7 +275,7 @@ describe("booking API secure public scheduling", () => {
     await handler(bookingRequest(patch), res);
     expect(res.statusCode).toBe(400);
     expect(res.body).toMatch(message);
-    expect(fixture.state.updates).toHaveLength(0);
+    expect(fixture.state.reservations).toHaveLength(0);
   });
 
   test("rejects a booking when the linked requisition is not active", async () => {
@@ -241,7 +285,7 @@ describe("booking API secure public scheduling", () => {
     const res = responseRecorder();
     await handler(bookingRequest(), res);
     expect(res.statusCode).toBe(404);
-    expect(fixture.state.updates).toHaveLength(0);
+    expect(fixture.state.reservations).toHaveLength(0);
   });
 
   test("fails closed when shared rate limiting is unavailable or denies the request", async () => {
@@ -251,15 +295,27 @@ describe("booking API secure public scheduling", () => {
     const res = responseRecorder();
     await handler(bookingRequest(), res);
     expect(res.statusCode).toBe(429);
-    expect(fixture.state.updates).toHaveLength(0);
+    expect(fixture.state.reservations).toHaveLength(0);
   });
 
   test("never bypasses optimistic concurrency with a blind workspace upsert", () => {
     const source = fs.readFileSync(path.resolve(__dirname, "..", "api", "book-screening.js"), "utf8");
     expect(source).not.toMatch(/\.upsert\s*\(/);
-    expect(source).toMatch(/\.eq\("updated_at",\s*expectedUpdatedAt\)/);
+    expect(source).toContain("welcomeflow_reserve_screening_slot");
+    expect(source).toContain("p_expected_updated_at");
     expect(source).not.toMatch(/SUPABASE_ANON_KEY[\s\S]*serviceSupabaseClient/);
     expect(source).not.toMatch(/bookingAccessToken\s*===/);
     expect(source).toContain("timingSafeEqual");
+  });
+
+  test("the reservation migration makes recruiter slots unique and rechecks scope under a row lock", () => {
+    const sql = fs.readFileSync(path.resolve(__dirname, "..", "supabase", "migrations", "20260802090000_reserve_screening_slots.sql"), "utf8").toLowerCase();
+    expect(sql).toContain("primary key (workspace_id, recruiter_key, requested_date, requested_time)");
+    expect(sql).toContain("for update");
+    expect(sql).toContain("v_status not in");
+    expect(sql).toContain("v_scope ->> 'requisitionid' <> p_requisition_id");
+    expect(sql).toContain("v_scope ->> 'facilityid' <> p_facility_id");
+    expect(sql).toContain("updated_at = p_expected_updated_at");
+    expect(sql).toContain("security invoker");
   });
 });

@@ -2207,6 +2207,7 @@ async function createBookingAccess(lead = {}, requisition = {}) {
     candidateId: lead.leadId || lead.id,
     requisitionId: lead.selectedRequisitionId || lead.requisitionId || requisition.id || requisition.requisitionId,
     facilityId: lead.facilityId || lead.canonicalFacilityId || requisition.facilityId || requisition.canonicalFacilityId,
+    recruiterId: lead.recruiterId || lead.recruiterOwner || requisition.recruiterId || requisition.recruiterOwner || `workspace:${CLOUD_WORKSPACE_ID}`,
   });
   if (result.rawToken && lead.id) transientBookingTokens.set(String(lead.id), result.rawToken);
   return result.record;
