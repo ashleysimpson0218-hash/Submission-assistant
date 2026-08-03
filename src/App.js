@@ -596,17 +596,37 @@ async function parseResumeFileWithApi(file) {
   if (ownerUatMode) return null;
   if (!file || typeof fetch !== "function") return null;
   try {
+    if (!supabase) {
+      return { __resumeParserError: true, code: "RESUME_AUTH_REQUIRED", error: "Sign in with an authorized WelcomeFlow recruiter account before parsing a resume." };
+    }
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    const accessToken = sessionData?.session?.access_token || "";
+    if (sessionError || !accessToken) {
+      return { __resumeParserError: true, code: "RESUME_AUTH_REQUIRED", error: "Sign in with an authorized WelcomeFlow recruiter account before parsing a resume." };
+    }
     const base64 = await fileToBase64(file);
     const response = await fetch("/api/parse-resume", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        "X-WelcomeFlow-Workspace-Id": CLOUD_WORKSPACE_ID,
+      },
       body: JSON.stringify({ filename: file.name || "resume", mimeType: file.type || "application/octet-stream", size: file.size || 0, base64 }),
     });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok || payload?.ok === false) throw new Error(payload?.error || "Resume parser unavailable");
+    if (!response.ok || payload?.ok === false) {
+      return {
+        __resumeParserError: true,
+        code: response.status === 401 || response.status === 403 ? "RESUME_AUTH_DENIED" : "RESUME_REMOTE_FAILED",
+        error: response.status === 401 || response.status === 403
+          ? "This account is not authorized to parse resumes for the active workspace."
+          : "Resume parsing is temporarily unavailable.",
+      };
+    }
     return { __resumeParserResult: true, provider: payload.provider || "WelcomeFlow Parser", text: payload.text || "", fields: payload.fields || {}, confidence: payload.confidence || 0, warnings: payload.warnings || [] };
-  } catch (error) {
-    return null;
+  } catch {
+    return { __resumeParserError: true, code: "RESUME_REMOTE_FAILED", error: "Resume parsing is temporarily unavailable." };
   }
 }
 
@@ -619,6 +639,11 @@ async function extractResumeFileText(file) {
   const name = String(file.name || "").toLowerCase();
   const type = String(file.type || "").toLowerCase();
   const apiResult = await parseResumeFileWithApi(file);
+  if (apiResult?.__resumeParserError) {
+    const error = new Error(apiResult.error);
+    error.code = apiResult.code;
+    throw error;
+  }
   if (apiResult?.text || Object.keys(apiResult?.fields || {}).length) return apiResult;
   if (name.endsWith(".pdf") || type === "application/pdf") {
     try {
@@ -3571,8 +3596,12 @@ async function sendWelcomeFlowEmail({ to, subject, body, cc, replyTo, metadata }
   if (sessionError || !accessToken) throw new Error("Sign in with an authenticated WelcomeFlow account before sending email.");
   const response = await fetch("/api/send-email", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-    body: JSON.stringify({ to, subject, body, cc, replyTo, metadata }),
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      "X-WelcomeFlow-Workspace-Id": CLOUD_WORKSPACE_ID,
+    },
+    body: JSON.stringify({ to, subject, body, cc, replyTo, metadata, workspaceId: CLOUD_WORKSPACE_ID }),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {

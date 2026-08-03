@@ -1,5 +1,5 @@
 const {
-  authenticatedUser,
+  authorizedRecruiter,
   consumeSharedRateLimit,
   requestPayloadBytes,
 } = require("../server/welcomeflowApiSecurity");
@@ -490,8 +490,10 @@ module.exports = async function handler(req, res) {
   try {
     if (requestPayloadBytes(req) > MAX_REQUEST_BYTES) return json(res, 413, { ok: false, error: "Resume file is too large for parsing. Maximum is 8MB." });
 
-    const authorization = await authenticatedUser(req);
-    if (!authorization.user) return json(res, authorization.unavailable ? 503 : 401, { ok: false, error: authorization.error });
+    const authorization = await authorizedRecruiter(req);
+    if (!authorization.user) {
+      return json(res, authorization.unavailable ? 503 : authorization.forbidden ? 403 : 401, { ok: false, error: authorization.error });
+    }
 
     const rateLimit = await consumeSharedRateLimit({
       action: "parse-resume",

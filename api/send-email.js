@@ -2,7 +2,7 @@ const MAX_BODY_CHARS = 12000;
 const MAX_PAYLOAD_BYTES = 64 * 1024;
 const MAX_RECIPIENTS = 20;
 const {
-  authenticatedUser,
+  authorizedRecruiter,
   consumeSharedRateLimit,
   requestPayloadBytes,
 } = require("../server/welcomeflowApiSecurity");
@@ -68,9 +68,9 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  const authorization = await authenticatedUser(req);
+  const authorization = await authorizedRecruiter(req);
   if (!authorization.user) {
-    json(res, authorization.unavailable ? 503 : 401, { error: authorization.error });
+    json(res, authorization.unavailable ? 503 : authorization.forbidden ? 403 : 401, { error: authorization.error });
     return;
   }
   const rateLimit = await consumeSharedRateLimit({

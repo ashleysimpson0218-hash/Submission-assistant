@@ -49,6 +49,47 @@ async function authenticatedUser(req = {}) {
   }
 }
 
+function configuredList(...names) {
+  return configuredValue(...names)
+    .split(/[;,\s]+/)
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function requestWorkspaceId(req = {}) {
+  const value = String(
+    req.headers?.["x-welcomeflow-workspace-id"]
+      || req.headers?.["X-WelcomeFlow-Workspace-Id"]
+      || "",
+  ).trim();
+  return /^[a-z0-9][a-z0-9_-]{0,79}$/i.test(value) ? value : "";
+}
+
+async function authorizedRecruiter(req = {}) {
+  const authentication = await authenticatedUser(req);
+  if (!authentication.user) return authentication;
+
+  const workspaceId = requestWorkspaceId(req);
+  const allowedRoles = new Set(configuredList("WELCOMEFLOW_AUTHORIZED_RECRUITER_ROLES"));
+  const allowedWorkspaces = new Set(configuredList("WELCOMEFLOW_API_WORKSPACE_IDS"));
+  if (!workspaceId || !allowedRoles.size || !allowedWorkspaces.size) {
+    return { error: "Recruiter authorization is not configured.", unavailable: true };
+  }
+
+  const appMetadata = authentication.user.app_metadata || {};
+  const role = String(appMetadata.welcomeflow_role || "").trim().toLowerCase();
+  const memberships = new Set(
+    (Array.isArray(appMetadata.welcomeflow_workspace_ids) ? appMetadata.welcomeflow_workspace_ids : [])
+      .map((value) => String(value || "").trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const normalizedWorkspaceId = workspaceId.toLowerCase();
+  if (!allowedRoles.has(role) || !allowedWorkspaces.has(normalizedWorkspaceId) || !memberships.has(normalizedWorkspaceId)) {
+    return { error: "This account is not authorized for the requested WelcomeFlow workspace.", forbidden: true };
+  }
+  return { user: authentication.user, role, workspaceId };
+}
+
 function serviceSupabaseClient() {
   const { url, key } = serviceSupabaseConfig();
   return createSupabaseClient(url, key);
@@ -106,6 +147,7 @@ function requestPayloadBytes(req = {}) {
 
 module.exports = {
   authenticatedUser,
+  authorizedRecruiter,
   consumeSharedRateLimit,
   opaqueSubject,
   positiveInteger,
