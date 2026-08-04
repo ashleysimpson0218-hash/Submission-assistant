@@ -10,6 +10,8 @@ describe("multidimensional shared rate limits", () => {
   beforeAll(() => {
     process.env.SUPABASE_URL = "https://abcdefghijklmnopqrst.supabase.co";
     process.env.SUPABASE_SERVICE_ROLE_KEY = "server-secret-key";
+    process.env.WELCOMEFLOW_SERVER_ENV = "test";
+    process.env.WELCOMEFLOW_ALLOWED_SUPABASE_PROJECT_REF = "abcdefghijklmnopqrst";
   });
 
   afterAll(() => { process.env = originalEnv; });

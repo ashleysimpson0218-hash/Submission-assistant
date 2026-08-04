@@ -1,7 +1,56 @@
 const crypto = require("crypto");
 
+const PRODUCTION_SUPABASE_PROJECT_REF = "qfpgednixvveelgwfylv";
+const SYNTHETIC_TEST_SUPABASE_PROJECT_REF = "bjverobaoujhfaylyrzi";
+const OWNER_UAT_SUPABASE_PROJECT_REF = "zleslkwnbjxknmkqywyv";
+const SUPPORTED_SERVER_ENVIRONMENTS = new Set(["development", "test", "acceptance", "preview", "owner-uat", "production"]);
+const ACTION_ENABLE_FLAGS = Object.freeze({
+  email: "WELCOMEFLOW_ENABLE_EMAIL_ACTIONS",
+  resume: "WELCOMEFLOW_ENABLE_RESUME_ACTIONS",
+  booking: "WELCOMEFLOW_ENABLE_BOOKING_ACTIONS",
+});
+
 function configuredValue(...names) {
   return names.map((name) => String(process.env[name] || "").trim()).find(Boolean) || "";
+}
+
+function projectRefFromSupabaseUrl(value = "") {
+  try {
+    const parsed = new URL(String(value));
+    const match = parsed.protocol === "https:" && !parsed.username && !parsed.password
+      ? parsed.hostname.toLowerCase().match(/^([a-z0-9]+)\.supabase\.co$/)
+      : null;
+    return match?.[1] || "";
+  } catch {
+    return "";
+  }
+}
+
+function enabledServerFlag(value) {
+  return String(value || "").trim().toLowerCase() === "true";
+}
+
+function readServerRuntimeConfig(action = "", env = process.env) {
+  const environment = String(env.WELCOMEFLOW_SERVER_ENV || "").trim().toLowerCase();
+  const allowedProjectRef = String(env.WELCOMEFLOW_ALLOWED_SUPABASE_PROJECT_REF || "").trim().toLowerCase();
+  const supabaseUrl = String(env.SUPABASE_URL || "").trim();
+  const projectRef = projectRefFromSupabaseUrl(supabaseUrl);
+  const serviceKey = String(env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_SECRET_KEY || "").trim();
+  const publicKey = String(env.SUPABASE_ANON_KEY || "").trim();
+  const actionFlag = ACTION_ENABLE_FLAGS[action] || "";
+
+  if (!SUPPORTED_SERVER_ENVIRONMENTS.has(environment)) return { ok: false, error: "Server runtime is not configured safely." };
+  if (!allowedProjectRef || !projectRef || projectRef !== allowedProjectRef) return { ok: false, error: "Server runtime is not configured safely." };
+  if (!serviceKey) return { ok: false, error: "Server runtime is not configured safely." };
+  if (["development", "test", "acceptance", "preview"].includes(environment) && [PRODUCTION_SUPABASE_PROJECT_REF, OWNER_UAT_SUPABASE_PROJECT_REF].includes(projectRef)) {
+    return { ok: false, error: "Server runtime is not configured safely." };
+  }
+  if (environment === "owner-uat" && projectRef !== OWNER_UAT_SUPABASE_PROJECT_REF) return { ok: false, error: "Server runtime is not configured safely." };
+  if (environment === "production" && projectRef !== PRODUCTION_SUPABASE_PROJECT_REF) return { ok: false, error: "Server runtime is not configured safely." };
+  if (environment === "acceptance" && projectRef !== SYNTHETIC_TEST_SUPABASE_PROJECT_REF) return { ok: false, error: "Server runtime is not configured safely." };
+  if (actionFlag && !enabledServerFlag(env[actionFlag])) return { ok: false, error: "This server action is disabled." };
+
+  return { ok: true, environment, allowedProjectRef, projectRef, supabaseUrl, serviceKey, publicKey, action };
 }
 
 function bearerToken(req = {}) {
@@ -10,17 +59,17 @@ function bearerToken(req = {}) {
   return match?.[1] || "";
 }
 
-function publicSupabaseConfig() {
+function publicSupabaseConfig(runtime = readServerRuntimeConfig()) {
   return {
-    url: configuredValue("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL", "REACT_APP_SUPABASE_URL"),
-    key: configuredValue("SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "REACT_APP_SUPABASE_ANON_KEY"),
+    url: runtime.ok ? runtime.supabaseUrl : "",
+    key: runtime.ok ? runtime.publicKey : "",
   };
 }
 
-function serviceSupabaseConfig() {
+function serviceSupabaseConfig(runtime = readServerRuntimeConfig()) {
   return {
-    url: configuredValue("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL", "REACT_APP_SUPABASE_URL"),
-    key: configuredValue("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SECRET_KEY"),
+    url: runtime.ok ? runtime.supabaseUrl : "",
+    key: runtime.ok ? runtime.serviceKey : "",
   };
 }
 
@@ -36,7 +85,8 @@ function createSupabaseClient(url, key, authorization = "") {
 async function authenticatedUser(req = {}) {
   const token = bearerToken(req);
   if (!token) return { error: "Authorization is required." };
-  const { url, key } = publicSupabaseConfig();
+  const runtime = readServerRuntimeConfig();
+  const { url, key } = publicSupabaseConfig(runtime);
   if (!url || !key) return { error: "Authorization is not configured.", unavailable: true };
 
   try {
@@ -90,8 +140,8 @@ async function authorizedRecruiter(req = {}) {
   return { user: authentication.user, role, workspaceId };
 }
 
-function serviceSupabaseClient() {
-  const { url, key } = serviceSupabaseConfig();
+function serviceSupabaseClient(runtime = readServerRuntimeConfig()) {
+  const { url, key } = serviceSupabaseConfig(runtime);
   return createSupabaseClient(url, key);
 }
 
@@ -181,5 +231,7 @@ module.exports = {
   positiveInteger,
   requestIp,
   requestPayloadBytes,
+  readServerRuntimeConfig,
   serviceSupabaseClient,
+  projectRefFromSupabaseUrl,
 };

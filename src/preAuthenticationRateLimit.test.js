@@ -13,12 +13,16 @@ describe("shared pre-authentication rate limiting", () => {
   beforeAll(() => {
     process.env.SUPABASE_URL = "https://abcdefghijklmnopqrst.supabase.co";
     process.env.SUPABASE_SERVICE_ROLE_KEY = "server-secret-key";
+    process.env.WELCOMEFLOW_SERVER_ENV = "test";
+    process.env.WELCOMEFLOW_ALLOWED_SUPABASE_PROJECT_REF = "abcdefghijklmnopqrst";
     delete process.env.VERCEL;
   });
 
   afterAll(() => { process.env = originalEnv; });
   beforeEach(() => {
     delete process.env.VERCEL;
+    process.env.WELCOMEFLOW_SERVER_ENV = "test";
+    process.env.WELCOMEFLOW_ALLOWED_SUPABASE_PROJECT_REF = "abcdefghijklmnopqrst";
     mockRpc.mockReset().mockResolvedValue({ data: true, error: null });
   });
 

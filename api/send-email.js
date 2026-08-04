@@ -7,6 +7,7 @@ const {
   consumeSharedRateLimits,
   requestIp,
   requestPayloadBytes,
+  readServerRuntimeConfig,
 } = require("../server/welcomeflowApiSecurity");
 const { reportServerFailure } = require("../server/safeServerError");
 
@@ -63,6 +64,12 @@ module.exports = async function handler(req, res) {
   }
   if (req.method !== "POST") {
     json(res, 405, { error: "Method not allowed" });
+    return;
+  }
+
+  const serverRuntime = readServerRuntimeConfig("email");
+  if (!serverRuntime.ok) {
+    json(res, 503, { error: serverRuntime.error });
     return;
   }
 
