@@ -176,6 +176,7 @@ const workspacePersistenceEnabled = persistenceMode.cloudEnabled;
 const browserPersistenceEnabled = persistenceMode.browserEnabled;
 const testRuntime = assertTestRuntime(runtimeConfig);
 const ownerUatMode = Boolean(runtimeConfig.ok && runtimeConfig.isUat);
+const browserDemoAccess = Boolean(runtimeConfig.ok && runtimeConfig.browserDemoAccess);
 if (runtimeConfig.ok) console.info("WelcomeFlow runtime", { environment: runtimeConfig.environment, projectRef: runtimeConfig.projectRef });
 const supabase = runtimeConfig.ok && (testRuntime.ok || ownerUatMode) ? getRuntimeSupabaseClient(runtimeConfig) : null;
 let ownerUatWorkspaceVersion = 0;
@@ -2334,6 +2335,7 @@ function LoginPage({ mode, setMode, onEnter, soundEnabled, setSoundEnabled }) {
         <div style={{ width: "min(560px, 100%)", display: "grid", gap: 28 }}>
           <div style={{ border: "1px solid #e6def8", borderRadius: 14, background: "rgba(255,255,255,0.92)", boxShadow: "0 28px 70px rgba(42,24,98,0.10)", padding: compact ? 28 : 46 }}>
             <div style={{ textAlign: "center", marginBottom: 34 }}>
+              <div style={{ marginBottom: 12, color: "#9a3412", fontSize: 12, fontWeight: 950, letterSpacing: "0.06em" }}>LOCAL / TEST ACCESS — NOT PRODUCTION AUTHENTICATION</div>
               <LogoMark size={70} />
               <h2 style={{ margin: "18px 0 8px", fontSize: 38, lineHeight: 1.08, letterSpacing: -1.1 }}>{title}</h2>
               <p style={{ margin: 0, color: "#635b7c", fontSize: 18, fontWeight: 700 }}>{subtitle}</p>
@@ -6011,7 +6013,7 @@ function RecruiterApp() {
     return () => window.clearTimeout(timer);
   }, []);
   const viewportWidth = useWindowWidth();
-  const [isAuthenticated, setIsAuthenticated] = useState(() => acceptanceMode || window.localStorage.getItem("welcomeflow-session") === "active");
+  const [isAuthenticated, setIsAuthenticated] = useState(() => acceptanceMode || ownerUatMode || (browserDemoAccess && window.localStorage.getItem("welcomeflow-session") === "active"));
   const [loginMode, setLoginMode] = useState("signin");
   const [selectedPricingPlanId, setSelectedPricingPlanId] = useState("professional");
   const [pricingBillingCycle, setPricingBillingCycle] = useState("monthly");
@@ -15759,7 +15761,8 @@ function rowifyCandidate(item = {}) {
   }
 
   function enterAppFromLogin() {
-    if (!acceptanceMode) window.localStorage.setItem("welcomeflow-session", "active");
+    if (!browserDemoAccess) return;
+    window.localStorage.setItem("welcomeflow-session", "active");
     setIsAuthenticated(true);
     playUiSound("ding", soundEnabled);
   }

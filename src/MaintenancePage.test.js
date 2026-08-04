@@ -20,3 +20,13 @@ test("enables maintenance mode only for the explicit true flag", () => {
   if (original === undefined) delete process.env.REACT_APP_MAINTENANCE_MODE;
   else process.env.REACT_APP_MAINTENANCE_MODE = original;
 });
+
+test.each([undefined, "", "false", "invalid"])("production remains in maintenance when the client flag is %p", (flag) => {
+  const env = {};
+  if (flag !== undefined) env.REACT_APP_MAINTENANCE_MODE = flag;
+  expect(isMaintenanceModeEnabled({ environment: "production" }, env)).toBe(true);
+});
+
+test("preview does not inherit production maintenance behavior", () => {
+  expect(isMaintenanceModeEnabled({ environment: "preview" }, { REACT_APP_MAINTENANCE_MODE: "false" })).toBe(false);
+});

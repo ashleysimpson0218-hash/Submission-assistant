@@ -47,7 +47,7 @@ const root = ReactDOM.createRoot(document.getElementById('root'));
 const runtimeConfig = readRuntimeConfig();
 const safeRuntimeErrors = runtimeConfig.isUat || process.env.NODE_ENV === 'production';
 
-if (isMaintenanceModeEnabled()) {
+if (isMaintenanceModeEnabled(runtimeConfig)) {
   root.render(
     <React.StrictMode>
       <MaintenancePage />

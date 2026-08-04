@@ -1,7 +1,8 @@
 import React from "react";
 
-export function isMaintenanceModeEnabled() {
-  return process.env.REACT_APP_MAINTENANCE_MODE === "true";
+export function isMaintenanceModeEnabled(runtime = {}, env = process.env) {
+  if (runtime.environment === "production") return true;
+  return String(env.REACT_APP_MAINTENANCE_MODE || "").trim().toLowerCase() === "true";
 }
 
 export default function MaintenancePage() {

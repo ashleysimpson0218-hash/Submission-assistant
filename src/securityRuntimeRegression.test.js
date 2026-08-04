@@ -24,9 +24,14 @@ test("internal booking links require opaque random tokens and do not expose lead
 });
 
 test("acceptance authentication is in-memory and never consumes the persistent login marker", () => {
-  expect(appSource).toContain('useState(() => acceptanceMode || window.localStorage.getItem("welcomeflow-session") === "active")');
-  expect(appSource).toContain('if (!acceptanceMode) window.localStorage.setItem("welcomeflow-session", "active")');
+  expect(appSource).toContain('acceptanceMode || ownerUatMode || (browserDemoAccess && window.localStorage.getItem("welcomeflow-session") === "active")');
+  expect(appSource).toContain('if (!browserDemoAccess) return;');
   expect(appSource).toContain('if (!acceptanceMode) window.localStorage.removeItem("welcomeflow-session")');
+});
+
+test("browser-only login is explicitly isolated from production authentication", () => {
+  expect(appSource).toContain("LOCAL / TEST ACCESS — NOT PRODUCTION AUTHENTICATION");
+  expect(appSource).toContain("const browserDemoAccess = Boolean(runtimeConfig.ok && runtimeConfig.browserDemoAccess)");
 });
 
 test("active application defaults contain no real recipient or personal contact values", () => {

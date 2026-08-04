@@ -2,6 +2,7 @@ const {
   consumeSharedRateLimits,
   opaqueSubject,
   requestIp,
+  readServerRuntimeConfig,
   serviceSupabaseClient,
 } = require("../server/welcomeflowApiSecurity");
 const { reportServerFailure } = require("../server/safeServerError");
@@ -261,6 +262,12 @@ module.exports = async function handler(req, res) {
     return;
   }
 
+  const serverRuntime = readServerRuntimeConfig("booking");
+  if (!serverRuntime.ok) {
+    json(res, 503, { error: serverRuntime.error });
+    return;
+  }
+
   let payload = {};
   if (req.method === "POST") {
     try {
@@ -282,7 +289,7 @@ module.exports = async function handler(req, res) {
     return;
   }
   const configuration = bookingConfiguration();
-  const client = serviceSupabaseClient();
+  const client = serviceSupabaseClient(serverRuntime);
   if (!client || !configuration) {
     json(res, 503, { error: "Cloud booking is not configured safely." });
     return;

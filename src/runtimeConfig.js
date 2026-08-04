@@ -2,6 +2,16 @@ export const PRODUCTION_SUPABASE_PROJECT_REF = "qfpgednixvveelgwfylv";
 export const SYNTHETIC_TEST_SUPABASE_PROJECT_REF = "bjverobaoujhfaylyrzi";
 export const OWNER_UAT_SUPABASE_PROJECT_REF = "zleslkwnbjxknmkqywyv";
 export const DEFAULT_WORKSPACE_ID = "default";
+export const SUPPORTED_RUNTIME_ENVIRONMENTS = Object.freeze([
+  "development",
+  "test",
+  "acceptance",
+  "preview",
+  "uat",
+  "owner-uat",
+  "production",
+]);
+const BROWSER_DEMO_ENVIRONMENTS = new Set(["development", "test", "acceptance", "preview"]);
 
 function firstConfigured(env, reactName, serverName) {
   return String(env[reactName] ?? env[serverName] ?? "").trim();
@@ -90,7 +100,8 @@ export function projectRefFromSupabaseUrl(value = "") {
 export function readRuntimeConfig(env = process.env) {
   const environment = String(env.REACT_APP_ENVIRONMENT || "").trim().toLowerCase();
   const workspace = readWorkspaceRuntimeConfig(env);
-  const isUat = environment === "uat";
+  const isUat = environment === "uat" || environment === "owner-uat";
+  const isProduction = environment === "production";
   const supabaseUrl = String(env.REACT_APP_SUPABASE_URL || "").trim();
   const supabaseAnonKey = String(env.REACT_APP_SUPABASE_ANON_KEY || "").trim();
   const allowedProjectRef = String(env.REACT_APP_ALLOWED_SUPABASE_PROJECT_REF || "").trim().toLowerCase();
@@ -105,10 +116,13 @@ export function readRuntimeConfig(env = process.env) {
   if (missing.length) {
     return { ok: false, error: `Missing required configuration: ${missing.join(", ")}.`, environment, projectRef, allowedProjectRef };
   }
+  if (!SUPPORTED_RUNTIME_ENVIRONMENTS.includes(environment)) {
+    return { ok: false, error: "REACT_APP_ENVIRONMENT is not an approved WelcomeFlow runtime.", environment, projectRef, allowedProjectRef };
+  }
   if (!workspace.ok) {
     return { ...workspace, ok: false, error: workspace.error, environment, projectRef, allowedProjectRef };
   }
-  if (workspace.acceptanceMode && environment !== "test") {
+  if (workspace.acceptanceMode && !["test", "acceptance", "preview"].includes(environment)) {
     return { ...workspace, ok: false, error: "Acceptance mode is available only in the synthetic test environment.", environment, projectRef, allowedProjectRef };
   }
   if (isUat) {
@@ -139,9 +153,30 @@ export function readRuntimeConfig(env = process.env) {
   if (projectRef !== allowedProjectRef) {
     return { ok: false, error: "The configured Supabase URL does not match the explicitly allowed project ref.", environment, projectRef, allowedProjectRef };
   }
-  if (environment === "test" && projectRef === PRODUCTION_SUPABASE_PROJECT_REF) {
-    return { ok: false, error: "Test mode refuses to connect to the production Supabase project.", environment, projectRef, allowedProjectRef };
+  if (!isProduction && projectRef === PRODUCTION_SUPABASE_PROJECT_REF) {
+    return { ok: false, error: "This non-production runtime refuses to connect to the production Supabase project.", environment, projectRef, allowedProjectRef };
+  }
+  if (!isUat && projectRef === OWNER_UAT_SUPABASE_PROJECT_REF) {
+    return { ok: false, error: "Only Owner UAT may connect to the approved Owner UAT Supabase project.", environment, projectRef, allowedProjectRef };
+  }
+  if (isProduction && projectRef !== PRODUCTION_SUPABASE_PROJECT_REF) {
+    return { ok: false, error: "Production requires the explicitly approved production Supabase project.", environment, projectRef, allowedProjectRef };
   }
 
-  return { ok: true, environment, isTest: environment === "test", isUat: false, isReadOnly: false, supabaseUrl, supabaseAnonKey, supabasePublishableKey: supabaseAnonKey, projectRef, allowedProjectRef, ...workspace };
+  return {
+    ok: true,
+    environment,
+    isTest: ["test", "acceptance"].includes(environment),
+    isUat: false,
+    isProduction,
+    browserDemoAccess: BROWSER_DEMO_ENVIRONMENTS.has(environment),
+    productionAuthenticationAvailable: false,
+    isReadOnly: false,
+    supabaseUrl,
+    supabaseAnonKey,
+    supabasePublishableKey: supabaseAnonKey,
+    projectRef,
+    allowedProjectRef,
+    ...workspace,
+  };
 }

@@ -122,3 +122,40 @@ test("acceptance mode is rejected outside test", () => {
   expect(result.ok).toBe(false);
   expect(result.error).toMatch(/only in the synthetic test/);
 });
+
+test.each(["", "prod", "staging-ish", "owner", "TESTING"])("rejects unsupported runtime environment %p", (environment) => {
+  const env = { ...validTestEnv, REACT_APP_ENVIRONMENT: environment };
+  if (!environment) delete env.REACT_APP_ENVIRONMENT;
+  expect(readRuntimeConfig(env)).toMatchObject({ ok: false });
+});
+
+test("production accepts only the production project but never advertises browser demo authentication", () => {
+  const runtime = readRuntimeConfig({
+    ...validTestEnv,
+    REACT_APP_ENVIRONMENT: "production",
+    REACT_APP_SUPABASE_URL: `https://${PRODUCTION_SUPABASE_PROJECT_REF}.supabase.co`,
+    REACT_APP_ALLOWED_SUPABASE_PROJECT_REF: PRODUCTION_SUPABASE_PROJECT_REF,
+  });
+  expect(runtime).toMatchObject({ ok: true, isProduction: true, browserDemoAccess: false, productionAuthenticationAvailable: false });
+});
+
+test("preview refuses production and Owner UAT projects", () => {
+  const production = readRuntimeConfig({
+    ...validTestEnv,
+    REACT_APP_ENVIRONMENT: "preview",
+    REACT_APP_SUPABASE_URL: `https://${PRODUCTION_SUPABASE_PROJECT_REF}.supabase.co`,
+    REACT_APP_ALLOWED_SUPABASE_PROJECT_REF: PRODUCTION_SUPABASE_PROJECT_REF,
+  });
+  const ownerUat = readRuntimeConfig({
+    ...validTestEnv,
+    REACT_APP_ENVIRONMENT: "preview",
+    REACT_APP_SUPABASE_URL: `https://${OWNER_UAT_SUPABASE_PROJECT_REF}.supabase.co`,
+    REACT_APP_ALLOWED_SUPABASE_PROJECT_REF: OWNER_UAT_SUPABASE_PROJECT_REF,
+  });
+  expect(production.ok).toBe(false);
+  expect(ownerUat.ok).toBe(false);
+});
+
+test.each(["uat", "owner-uat"])("preserves the protected Owner UAT runtime for %s", (environment) => {
+  expect(readRuntimeConfig({ ...validUatEnv, REACT_APP_ENVIRONMENT: environment })).toMatchObject({ ok: true, isUat: true, controlledWrites: true });
+});

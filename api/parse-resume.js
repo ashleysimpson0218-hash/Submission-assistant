@@ -4,6 +4,7 @@ const {
   consumeSharedRateLimits,
   requestIp,
   requestPayloadBytes,
+  readServerRuntimeConfig,
 } = require("../server/welcomeflowApiSecurity");
 const { validateResumeFile } = require("../server/resumeFileValidation");
 const { reportServerFailure } = require("../server/safeServerError");
@@ -631,6 +632,8 @@ async function parseWithAffinda({ buffer, filename, mimeType }) {
 module.exports = async function handler(req, res) {
   if (req.method !== "POST") return json(res, 405, { ok: false, error: "Method not allowed" });
   try {
+    const serverRuntime = readServerRuntimeConfig("resume");
+    if (!serverRuntime.ok) return json(res, 503, { ok: false, error: serverRuntime.error });
     if (requestPayloadBytes(req) > MAX_REQUEST_BYTES) return json(res, 413, { ok: false, error: "Resume file is too large for parsing. Maximum is 8MB." });
 
     const preAuthRateLimit = await consumePreAuthenticationRateLimit(req, {
