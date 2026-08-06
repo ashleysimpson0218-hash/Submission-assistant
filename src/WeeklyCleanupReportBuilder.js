@@ -44,7 +44,7 @@ function Checklist({ items, selectedIds, onToggle, emptyText }) {
   </div>;
 }
 
-export default function WeeklyCleanupReportBuilder({ settings = {}, setSettings = () => {}, tracker = [], hasLoaded = false, loadError = "", reportStartDate = "", reportEndDate = "", generatedBy = "", downloadExcelWorkbook = () => {} }) {
+export default function WeeklyCleanupReportBuilder({ settings = {}, setSettings = () => {}, tracker = [], history = [], hasLoaded = false, loadError = "", reportStartDate = "", reportEndDate = "", generatedBy = "", downloadExcelWorkbook = () => {} }) {
   const reporting = useMemo(() => normalizeReportingSettings(settings.reporting), [settings.reporting]);
   const presets = reporting.reportPresets.length ? reporting.reportPresets : createDefaultReportPresets();
   const initialPreset = presets[0];
@@ -109,6 +109,7 @@ export default function WeeklyCleanupReportBuilder({ settings = {}, setSettings 
   function currentReport() {
     return buildWeeklyCleanupReport({
       tracker,
+      history,
       requisitions: settings.requisitions,
       sites: settings.sites,
       contacts: settings.contacts,

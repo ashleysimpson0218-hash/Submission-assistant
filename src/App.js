@@ -88,6 +88,7 @@ import {
   createDefaultReportPresets,
   normalizeFacilityKey,
   normalizeReportingSettings,
+  uniqueExcelSheetNames,
 } from "./weeklyCleanupReporting";
 import {
   DEFAULT_WEEKLY_REPORT_TEMPLATES,
@@ -705,7 +706,8 @@ function excelXmlCell(value, styleId = "", formula = "") {
 
 function downloadExcelWorkbook(name, sheets = []) {
   const safeSheets = Array.isArray(sheets) && sheets.length ? sheets : [{ name: "Report", rows: [] }];
-  const workbook = `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet" xmlns:x="urn:schemas-microsoft-com:office:excel"><Styles><Style ss:ID="Default" ss:Name="Normal"><Alignment ss:Vertical="Top" ss:WrapText="1"/><Font ss:FontName="Arial" ss:Size="10"/></Style><Style ss:ID="Header"><Font ss:FontName="Arial" ss:Size="10" ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#6D28D9" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders></Style><Style ss:ID="Total"><Font ss:FontName="Arial" ss:Size="10" ss:Bold="1"/><Interior ss:Color="#F3EEFE" ss:Pattern="Solid"/></Style></Styles>${safeSheets.map((sheet) => {
+  const uniqueSheetNames = uniqueExcelSheetNames(safeSheets.map((sheet) => sheet.name));
+  const workbook = `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet" xmlns:x="urn:schemas-microsoft-com:office:excel"><Styles><Style ss:ID="Default" ss:Name="Normal"><Alignment ss:Vertical="Top" ss:WrapText="1"/><Font ss:FontName="Arial" ss:Size="10"/></Style><Style ss:ID="Header"><Font ss:FontName="Arial" ss:Size="10" ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#6D28D9" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders></Style><Style ss:ID="Total"><Font ss:FontName="Arial" ss:Size="10" ss:Bold="1"/><Interior ss:Color="#F3EEFE" ss:Pattern="Solid"/></Style></Styles>${safeSheets.map((sheet, sheetIndex) => {
     const rows = Array.isArray(sheet.rows) ? sheet.rows : [];
     const columns = sheet.columns || Array.from(new Set(rows.flatMap((row) => Object.keys(row || {}))));
     const renderedRows = rows.length ? rows : [{ [columns[0] || "Status"]: "No active records" }];
@@ -714,7 +716,7 @@ function downloadExcelWorkbook(name, sheets = []) {
     const totalRow = sheet.totals ? `<Row>${excelXmlCell(sheet.totals.label || "Total", "Total")}${columns.length > 1 ? `${excelXmlCell(sheet.totals.value ?? "", "Total", sheet.totals.formula || "")}${columns.slice(2).map(() => excelXmlCell("", "Total")).join("")}` : ""}</Row>` : "";
     const lastDataRow = renderedRows.length + 1;
     const autoFilter = sheet.autoFilter && columns.length ? `<AutoFilter x:Range="R1C1:R${lastDataRow}C${columns.length}" xmlns="urn:schemas-microsoft-com:office:excel"/>` : "";
-    return `<Worksheet ss:Name="${escapeExcelXml(safeExcelSheetName(sheet.name))}"><Table>${headerRow}${dataRows}${totalRow}</Table>${autoFilter}</Worksheet>`;
+    return `<Worksheet ss:Name="${escapeExcelXml(uniqueSheetNames[sheetIndex])}"><Table>${headerRow}${dataRows}${totalRow}</Table>${autoFilter}</Worksheet>`;
   }).join("")}</Workbook>`;
   downloadTextFile(name || "welcomeflow-report.xls", workbook, "application/vnd.ms-excel");
 }
@@ -19167,7 +19169,8 @@ function rowifyCandidate(item = {}) {
             <WeeklyCleanupReportBuilder
               settings={settings}
               setSettings={setSettings}
-              tracker={safeTrackerRows}
+              tracker={includedReportRows}
+              history={history}
               hasLoaded={hasLoaded}
               loadError={/not ready|blocked|could not load/i.test(cloudStatus || "") ? cloudStatus : ""}
               reportStartDate={reportStartDate}
