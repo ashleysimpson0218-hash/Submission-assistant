@@ -14,10 +14,12 @@ import {
   normalizePreset,
   normalizeReportingSettings,
   reorderSelectedColumn,
+  reportingActionHistory,
   resolveCanonicalFacility,
   resolveReportScope,
   selectAllActiveFacilityIds,
   selectAllVisibleFacilityIds,
+  uniqueExcelSheetNames,
 } from "./weeklyCleanupReporting";
 
 const sites = [
@@ -278,6 +280,25 @@ describe("configurable Weekly Cleanup reporting", () => {
     expect(workbook.find((sheet) => sheet.name === "Detail").columns).toEqual(["Facility ID", "Candidate Name", "Requisition Unique ID"]);
   });
 
+  test("Full Candidate Detail carries candidate source and consolidated action history", () => {
+    const detailedTracker = [{
+      ...tracker[0],
+      candidateSource: "Synthetic Referral",
+      communicationEvents: [{ timestamp: "2026-07-18T12:00:00.000Z", type: "ATS Update", summary: "Status prepared" }],
+      outreachHistory: [{ timestamp: "2026-07-19T12:00:00.000Z", method: "Email sent", status: "Sent" }],
+    }];
+    const workspaceHistory = [{ trackerId: "candidate-1", timestamp: "2026-07-20T12:00:00.000Z", type: "Facility Feedback", detail: "Feedback received" }];
+    const fullColumns = createDefaultReportPresets().find((preset) => preset.id === "full-candidate-detail").selectedColumns;
+    const result = report({ tracker: detailedTracker, history: workspaceHistory, selectedColumnIds: fullColumns });
+    const detail = result.detailRows[0];
+
+    expect(detail["Candidate Source"]).toBe("Synthetic Referral");
+    expect(detail["Action History"]).toContain("ATS Update | Status prepared");
+    expect(detail["Action History"]).toContain("Email sent");
+    expect(detail["Action History"]).toContain("Facility Feedback | Feedback received");
+    expect(reportingActionHistory(detailedTracker[0], workspaceHistory)).toBe(detail["Action History"]);
+  });
+
   test("at least one selected column is required", () => {
     const result = report({ selectedColumnIds: [] });
     expect(result.canExport).toBe(false);
@@ -374,6 +395,21 @@ describe("configurable Weekly Cleanup reporting", () => {
     expect(result.totals).toMatchObject({ candidateRows: 2, uniqueCandidates: 2, selectedFacilities: 4, interviews: 1, highRisk: 1, openings: 3, tentativeStarts: 1 });
   });
 
+  test.each(["Closed", "Unresponsive", "Not Interested"])("%s candidates are excluded from active totals", (status) => {
+    const result = report({ tracker: [{ ...tracker[0], status }] });
+    expect(result.totals.activeCandidates).toBe(0);
+  });
+
+  test("opening totals include only live requisitions", () => {
+    const result = report({
+      requisitions: [
+        requisitions[0],
+        { ...requisitions[1], status: "Closed", numberOfOpenings: 9 },
+      ],
+    });
+    expect(result.totals.openings).toBe(2);
+  });
+
   test("detail sheets include a filter-aware SUBTOTAL formula", () => {
     const workbook = buildWeeklyCleanupWorkbook(report(), { sites, regions: reporting.regions });
     expect(workbook.find((sheet) => sheet.name === "Detail").totals.formula).toBe("=SUBTOTAL(103,R2C1:R3C1)");
@@ -436,6 +472,25 @@ describe("configurable Weekly Cleanup reporting", () => {
     const workbook = buildWeeklyCleanupWorkbook(result, { sites, regions: reporting.regions });
     expect(workbook.map((sheet) => sheet.name)).toEqual(expect.arrayContaining(["Summary", "Detail", "South"]));
     expect(workbook.map((sheet) => sheet.name)).not.toContain("North");
+  });
+
+  test("worksheet names remain unique after sanitization and truncation", () => {
+    const names = uniqueExcelSheetNames([
+      "Facility/A",
+      "Facility:A",
+      "1234567890123456789012345678901-first",
+      "1234567890123456789012345678901-second",
+      "facility a",
+    ]);
+    expect(names).toEqual([
+      "Facility A",
+      "Facility A (2)",
+      "1234567890123456789012345678901",
+      "123456789012345678901234567 (2)",
+      "facility a (3)",
+    ]);
+    expect(new Set(names.map((name) => name.toLowerCase())).size).toBe(names.length);
+    expect(names.every((name) => name.length <= 31)).toBe(true);
   });
 
   test("the reporting engine has no Supabase, API, or communication side effects", () => {

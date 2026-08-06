@@ -708,7 +708,8 @@ export function WeeklyReportingPage(props) {
             <WeeklyCleanupReportBuilder
               settings={settings}
               setSettings={setSettings}
-              tracker={safeTrackerRows}
+              tracker={includedReportRows}
+              history={history}
               hasLoaded={hasLoaded}
               loadError={/not ready|blocked|could not load/i.test(cloudStatus || "") ? cloudStatus : ""}
               reportStartDate={reportStartDate}

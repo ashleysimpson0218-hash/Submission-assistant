@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 
 const appSource = fs.readFileSync(path.join(__dirname, "App.js"), "utf8");
+const weeklyReportingPageSource = fs.readFileSync(path.join(__dirname, "WeeklyReportingPage.js"), "utf8");
 
 test("report downloads use a mobile-safe attached link with delayed cleanup", () => {
   expect(appSource).toMatch(/document\.body\.appendChild\(anchor\)/);
@@ -21,4 +22,16 @@ test("Excel workbook downloads use genuine SpreadsheetML worksheets and trusted 
   expect(appSource).toMatch(/<Worksheet ss:Name=/);
   expect(appSource).toMatch(/ss:Formula=/);
   expect(appSource).toMatch(/<AutoFilter x:Range=/);
+});
+
+test("Weekly Cleanup builder receives only date-filtered and non-excluded report rows", () => {
+  const builderTag = weeklyReportingPageSource.match(/<WeeklyCleanupReportBuilder[\s\S]*?\/>/)?.[0] || "";
+  expect(builderTag).toMatch(/tracker=\{includedReportRows\}/);
+  expect(builderTag).toMatch(/history=\{history\}/);
+  expect(builderTag).not.toMatch(/tracker=\{safeTrackerRows\}/);
+});
+
+test("Excel workbook serialization allocates unique sanitized worksheet names", () => {
+  expect(appSource).toMatch(/uniqueExcelSheetNames\(safeSheets\.map\(\(sheet\) => sheet\.name\)\)/);
+  expect(appSource).toMatch(/uniqueSheetNames\[sheetIndex\]/);
 });

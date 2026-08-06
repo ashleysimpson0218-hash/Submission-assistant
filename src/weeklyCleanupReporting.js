@@ -30,6 +30,7 @@ export const REGIONAL_CONTACT_ROLES = [
 export const REPORT_COLUMNS = [
   { id: "candidateName", label: "Candidate Name", default: true },
   { id: "candidateType", label: "Candidate Type", default: true },
+  { id: "candidateSource", label: "Candidate Source", default: false },
   { id: "facility", label: "Facility", default: true },
   { id: "facilityId", label: "Facility ID", default: true },
   { id: "facilityCode", label: "Facility Code", default: false },
@@ -52,6 +53,7 @@ export const REPORT_COLUMNS = [
   { id: "waitingOn", label: "Waiting On", default: true },
   { id: "candidateNotes", label: "Candidate Notes", default: false },
   { id: "recruiterNotes", label: "Recruiter Notes", default: false },
+  { id: "actionHistory", label: "Action History", default: false },
   { id: "submittedDate", label: "Submitted Date", default: true },
   { id: "daysAging", label: "Days Aging", default: true },
   { id: "interviewDate", label: "Interview Date", default: false },
@@ -82,6 +84,7 @@ export function createDefaultReportPresets() {
 const text = (value) => String(value ?? "").trim();
 export const normalizeFacilityKey = (value) => text(value).toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
 const records = (value) => Array.isArray(value) ? value.filter((item) => item && typeof item === "object") : [];
+const CLOSED_CANDIDATE_STATUSES = new Set(["archived", "closed", "placed", "rejected", "unresponsive", "not interested", "withdrawn", "withdrew"]);
 const uniqueText = (values) => {
   const seen = new Set();
   return (Array.isArray(values) ? values : []).map(text).filter((value) => {
@@ -91,6 +94,68 @@ const uniqueText = (values) => {
     return true;
   });
 };
+
+export function isClosedReportingStatus(status = "") {
+  return CLOSED_CANDIDATE_STATUSES.has(text(status).toLowerCase());
+}
+
+export function isLiveReportingRequisition(requisition = {}) {
+  return text(requisition.status || "Active").toLowerCase() === "active";
+}
+
+function actionHistoryLine(event = {}) {
+  const timestamp = firstDate(event.timestamp, event.createdAt, event.updatedAt, event.date);
+  const action = text(event.type || event.method || event.action || event.subject || event.status);
+  const detail = text(event.messageSummary || event.summary || event.detail || event.note || event.notes || event.body);
+  return [timestamp, action, detail].filter(Boolean).join(" | ");
+}
+
+export function reportingActionHistory(candidate = {}, workspaceHistory = []) {
+  const candidateId = text(candidate.id);
+  const matchingWorkspaceHistory = records(workspaceHistory).filter((event) => {
+    const eventCandidateId = text(event.trackerId || event.candidateId || event.leadId);
+    return candidateId && eventCandidateId === candidateId;
+  });
+  const events = [
+    ...records(candidate.communicationEvents),
+    ...records(candidate.outreachHistory),
+    ...records(candidate.actionHistory),
+    ...records(candidate.statusHistory),
+    ...records(candidate.feedbackHistory),
+    ...records(candidate.atsUpdateHistory),
+    ...matchingWorkspaceHistory,
+  ];
+  const seen = new Set();
+  return events
+    .map(actionHistoryLine)
+    .filter((line) => {
+      const key = line.toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .join("\n");
+}
+
+function sanitizedExcelSheetName(name = "Sheet") {
+  return text(name || "Sheet").replace(/[\\/?*[\]:]/g, " ").slice(0, 31).trim() || "Sheet";
+}
+
+export function uniqueExcelSheetNames(names = []) {
+  const used = new Set();
+  return (Array.isArray(names) ? names : []).map((name) => {
+    const base = sanitizedExcelSheetName(name);
+    let candidate = base;
+    let suffixNumber = 2;
+    while (used.has(candidate.toLowerCase())) {
+      const suffix = ` (${suffixNumber})`;
+      candidate = `${base.slice(0, Math.max(1, 31 - suffix.length)).trim()}${suffix}`;
+      suffixNumber += 1;
+    }
+    used.add(candidate.toLowerCase());
+    return candidate;
+  });
+}
 
 export function normalizeReportingSettings(input = {}) {
   const source = input && typeof input === "object" ? input : {};
@@ -660,7 +725,7 @@ function reportRisk(candidate = {}) {
   return Number(age) >= 7 ? "High" : Number(age) >= 4 ? "Medium" : "Low";
 }
 
-export function buildWeeklyCleanupReport({ tracker = [], requisitions = [], sites = [], contacts = [], reporting = {}, scope = {}, selectedColumnIds = DEFAULT_REPORT_COLUMN_IDS, includeTotals = true, workbookLayout = "Summary + Facility Tabs", generatedAt = new Date(), dataThrough = "", generatedBy = "", reportName = "Weekly Cleanup Report", appliedPreset = "Custom", hydrated = true, loadError = "" } = {}) {
+export function buildWeeklyCleanupReport({ tracker = [], history = [], requisitions = [], sites = [], contacts = [], reporting = {}, scope = {}, selectedColumnIds = DEFAULT_REPORT_COLUMN_IDS, includeTotals = true, workbookLayout = "Summary + Facility Tabs", generatedAt = new Date(), dataThrough = "", generatedBy = "", reportName = "Weekly Cleanup Report", appliedPreset = "Custom", hydrated = true, loadError = "" } = {}) {
   const scopeName = scope.scope || "all-active";
   const selectedColumns = uniqueText(selectedColumnIds).filter((id) => REPORT_COLUMNS.some((column) => column.id === id));
   const errors = [];
@@ -690,6 +755,7 @@ export function buildWeeklyCleanupReport({ tracker = [], requisitions = [], site
     const values = {
       candidateName: text(candidate.candidate || candidate.name || form.fullName) || "Unnamed Candidate",
       candidateType: text(candidate.candidateType || form.candidateType),
+      candidateSource: text(candidate.candidateSource || candidate.source || form.candidateSource || form.source),
       facility: canonicalRecord.facilityName,
       facilityId: canonicalRecord.facilityId,
       facilityCode: facility?.facilityCode || "",
@@ -712,6 +778,7 @@ export function buildWeeklyCleanupReport({ tracker = [], requisitions = [], site
       waitingOn: text(candidate.waitingOn || candidate.owner),
       candidateNotes: text(form.candidateNotes || candidate.candidateNotes),
       recruiterNotes: text(candidate.recruiterNotes || candidate.notes || form.recruiterNotes),
+      actionHistory: reportingActionHistory(candidate, history),
       submittedDate: submitted,
       daysAging: daysAging(submitted, generatedAt),
       interviewDate: firstDate(candidate.interviewDate, candidate.bookingRecord?.date, form.interviewDate),
@@ -740,7 +807,9 @@ export function buildWeeklyCleanupReport({ tracker = [], requisitions = [], site
     if (record.facilityId) return allowed.has(record.facilityId);
     return scopeName === "all-active";
   });
-  const scopedReqs = scopedRequisitionRecords.map((record) => record.source);
+  const scopedReqs = scopedRequisitionRecords
+    .filter((record) => isLiveReportingRequisition(record.source))
+    .map((record) => record.source);
   const eligibilityScope = {
     facilityIds: resolvedScope.facilityIds,
     requisitionIds: scopedRequisitionRecords.map((record) => record.requisitionId).filter(Boolean),
@@ -752,7 +821,7 @@ export function buildWeeklyCleanupReport({ tracker = [], requisitions = [], site
     candidateRows: rows.length,
     uniqueCandidates: seenCandidateIds.size,
     selectedFacilities: resolvedScope.facilityCount,
-    activeCandidates: rows.filter((row) => !/archived|rejected|withdrawn|hired|placed/i.test(row.values.candidateStatus)).length,
+    activeCandidates: rows.filter((row) => !isClosedReportingStatus(row.values.candidateStatus)).length,
     interviews: rows.filter((row) => Boolean(row.values.interviewDate) || /interview/i.test(row.values.candidateStatus)).length,
     offers: rows.filter((row) => Boolean(row.values.offerStatus) || /offer/i.test(row.values.candidateStatus)).length,
     hires: rows.filter((row) => /hired|placed/i.test(row.values.candidateStatus)).length,
