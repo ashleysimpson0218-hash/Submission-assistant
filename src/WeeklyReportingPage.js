@@ -142,7 +142,6 @@ export function WeeklyReportingPage(props) {
     reportTypeOptions,
     reportsTab,
     restoreWeeklyReportRows,
-    safeTrackerRows,
     saveNoOpeningsPolicy,
     saveReportsToHistory,
     selectAllMatchingFacilityReports,

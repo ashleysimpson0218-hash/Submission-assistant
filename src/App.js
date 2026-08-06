@@ -19527,7 +19527,6 @@ function rowifyCandidate(item = {}) {
             reportTypeOptions,
             reportsTab,
             restoreWeeklyReportRows,
-            safeTrackerRows,
             saveNoOpeningsPolicy,
             saveReportsToHistory,
             selectAllMatchingFacilityReports,
