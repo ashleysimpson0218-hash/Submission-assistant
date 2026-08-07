@@ -72,7 +72,7 @@ import {
   updateExistingRequisition,
 } from "./requisitionCommunicationDetails";
 import { WeeklyReportingPage } from "./WeeklyReportingPage";
-import { ReportsHistoryPage } from "./ReportsHistoryPage";
+import { ReportsHistoryPage, readSavedHistoryTarget, savedHistorySearch } from "./ReportsHistoryPage";
 import { normalizeReportsHistoryDestination } from "./reportsHistoryNavigation";
 import {
   buildAudienceReportGroups,
@@ -84,6 +84,7 @@ import {
   readReportReviewTarget,
   reportAudienceDefinition,
   resolveReportReviewTarget,
+  serializeCanonicalReportHistoryRecord,
 } from "./reportContext";
 import { reportingPeriodFor, reportingTimeZone } from "./reportingPeriod";
 import {
@@ -6023,7 +6024,11 @@ function RecruiterApp() {
     () => readReportReviewTarget(window.location.search),
     [],
   );
-  const [activePage, setActivePage] = useState(() => initialReportReviewTarget ? "reports" : "home");
+  const initialSavedHistoryTarget = useMemo(
+    () => readSavedHistoryTarget(window.location.search),
+    [],
+  );
+  const [activePage, setActivePage] = useState(() => initialReportReviewTarget ? "reports" : initialSavedHistoryTarget ? "reporting" : "home");
   const [accountTab, setAccountTab] = useState("profile");
   const [activeSettingsTab, setActiveSettingsTab] = useState("general");
   const [reportsTab, setReportsTabState] = useState(() => initialReportReviewTarget ? "review-reports" : "overview");
@@ -6038,12 +6043,16 @@ function RecruiterApp() {
   useEffect(() => {
     const restoreReportTargetFromLocation = () => {
       const targetId = readReportReviewTarget(window.location.search);
+      const historyTargetId = readSavedHistoryTarget(window.location.search);
       setReportReviewTargetId(targetId);
       reportReviewTargetRestoredRef.current = "";
       reportReviewPreviewRestoredRef.current = "";
       if (targetId) {
         setActivePage("reports");
         setReportsTab("review-reports");
+      } else if (historyTargetId) {
+        setActivePage("reporting");
+        setReportsHubTabState("ready-review");
       } else if (window.history.state?.activePage) {
         setActivePage(window.history.state.activePage);
         if (window.history.state.reportsTab) setReportsTab(window.history.state.reportsTab);
@@ -14044,7 +14053,8 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
 
   const reportHistoryFiltered = useMemo(() => {
     return (reportHistory || []).filter((record) => {
-      if (reportHistoryFilters.facility !== "All" && record.facility !== reportHistoryFilters.facility) return false;
+      const savedFacilityNames = Array.isArray(record.facilityNames) ? record.facilityNames : [record.facility].filter(Boolean);
+      if (reportHistoryFilters.facility !== "All" && !savedFacilityNames.includes(reportHistoryFilters.facility)) return false;
       if (reportHistoryFilters.reportType !== "All" && record.reportType !== reportHistoryFilters.reportType) return false;
       if (reportHistoryFilters.status !== "All" && record.status !== reportHistoryFilters.status) return false;
       if (reportHistoryFilters.audience !== "All" && record.audience !== reportHistoryFilters.audience) return false;
@@ -14757,60 +14767,73 @@ function rowifyCandidate(item = {}) {
     setSelectedRecipientGroup(definition.recipientGroup);
   }
 
+  function canonicalReportTotals(rows = []) {
+    const sourceRows = safeObjectRecords(rows);
+    const requisitions = sourceRows.flatMap((row) => safeObjectRecords(row.activeReqs));
+    const requisitionIds = new Set(requisitions.map((req) => req.id || req.requisitionId).filter(Boolean));
+    const candidates = Array.from(new Map(sourceRows.flatMap((row) => safeObjectRecords(row.candidates)).map((candidate, index) => [candidate.id || candidate.candidateId || `unidentified-${index}`, candidate])).values());
+    return {
+      facilities: new Set(sourceRows.map((row) => row.facilityId || row.id).filter(Boolean)).size,
+      requisitions: requisitionIds.size,
+      openRequisitions: requisitions.length,
+      openings: requisitions.reduce((total, requisition) => total + openingsForReq(requisition), 0),
+      candidates: candidates.length,
+      activeCandidates: candidates.filter((candidate) => ["active", "awaitingFeedback", "risk"].includes(candidateReportStatusGroup(candidate))).length,
+      noOpeningFacilities: sourceRows.filter((row) => row.report === "No Openings" || !safeObjectRecords(row.activeReqs).length).length,
+      riskItems: candidates.filter((candidate) => riskFor(candidate) === "High" || Boolean(stuckReasonFor(candidate))).length,
+    };
+  }
+
+  function canonicalReportContextForRows(rows = [], audience = reportsReviewAudience, options = {}) {
+    const sourceRows = safeObjectRecords(rows);
+    const definition = reportAudienceDefinition(audience);
+    const scope = buildCanonicalReportScope({
+      audience: definition.audience,
+      rows: sourceRows,
+      reportType: options.reportType || definition.reportType,
+      recipient: options.recipient || options.recipientGroup || definition.recipientGroup,
+      recipientGroup: options.recipientGroup || definition.recipientGroup,
+    });
+    const content = selectedAudienceEmailContent(sourceRows, definition.audience);
+    const workbookSheets = definition.audience === "Facility" && scope.includedFacilityIds.length === 1
+      ? facilityWorkbookSheets(facilityReportModel(scope.includedFacilityIds[0]))
+      : buildFacilityScopeWorkbookSheets(scope.includedFacilityIds);
+    return buildCanonicalReportContext({
+      audience: definition.audience,
+      rows: sourceRows,
+      scope,
+      reportStartDate,
+      reportEndDate,
+      content,
+      workbookSheets,
+      canonicalTotals: canonicalReportTotals(sourceRows),
+      generatedAt: options.generatedAt || "",
+    });
+  }
+
   const reportReviewDefinition = reportAudienceDefinition(reportsReviewAudience);
-  const reportReviewScope = buildCanonicalReportScope({
-    audience: reportReviewDefinition.audience,
-    rows: selectedFacilityActionRows,
-    reportType: selectedReportType,
-    recipient: selectedRecipientGroup,
-    recipientGroup: selectedRecipientGroup,
-  });
-  const reportReviewContent = selectedAudienceEmailContent(
+  const reportReviewContext = canonicalReportContextForRows(
     selectedFacilityActionRows,
-    reportReviewScope.audience,
+    reportReviewDefinition.audience,
+    {
+      reportType: selectedReportType,
+      recipient: selectedRecipientGroup,
+      recipientGroup: selectedRecipientGroup,
+      generatedAt: (reportHistory || [])[0]?.generatedDate || "",
+    },
   );
-  const reportReviewWorkbookSheets = reportReviewScope.audience === "Facility"
-    && reportReviewScope.includedFacilityIds.length === 1
-    ? facilityWorkbookSheets(facilityReportModel(
-      reportReviewScope.includedFacilityIds[0],
-    ))
-    : buildFacilityScopeWorkbookSheets(reportReviewScope.includedFacilityIds);
-  const reportReviewContext = buildCanonicalReportContext({
-    audience: reportReviewScope.audience,
-    rows: selectedFacilityActionRows,
-    scope: reportReviewScope,
-    reportStartDate,
-    reportEndDate,
-    content: reportReviewContent,
-    workbookSheets: reportReviewWorkbookSheets,
-    generatedAt: (reportHistory || [])[0]?.generatedDate || "",
-  });
   const reportReviewListRows = buildAudienceReportGroups({
-    audience: reportReviewScope.audience,
+    audience: reportReviewContext.audience,
     rows: selectedFacilityActionRows,
   }).map((group) => {
-    const scope = buildCanonicalReportScope({
-      audience: group.audience,
-      rows: group.rows,
+    const context = canonicalReportContextForRows(group.rows, group.audience, {
       reportType: group.reportType,
       recipientGroup: group.recipientGroup,
+      generatedAt: (reportHistory || [])[0]?.generatedDate || "",
     });
-    const content = selectedAudienceEmailContent(group.rows, group.audience);
-    const workbookSheets = group.audience === "Facility" && group.rows.length === 1
-      ? facilityWorkbookSheets(facilityReportModel(group.rows[0].facilityId || group.rows[0].id || group.rows[0].facility))
-      : buildFacilityScopeWorkbookSheets(scope.includedFacilityIds);
     return {
       ...group,
-      ...buildCanonicalReportContext({
-        audience: group.audience,
-        rows: group.rows,
-        scope,
-        reportStartDate,
-        reportEndDate,
-        content,
-        workbookSheets,
-        generatedAt: (reportHistory || [])[0]?.generatedDate || "",
-      }),
+      ...context,
       sourceRows: group.rows,
     };
   });
@@ -15021,11 +15044,22 @@ function rowifyCandidate(item = {}) {
   }
 
   function downloadHistoricalFacilityReport(record) {
-    const model = facilityReportModel(record.facilityId || record.facility);
-    const row = { facilityId: model.facilityId, id: model.facilityId, activeReqs: model.activeReqs, candidates: model.candidates };
-    if (blockReportAction("canDownloadWorkbook", [row], "Historical workbook regeneration")) return;
-    downloadExcelWorkbook(record.attachmentName || `welcomeflow-report-${todayIso()}.xls`, facilityWorkbookSheets(model));
-    setCopyNotice("Workbook regenerated from current data. Report status was not changed.");
+    const facilityIds = new Set((Array.isArray(record?.facilityIds) && record.facilityIds.length
+      ? record.facilityIds
+      : [record?.facilityId]).filter(Boolean));
+    const rows = facilityReadinessRows.filter((row) => facilityIds.has(row.facilityId || row.id));
+    if (!rows.length) {
+      setCopyNotice("The saved report scope is no longer available for current-data regeneration.");
+      return;
+    }
+    if (blockReportAction("canDownloadWorkbook", rows, "Historical workbook regeneration")) return;
+    const context = canonicalReportContextForRows(rows, record.audience || "Facility", {
+      reportType: record.reportType,
+      recipient: record.recipient,
+      recipientGroup: record.recipientGroup,
+    });
+    downloadExcelWorkbook(`current-data-${context.attachmentName}`, context.workbookSheets);
+    setCopyNotice("Current-data regenerated workbook downloaded. The saved report record was not changed.");
   }
 
   function exportFacilityWorkbooks() {
@@ -15057,33 +15091,26 @@ function rowifyCandidate(item = {}) {
       setCopyNotice("Select at least one facility report before saving report history.");
       return;
     }
-    const nextRecords = sourceRows.map((row) => {
-      const model = facilityReportModel(row.facilityId || row.id || row.facility);
-      const missingContact = model.missingContact;
-      return {
+    const definition = reportAudienceDefinition(reportsReviewAudience);
+    const historyGroups = buildAudienceReportGroups({ audience: definition.audience, rows: sourceRows });
+    const nextRecords = historyGroups.map((group) => {
+      const context = canonicalReportContextForRows(group.rows, group.audience, {
+        reportType: group.reportType,
+        recipientGroup: group.recipientGroup,
+        generatedAt: now,
+      });
+      const missingContact = group.rows.some((row) => facilityReportModel(row.facilityId || row.id || row.facility).missingContact);
+      return serializeCanonicalReportHistoryRecord({
+        context,
         id: makeId("report"),
-        reportWeek: `${reportStartDate} to ${reportEndDate}`,
-        generatedDate: now,
-        facilityId: model.facilityId,
-        facility: model.facility,
-        originalFacilityLabel: model.originalFacilityLabel,
-        regionId: model.regionId,
-        regionName: model.regionName,
-        reportType: selectedReportType,
-        audience: selectedRecipientGroup,
-        recipientGroup: selectedRecipientGroup,
         status: missingContact ? "Blocked, Missing Contact" : status,
-        previewStatus: weeklyReport ? "Previewed" : "Not previewed",
-        sentStatus: status === "Sent" ? "Sent" : "Not sent",
-        attachmentName: `welcomeflow-${safeExcelSheetName(model.facility).replace(/\s+/g, "-").toLowerCase()}-${reportStartDate}.xls`,
+        generatedDate: now,
         generatedBy: settings.general?.recruiterName || "Recruiter",
-        lastUpdated: now,
-        safetyGateStatus: missingContact ? "Missing contact" : row.status || "Ready",
+        previewStatus: generatedReportPreview || weeklyReport ? "Previewed" : "Not previewed",
+        sentStatus: status === "Sent" ? "Sent" : "Not sent",
+        safetyGateStatus: missingContact ? "Missing contact" : group.status || "Ready",
         missingContactWarning: missingContact ? "Missing facility contact" : "",
-        emailSubject: facilityEmailContent(model, row.reportType || selectedReportType).subject,
-        emailBody: facilityEmailContent(model, row.reportType || selectedReportType).body,
-        attachmentTabs: facilityWorkbookSheets(model).map((sheet) => sheet.name).join(", "),
-      };
+      });
     });
     setReportHistory((prev) => [...nextRecords, ...prev].slice(0, 300));
     setCopyNotice(`${nextRecords.length} report record${nextRecords.length === 1 ? "" : "s"} saved to Report History.`);
@@ -15249,7 +15276,8 @@ function rowifyCandidate(item = {}) {
       activePage: route.destination,
       reportsTab: route.step,
     });
-    const nextLocation = `${window.location.pathname}${navigation.search}${window.location.hash}`;
+    const nextSearch = savedHistorySearch(navigation.search, "");
+    const nextLocation = `${window.location.pathname}${nextSearch}${window.location.hash}`;
     const currentState = window.history.state || {};
     if (
       readReportReviewTarget(window.location.search)

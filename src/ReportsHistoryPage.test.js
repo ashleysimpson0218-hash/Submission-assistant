@@ -1,5 +1,14 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { HISTORICAL_REGENERATION_WARNING, ReportsHistoryPage } from "./ReportsHistoryPage";
+import {
+  HISTORICAL_REGENERATION_WARNING,
+  ReportsHistoryPage,
+  readSavedHistoryTarget,
+  savedHistoryReviewContext,
+} from "./ReportsHistoryPage";
+
+afterEach(() => {
+  window.history.replaceState({}, "", "/");
+});
 
 const THEME = {
   blueBg: "#eef2ff",
@@ -102,13 +111,23 @@ function audienceListRow(audience = "Facility", overrides = {}) {
 
 const historyRecord = {
   id: "history-1",
+  reportId: "wf-report-v1|Facility|Facility%20Weekly%20Report|facility-1",
+  reportIds: ["facility-1"],
   reportWeek: "2026-07-20 to 2026-07-24",
+  reportingPeriod: "2026-07-20 to 2026-07-24",
   generatedDate: "2026-07-24T12:00:00.000Z",
+  dataThrough: "2026-07-24",
+  facilityId: "facility-1",
+  facilityIds: ["facility-1"],
   facility: "Synthetic Central Facility",
   reportType: "Facility Weekly Report",
   audience: "Facility",
+  recipient: "Synthetic Facility Contact",
+  recipientGroup: "Facility Contacts",
   status: "Sent",
   attachmentName: "synthetic-central.xlsx",
+  attachmentType: "Facility recruiting workbook",
+  workbookTabs: ["Facility Summary", "Open Requisitions"],
   emailSubject: "Synthetic weekly report",
   emailBody: "Synthetic historical body",
 };
@@ -527,19 +546,110 @@ test("preserves legacy history meanings", () => {
   expect(screen.getByText("Legacy status: Completed")).toBeInTheDocument();
 });
 
-test("warns before historical regeneration and distinguishes saved details from current-data regeneration", () => {
-  const props = baseProps({ reportsHubTab: "sent-history" });
-  render(<ReportsHistoryPage {...props} />);
+test("saved history review overrides the current live context and keeps regeneration explicit", () => {
+  const liveContext = {
+    audience: "Executive",
+    recipientGroup: "C-Suite",
+    subject: "Current executive subject",
+    body: "Current executive body",
+    attachmentName: "current-executive.xls",
+    attachmentType: "Executive recruiting workbook",
+    workbookSheets: [{ name: "Executive Summary" }],
+  };
+  const props = baseProps({ reportsHubTab: "sent-history", reportReviewContext: liveContext });
+  const { rerender } = render(<ReportsHistoryPage {...props} />);
 
   expect(screen.getAllByText(HISTORICAL_REGENERATION_WARNING).length).toBeGreaterThanOrEqual(2);
   fireEvent.click(screen.getByRole("button", { name: "View Saved Report Details" }));
-  expect(props.setWeeklySubject).toHaveBeenCalledWith(historyRecord.emailSubject);
-  expect(props.setWeeklyReport).toHaveBeenCalledWith(historyRecord.emailBody);
   expect(props.setReportsHubTab).toHaveBeenCalledWith("ready-review");
+  expect(readSavedHistoryTarget(window.location.search)).toBe(historyRecord.id);
   expect(props.downloadHistoricalFacilityReport).not.toHaveBeenCalled();
 
-  fireEvent.click(screen.getByRole("button", { name: "Regenerate Workbook Using Current Data" }));
+  rerender(<ReportsHistoryPage {...props} reportsHubTab="ready-review" />);
+  expect(screen.getByLabelText("Saved history review mode")).toHaveTextContent(historyRecord.id);
+  expect(screen.getByLabelText("Report audience metadata")).toHaveTextContent("Facility");
+  expect(screen.getByLabelText("Report recipient")).toHaveTextContent("Synthetic Facility Contact");
+  expect(screen.getByLabelText("Report subject")).toHaveTextContent(historyRecord.emailSubject);
+  expect(screen.getByText(historyRecord.emailBody)).toBeInTheDocument();
+  expect(screen.queryByText("Current executive body")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Attachment name")).toHaveTextContent(historyRecord.attachmentName);
+  expect(screen.getByLabelText("Workbook tabs")).toHaveTextContent("Facility Summary, Open Requisitions");
+  expect(screen.queryByRole("button", { name: "Mark Sent" })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Copy Saved Email Body" }));
+  expect(props.safeCopy).toHaveBeenCalledWith(historyRecord.emailBody);
+  fireEvent.click(screen.getByRole("button", { name: "Download Current-Data Regenerated Workbook" }));
   expect(props.downloadHistoricalFacilityReport).toHaveBeenCalledWith(historyRecord);
+});
+
+test.each(["Facility", "Regional", "Executive"])("reviews the exact saved %s history record", (audience) => {
+  const saved = {
+    ...historyRecord,
+    id: `history-${audience.toLowerCase()}`,
+    audience,
+    recipient: `${audience} recipient`,
+    recipientGroup: `${audience} group`,
+    reportType: `${audience} report`,
+    emailSubject: `${audience} saved subject`,
+    emailBody: `${audience} saved body`,
+    attachmentName: `${audience.toLowerCase()}-saved.xls`,
+    attachmentType: `${audience} workbook`,
+    workbookTabs: [`${audience} Summary`],
+  };
+  window.history.replaceState({}, "", `/?historyReportId=${saved.id}`);
+  render(<ReportsHistoryPage {...baseProps({
+    reportHistory: [saved],
+    reportHistoryFiltered: [saved],
+    reportReviewContext: { audience: "Facility", body: "Live body", workbookSheets: [] },
+  })} />);
+
+  expect(screen.getByLabelText("Saved history review mode")).toHaveTextContent(saved.id);
+  expect(screen.getByLabelText("Report audience metadata")).toHaveTextContent(audience);
+  expect(screen.getByText(`${audience} saved body`)).toBeInTheDocument();
+  expect(screen.getByLabelText("Attachment name")).toHaveTextContent(saved.attachmentName);
+});
+
+test("switches between saved records without mutating either record", () => {
+  const second = { ...historyRecord, id: "history-2", emailSubject: "Second subject", emailBody: "Second body" };
+  const records = [historyRecord, second];
+  const before = JSON.stringify(records);
+  const props = baseProps({ reportsHubTab: "sent-history", reportHistory: records, reportHistoryFiltered: records });
+  const { rerender } = render(<ReportsHistoryPage {...props} />);
+
+  fireEvent.click(screen.getAllByRole("button", { name: "View Saved Report Details" })[1]);
+  rerender(<ReportsHistoryPage {...props} reportsHubTab="ready-review" />);
+  expect(screen.getByText("Second body")).toBeInTheDocument();
+  expect(JSON.stringify(records)).toBe(before);
+});
+
+test("restores saved history from navigation and shows a clear missing-record state", () => {
+  const props = baseProps();
+  const { rerender } = render(<ReportsHistoryPage {...props} />);
+
+  window.history.pushState({}, "", `/?historyReportId=${historyRecord.id}`);
+  fireEvent.popState(window);
+  expect(screen.getByText(historyRecord.emailBody)).toBeInTheDocument();
+
+  window.history.pushState({}, "", "/?historyReportId=missing-history");
+  fireEvent.popState(window);
+  rerender(<ReportsHistoryPage {...props} />);
+  expect(screen.getByRole("alert")).toHaveTextContent("Historical report not found");
+  expect(screen.getByRole("alert")).toHaveTextContent("missing-history");
+  expect(screen.queryByText("Synthetic preview body")).not.toBeInTheDocument();
+});
+
+test("normalizes saved-history review context without changing the source record", () => {
+  const source = { ...historyRecord, workbookTabs: undefined, attachmentTabs: "Summary, Detail" };
+  const before = JSON.stringify(source);
+  expect(savedHistoryReviewContext(source)).toEqual(expect.objectContaining({
+    historyRecordId: historyRecord.id,
+    reportId: historyRecord.reportId,
+    subject: historyRecord.emailSubject,
+    body: historyRecord.emailBody,
+    workbookTabs: ["Summary", "Detail"],
+    includedFacilityIds: ["facility-1"],
+  }));
+  expect(JSON.stringify(source)).toBe(before);
 });
 
 test("Templates & Settings consolidates all six existing settings surfaces without duplicate Report Settings controls", () => {
