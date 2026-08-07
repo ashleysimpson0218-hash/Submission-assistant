@@ -14,6 +14,7 @@ import {
   reportAudienceDefinition,
   reportReviewSearch,
   resolveReportReviewTarget,
+  serializeCanonicalReportHistoryRecord,
 } from "./reportContext";
 
 const rows = [
@@ -83,6 +84,79 @@ test("canonical report context changes body, recipient, report type, and attachm
     "welcomeflow-regional-summary-2026-07-27.xls",
     "welcomeflow-executive-summary-2026-07-27.xls",
   ]);
+});
+
+test.each(["Facility", "Regional", "Executive"])("serializes %s history from the canonical preview context", (audience) => {
+  const scopeRows = rows.map((row, index) => ({
+    ...row,
+    regionId: "region-1",
+    regionName: "Synthetic Region",
+    activeReqs: [{ id: `req-${index + 1}` }],
+    candidates: [{ id: `candidate-${index + 1}` }],
+  }));
+  const context = buildCanonicalReportContext({
+    audience,
+    rows: audience === "Facility" ? [scopeRows[0]] : scopeRows,
+    reportStartDate: "2026-07-27",
+    reportEndDate: "2026-07-28",
+    content: { subject: `${audience} subject`, body: `${audience} body` },
+    workbookSheets: [{ name: `${audience} Summary` }],
+    canonicalTotals: { facilities: audience === "Facility" ? 1 : 2, requisitions: audience === "Facility" ? 1 : 2 },
+    generatedAt: "2026-07-28T12:00:00.000Z",
+  });
+  const record = serializeCanonicalReportHistoryRecord({
+    context,
+    id: `${audience.toLowerCase()}-history`,
+    status: "Sent",
+    generatedBy: "Synthetic Recruiter",
+    sentStatus: "Sent",
+  });
+
+  expect(record).toEqual(expect.objectContaining({
+    id: `${audience.toLowerCase()}-history`,
+    reportId: context.reportId,
+    stableReportId: context.reportId,
+    audience,
+    recipientGroup: context.recipientGroup,
+    reportType: context.reportType,
+    emailSubject: `${audience} subject`,
+    emailBody: `${audience} body`,
+    attachmentName: context.attachmentName,
+    attachmentType: context.attachmentType,
+    workbookTabs: [`${audience} Summary`],
+    reportIds: context.selectedReportIds,
+    facilityIds: context.includedFacilityIds,
+    requisitionIds: context.includedRequisitionIds,
+    candidateIds: context.includedCandidateIds,
+    canonicalTotals: context.canonicalTotals,
+    status: "Sent",
+  }));
+});
+
+test("saved canonical history remains immutable when a later audience context changes", () => {
+  const regionalContext = buildCanonicalReportContext({
+    audience: "Regional",
+    rows,
+    reportStartDate: "2026-07-27",
+    reportEndDate: "2026-07-28",
+    content: { subject: "Regional subject", body: "Regional body" },
+    workbookSheets: [{ name: "Regional Summary" }],
+  });
+  const saved = serializeCanonicalReportHistoryRecord({ context: regionalContext, id: "saved-regional" });
+  const before = JSON.stringify(saved);
+
+  buildCanonicalReportContext({
+    audience: "Executive",
+    rows,
+    reportStartDate: "2026-07-27",
+    reportEndDate: "2026-07-28",
+    content: { subject: "Executive subject", body: "Executive body" },
+    workbookSheets: [{ name: "Executive Summary" }],
+  });
+
+  expect(JSON.stringify(saved)).toBe(before);
+  expect(saved.emailBody).toBe("Regional body");
+  expect(saved.attachmentName).toBe("welcomeflow-regional-summary-2026-07-27.xls");
 });
 
 test("canonical scope preserves one included facility set for report metadata and workbook construction", () => {

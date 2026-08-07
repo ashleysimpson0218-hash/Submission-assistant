@@ -136,12 +136,20 @@ export function buildCanonicalReportScope({
     recipientGroup: text(recipientGroup) || definition.recipientGroup,
     selectedReportIds: unique(selectedRows.map((row) => row?.id || row?.facilityId)),
     includedFacilityIds: unique(selectedRows.map((row) => row?.facilityId || row?.id)),
+    facilityNames: unique(selectedRows.map((row) => row?.facility || row?.facilityName)),
+    originalFacilityLabels: unique(selectedRows.map((row) => row?.originalFacilityLabel)),
     includedRequisitionIds: unique(selectedRows.flatMap((row) => (
       Array.isArray(row?.activeReqs)
         ? row.activeReqs.map((requisition) => requisition?.id || requisition?.requisitionId)
         : []
     ))),
+    includedCandidateIds: unique(selectedRows.flatMap((row) => (
+      Array.isArray(row?.candidates)
+        ? row.candidates.map((candidate) => candidate?.id || candidate?.candidateId)
+        : []
+    ))),
     regionIds: unique(selectedRows.map((row) => row?.regionId)),
+    regionNames: unique(selectedRows.map((row) => row?.regionName)),
   };
 }
 
@@ -236,6 +244,7 @@ export function buildCanonicalReportContext({
   reportEndDate,
   content,
   workbookSheets,
+  canonicalTotals = {},
   generatedAt = "",
 }) {
   const selectedRows = normalizeReportRows(rows, "Canonical report context rows");
@@ -267,6 +276,76 @@ export function buildCanonicalReportContext({
     reportingPeriod: `${reportStartDate || ""} to ${reportEndDate || ""}`,
     generatedAt: text(generatedAt),
     dataThrough: text(reportEndDate),
+    canonicalTotals: { ...canonicalTotals },
+  };
+}
+
+export function serializeCanonicalReportHistoryRecord({
+  context,
+  id,
+  status = "Draft Generated",
+  generatedDate = "",
+  generatedBy = "Recruiter",
+  previewStatus = "Not previewed",
+  sentStatus = "Not sent",
+  safetyGateStatus = "Ready",
+  missingContactWarning = "",
+} = {}) {
+  if (!context || typeof context !== "object" || !text(context.reportId)) {
+    throw new TypeError("Canonical report history requires a stable canonical report context.");
+  }
+  const facilityIds = unique(context.includedFacilityIds);
+  const reportIds = unique(context.selectedReportIds);
+  const requisitionIds = unique(context.includedRequisitionIds);
+  const candidateIds = unique(context.includedCandidateIds);
+  const regionIds = unique(context.regionIds);
+  const facilityNames = unique(context.facilityNames);
+  const regionNames = unique(context.regionNames);
+  const originalFacilityLabels = unique(context.originalFacilityLabels);
+  const workbookTabs = unique(context.workbookTabs);
+  const audience = reportAudienceDefinition(context.audience).audience;
+  const generated = text(generatedDate || context.generatedAt);
+
+  return {
+    id: text(id),
+    reportId: text(context.reportId),
+    stableReportId: text(context.reportId),
+    reportIds,
+    reportWeek: text(context.reportingPeriod),
+    reportingPeriod: text(context.reportingPeriod),
+    generatedDate: generated,
+    generatedAt: generated,
+    dataThrough: text(context.dataThrough),
+    facilityId: facilityIds.length === 1 ? facilityIds[0] : "",
+    facilityIds,
+    facility: facilityNames.join(", ") || (facilityIds.length === 1 ? facilityIds[0] : `${facilityIds.length} facilities`),
+    facilityNames,
+    originalFacilityLabel: originalFacilityLabels.join(", "),
+    originalFacilityLabels,
+    regionId: regionIds.length === 1 ? regionIds[0] : "",
+    regionIds,
+    regionName: regionNames.join(", "),
+    regionNames,
+    requisitionIds,
+    candidateIds,
+    reportType: text(context.reportType),
+    audience,
+    recipient: text(context.recipient),
+    recipientGroup: text(context.recipientGroup),
+    status: text(status) || "Draft Generated",
+    previewStatus: text(previewStatus),
+    sentStatus: text(sentStatus),
+    attachmentName: text(context.attachmentName),
+    attachmentType: text(context.attachmentType),
+    attachmentTabs: workbookTabs.join(", "),
+    workbookTabs,
+    canonicalTotals: { ...(context.canonicalTotals || {}) },
+    generatedBy: text(generatedBy) || "Recruiter",
+    lastUpdated: generated,
+    safetyGateStatus: text(safetyGateStatus),
+    missingContactWarning: text(missingContactWarning),
+    emailSubject: text(context.subject),
+    emailBody: String(context.body ?? ""),
   };
 }
 
