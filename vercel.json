@@ -1,0 +1,11 @@
+{
+  "functions": {
+    "api/parse-resume.js": {
+      "includeFiles": "node_modules/{pdf-parse/dist/pdf-parse/cjs/pdf.worker.mjs,pdfjs-dist/legacy/build/pdf.worker.js}"
+    }
+  },
+  "rewrites": [
+    { "source": "/schedule/:path*", "destination": "/index.html" },
+    { "source": "/book/:path*", "destination": "/index.html" }
+  ]
+}

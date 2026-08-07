@@ -1,0 +1,5 @@
+{
+  "maxPdfPages": 50,
+  "maxArchiveCompressionRatio": 100,
+  "maxArchiveCumulativeCompressionRatio": 80
+}

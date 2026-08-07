@@ -11,3 +11,88 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+
+.wf-settings-panel .wf-card,
+.wf-settings-panel .wf-accordion {
+  border-color: #5b21b6 !important;
+  box-shadow: 0 10px 24px rgba(42, 24, 98, 0.12) !important;
+}
+
+.wf-settings-panel .wf-card {
+  border-width: 2px !important;
+}
+
+.wf-settings-panel .wf-accordion {
+  border-width: 2px !important;
+  border-left: 6px solid #5b21b6 !important;
+}
+
+.wf-settings-panel .wf-accordion .wf-accordion {
+  border-color: #4c1d95 !important;
+  border-left-color: #4c1d95 !important;
+}
+
+.wf-settings-panel .wf-card > div,
+.wf-settings-panel .wf-accordion > div {
+  border-color: #d6c9ff !important;
+}
+
+.wf-settings-panel .wf-card button[style*="border"] {
+  border-color: #bda8ff !important;
+}
+
+.wf-hot-page {
+  font-size: 12px;
+}
+
+.wf-hot-page .wf-card {
+  padding: 10px !important;
+  border-radius: 9px !important;
+  box-shadow: 0 8px 20px rgba(42, 24, 98, 0.07) !important;
+}
+
+.wf-hot-page .wf-card > div:first-child {
+  gap: 8px !important;
+  margin-bottom: 9px !important;
+}
+
+.wf-hot-page .wf-card h2 {
+  font-size: 14px !important;
+  letter-spacing: 0 !important;
+}
+
+.wf-hot-page input,
+.wf-hot-page select,
+.wf-hot-page textarea,
+.wf-hot-page .wf-button,
+.wf-hot-page label {
+  font-size: 11px !important;
+}
+
+.wf-hot-page input,
+.wf-hot-page select {
+  min-height: 32px !important;
+  padding-top: 7px !important;
+  padding-bottom: 7px !important;
+}
+
+.wf-hot-page .wf-button,
+.wf-hot-page label {
+  padding: 7px 10px !important;
+}
+
+.wf-hot-page .wf-accordion {
+  border-radius: 8px !important;
+}
+
+.wf-hot-page .wf-accordion > div:first-child {
+  min-height: 34px !important;
+  padding: 8px 10px !important;
+}
+
+.wf-hot-page .wf-accordion strong,
+.wf-hot-page .wf-accordion span,
+.wf-hot-page .wf-card span,
+.wf-hot-page .wf-card strong {
+  line-height: 1.25;
+}
