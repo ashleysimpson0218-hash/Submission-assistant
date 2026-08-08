@@ -60,6 +60,7 @@ export default function WeeklyCleanupReportBuilder({ settings = {}, setSettings 
   const [workbookLayout, setWorkbookLayout] = useState(initialPreset?.workbookLayout || "Summary + Facility Tabs");
   const [preview, setPreview] = useState(null);
   const [message, setMessage] = useState("");
+  const [expandedIssueCode, setExpandedIssueCode] = useState("");
 
   const activeFacilities = useMemo(() => safeRecords(settings.sites).filter((site) => String(site.status || "Active") === "Active" && site.id).sort((a, b) => String(a.siteName || "").localeCompare(String(b.siteName || ""))), [settings.sites]);
   const visibleFacilities = useMemo(() => {
@@ -130,14 +131,18 @@ export default function WeeklyCleanupReportBuilder({ settings = {}, setSettings 
   function previewReport() {
     const next = currentReport();
     setPreview(next);
-    setMessage(next.canExport ? "Report preview refreshed from the current workspace." : next.errors.join(" "));
+    const finalPreviewReasons = next.eligibility?.reasonsByAction?.canCreateFinalPreview || [];
+    setMessage(next.canCreateFinalPreview
+      ? "Report preview refreshed from the current workspace."
+      : `Diagnostic preview available. Final report preview is blocked by ${finalPreviewReasons.length} issue${finalPreviewReasons.length === 1 ? "" : "s"}.`);
   }
 
   function exportReport() {
     const next = currentReport();
     setPreview(next);
     if (!next.canExport) {
-      setMessage(next.errors.join(" "));
+      const reasons = next.eligibility?.reasonsByAction?.canDownloadWorkbook || [];
+      setMessage(next.errors.join(" ") || `Workbook download is blocked by ${reasons.length} issue${reasons.length === 1 ? "" : "s"}. Review the grouped issues below.`);
       return;
     }
     const sheets = buildWeeklyCleanupWorkbook(next, { sites: settings.sites, regions: reporting.regions });
@@ -147,6 +152,8 @@ export default function WeeklyCleanupReportBuilder({ settings = {}, setSettings 
 
   const scopeError = preview?.errors?.find((error) => /facility, region, or regional contact/i.test(error));
   const selectedLabels = REPORT_COLUMNS.filter((column) => selectedColumnIds.includes(column.id)).sort((a, b) => selectedColumnIds.indexOf(a.id) - selectedColumnIds.indexOf(b.id));
+  const currentEligibility = currentReport();
+  const exportDisabled = !selectedColumnIds.length || !hasLoaded || !currentEligibility.canExport;
 
   return <section aria-label="Weekly Cleanup Report" style={{ display: "grid", gap: 14, border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.panel, padding: 16 }}>
     <div>
@@ -187,15 +194,29 @@ export default function WeeklyCleanupReportBuilder({ settings = {}, setSettings 
       <ActionButton onClick={savePreset}>Save Preset</ActionButton>
       <span style={{ flex: 1 }} />
       <ActionButton onClick={previewReport}>Preview Report</ActionButton>
-      <ActionButton primary disabled={!selectedColumnIds.length || !hasLoaded} onClick={exportReport}>Export Excel</ActionButton>
+      <ActionButton primary disabled={exportDisabled} onClick={exportReport}>Export Excel</ActionButton>
     </div>
 
-    {message ? <div role="status" style={{ color: /paused|select|could not|enter/i.test(message) ? colors.red : colors.purple, fontWeight: 850 }}>{message}</div> : null}
+    {message ? <div role="status" style={{ color: /paused|blocked|select|could not|enter/i.test(message) ? colors.red : colors.purple, fontWeight: 850 }}>{message}</div> : null}
     {scopeError ? <div role="alert" style={{ color: colors.red, fontWeight: 900 }}>Select at least one facility, region, or regional contact.</div> : null}
 
-    {preview ? <div style={{ border: `1px solid ${preview.canExport ? colors.purple : colors.red}`, borderRadius: 8, padding: 13, background: preview.canExport ? colors.purpleLight : "#fff5f5", display: "grid", gap: 10 }}>
-      <div><strong style={{ color: colors.text }}>Report Preview</strong><span style={{ display: "block", color: colors.muted, fontSize: 12, marginTop: 3 }}>Summary only—candidate details remain inside the local workbook.</span></div>
+    {preview ? <div style={{ border: `1px solid ${preview.canCreateFinalPreview ? colors.purple : colors.red}`, borderRadius: 8, padding: 13, background: preview.canCreateFinalPreview ? colors.purpleLight : "#fff5f5", display: "grid", gap: 10 }}>
+      <div><strong style={{ color: colors.text }}>{preview.canCreateFinalPreview ? "Report Preview" : "Diagnostic Preview — Final Output Blocked"}</strong><span style={{ display: "block", color: colors.muted, fontSize: 12, marginTop: 3 }}>Summary only—candidate details remain inside the local workbook.</span></div>
       {preview.errors.length ? <div role="alert" style={{ color: colors.red }}>{preview.errors.join(" ")}</div> : null}
+      {preview.issueGroups?.length ? <div style={{ display: "grid", gap: 7 }} aria-label="Reporting issues">
+        <strong style={{ color: colors.text }}>{preview.eligibility.blockingReasons.length} blockers</strong>
+        {preview.issueGroups.map((group) => <div key={group.code} style={{ border: `1px solid ${group.blocking ? colors.red : colors.border}`, borderRadius: 6, background: colors.panel }}>
+          <button type="button" aria-expanded={expandedIssueCode === group.code} onClick={() => setExpandedIssueCode((current) => current === group.code ? "" : group.code)} style={{ width: "100%", border: 0, background: "transparent", padding: 10, display: "flex", justifyContent: "space-between", gap: 8, color: colors.text, fontWeight: 900, cursor: "pointer", textAlign: "left" }}>
+            <span>{group.label}</span><span>{group.count}</span>
+          </button>
+          {expandedIssueCode === group.code ? <div style={{ display: "grid", gap: 6, padding: "0 10px 10px" }}>{group.issues.map((issue, index) => <div key={`${issue.code}-${issue.identifier || issue.candidateId || issue.requisitionId || issue.facilityId}-${index}`} style={{ borderTop: `1px solid ${colors.border}`, paddingTop: 7, color: colors.muted, fontSize: 12 }}>
+            <strong style={{ color: colors.text }}>{issue.facilityName || issue.originalFacilityLabel || "Unmapped Facility"}</strong>
+            <span style={{ display: "block" }}>{[issue.position, issue.requisitionNumber && `Req ${issue.requisitionNumber}`, issue.missingField].filter(Boolean).join(" · ") || issue.identifier}</span>
+            {issue.originalFacilityLabel ? <span style={{ display: "block" }}>Original label: {issue.originalFacilityLabel}</span> : null}
+            {issue.resolutionAction ? <span style={{ display: "block", fontWeight: 850 }}>Next action: {issue.resolutionAction}</span> : null}
+          </div>)}</div> : null}
+        </div>)}
+      </div> : null}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
         {[["Candidate rows", preview.totals.candidateRows], ["Requisitions", new Set(preview.rows.map((row) => row.values.reqNumber).filter(Boolean)).size], ["Facilities", preview.resolvedScope.facilityCount], ["Unresolved mappings", preview.dataQuality.filter((issue) => /unmapped|ambiguous/i.test(issue.Issue)).length]].map(([label, value]) => <div key={label} style={{ border: `1px solid ${colors.border}`, background: colors.panel, borderRadius: 6, padding: 10 }}><strong style={{ display: "block", color: colors.text, fontSize: 20 }}>{value}</strong><span style={{ color: colors.muted, fontSize: 12 }}>{label}</span></div>)}
       </div>

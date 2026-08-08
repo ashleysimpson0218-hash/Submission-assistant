@@ -32,7 +32,7 @@ const sites = [
 
 const requisitions = [
   { id: "req-1", facilityId: "facility-burruss", siteName: "Burruss CTC", positionTitle: "Registered Nurse", reqNumber: "1001", uniqueIdNumber: "U-1001", employmentType: "Full-time", benefitsEligible: false, weeklyHours: 36, fte: "0.9", shiftPreference: "Day", numberOfOpenings: 2, status: "Active" },
-  { id: "req-2", facilityId: "facility-metro", siteName: "Metro Reentry", positionTitle: "LPN", reqNumber: "1002", uniqueIdNumber: "U-1002", employmentType: "PRN", benefitsEligible: true, workSchedule: "As Needed", numberOfOpenings: 1, status: "Active" },
+  { id: "req-2", facilityId: "facility-metro", siteName: "Metro Reentry", positionTitle: "LPN", reqNumber: "1002", uniqueIdNumber: "U-1002", employmentType: "PRN", benefitsEligible: true, workSchedule: "As Needed", fte: "0.5", shiftPreference: "Variable", numberOfOpenings: 1, status: "Active" },
 ];
 
 const tracker = [
@@ -45,9 +45,10 @@ const contacts = [
   { id: "contact-director", name: "Synthetic Regional Director", contactRole: "Regional Director", regionId: "region-south", assignedFacilityIds: ["facility-burruss", "facility-metro"], status: "Active", active: true },
   { id: "contact-manager", name: "Synthetic Regional Manager", contactRole: "Regional Manager", regionId: "region-south", assignedFacilityIds: ["facility-burruss"], status: "Active", active: true },
 ];
+const reportSites = sites.map((site) => site.id === "facility-east" ? { ...site, aliases: [] } : site);
 
 function report(overrides = {}) {
-  return buildWeeklyCleanupReport({ tracker, requisitions, sites, contacts, reporting, scope: { scope: "all-active" }, selectedColumnIds: DEFAULT_REPORT_COLUMN_IDS, includeTotals: true, workbookLayout: "Summary + Facility Tabs", generatedAt: new Date("2026-07-21T12:00:00.000Z"), hydrated: true, ...overrides });
+  return buildWeeklyCleanupReport({ tracker, requisitions, sites: reportSites, contacts, reporting, scope: { scope: "all-active" }, selectedColumnIds: DEFAULT_REPORT_COLUMN_IDS, includeTotals: true, workbookLayout: "Summary + Facility Tabs", generatedAt: new Date("2026-07-21T12:00:00.000Z"), hydrated: true, ...overrides });
 }
 
 describe("configurable Weekly Cleanup reporting", () => {
@@ -117,22 +118,131 @@ describe("configurable Weekly Cleanup reporting", () => {
     expect(record.originalFacilityLabel).toBe("Shared Alias");
     expect(record.facilityResolutionStatus).toBe("ambiguous");
     expect(model.dataQuality).toEqual(expect.arrayContaining([
-      expect.objectContaining({ recordType: "Candidate", identifier: "candidate-ambiguous", issue: "Ambiguous Facility" }),
+      expect.objectContaining({
+        recordType: "Candidate",
+        identifier: "candidate-ambiguous",
+        candidateName: "Synthetic Ambiguous",
+        candidateId: "candidate-ambiguous",
+        originalFacilityLabel: "Shared Alias",
+        sourceValue: "Shared Alias",
+        competingFacilityIds: ["facility-north", "facility-east"],
+        competingFacilityNames: ["North Center", "East Center"],
+        issue: "Ambiguous Facility",
+        resolutionAction: "Resolve Facility",
+      }),
       expect.objectContaining({ recordType: "Candidate", identifier: "candidate-ambiguous", issue: "Missing Facility ID" }),
     ]));
   });
 
-  test("facility master-data alias collisions are surfaced instead of merged", () => {
+  test("orphan facility alias collisions remain visible as administrative warnings without blocking reports", () => {
     const model = buildCanonicalReportingModel({ tracker: [], requisitions: [], sites, contacts, reporting });
 
     expect(model.dataQuality).toEqual(expect.arrayContaining([
       expect.objectContaining({
         recordType: "Facility",
         identifier: "facility-north, facility-east",
-        issue: "Ambiguous Facility",
+        issue: "Ambiguous alias configuration",
+        code: "WARNING",
+        blocking: false,
+        orphanAlias: true,
       }),
     ]));
+    expect(model.dataQuality.filter((issue) => issue.issue === "Ambiguous Facility")).toHaveLength(0);
     expect(model.facilities.filter((facility) => ["facility-north", "facility-east"].includes(facility.facilityId))).toHaveLength(2);
+  });
+
+  test("ambiguous aliases block final report outputs while diagnostics remain available", () => {
+    const result = report({
+      sites,
+      tracker: [...tracker, {
+        id: "candidate-active-ambiguous",
+        candidate: "Synthetic Ambiguous",
+        site: "Shared Alias",
+        status: "Submitted",
+      }],
+    });
+
+    expect(result.canViewDiagnostics).toBe(true);
+    expect(result.canViewDraftPreview).toBe(true);
+    expect(result.canCreateFinalPreview).toBe(false);
+    expect(result.canGenerateReport).toBe(false);
+    expect(result.canExport).toBe(false);
+    expect(result.canPrepareEmail).toBe(false);
+    expect(result.canMarkReady).toBe(false);
+    expect(buildWeeklyCleanupWorkbook(result, { sites, regions: reporting.regions })).toEqual([]);
+  });
+
+  test("an ambiguous alias outside a selected facility scope does not block that scope", () => {
+    const result = report({
+      sites,
+      scope: { scope: "selected-facilities", selectedFacilityIds: ["facility-burruss"] },
+    });
+
+    expect(result.canCreateFinalPreview).toBe(true);
+    expect(result.canExport).toBe(true);
+  });
+
+  test("missing required FTE and shift include full requisition context and block the affected scope", () => {
+    const affectedRequisitions = [
+      { ...requisitions[0], fte: "", shiftPreference: "" },
+      requisitions[1],
+    ];
+    const result = report({
+      requisitions: affectedRequisitions,
+      scope: { scope: "selected-facilities", selectedFacilityIds: ["facility-burruss"] },
+    });
+    const fte = result.canonicalModel.dataQuality.find((issue) => issue.code === "MISSING_REQUIRED_FTE");
+    const shift = result.canonicalModel.dataQuality.find((issue) => issue.code === "MISSING_REQUIRED_SHIFT");
+
+    expect(fte).toMatchObject({
+      facilityId: "facility-burruss",
+      facilityName: "Burruss Training Center",
+      canonicalFacilityName: "Burruss Training Center",
+      regionName: "South",
+      requisitionId: "req-1",
+      requisitionNumber: "1001",
+      position: "Registered Nurse",
+      currentFte: "",
+      missingField: "FTE",
+      reason: "Required FTE is missing from this active requisition.",
+      resolutionAction: "Add FTE",
+    });
+    expect(shift).toMatchObject({
+      facilityId: "facility-burruss",
+      canonicalFacilityName: "Burruss Training Center",
+      regionName: "South",
+      requisitionId: "req-1",
+      currentShift: "",
+      missingField: "Shift",
+      reason: "Required shift is missing from this active requisition.",
+      resolutionAction: "Add Shift",
+    });
+    expect(result.canCreateFinalPreview).toBe(false);
+    expect(result.canExport).toBe(false);
+    expect(result.issueGroups.find((group) => group.code === "MISSING_REQUIRED_SHIFT").count).toBe(1);
+  });
+
+  test("missing facility contact allows workbook inspection but blocks email preparation and Ready", () => {
+    const result = report({
+      scope: { scope: "selected-facilities", selectedFacilityIds: ["facility-burruss"] },
+    });
+    const contactIssue = result.canonicalModel.dataQuality.find((issue) => issue.code === "MISSING_REQUIRED_CONTACT" && issue.facilityId === "facility-burruss");
+
+    expect(contactIssue).toMatchObject({
+      facilityName: "Burruss Training Center",
+      requisitionId: "req-1",
+      requisitionNumber: "1001",
+      position: "Registered Nurse",
+      regionName: "South",
+      currentContactStatus: "No active facility contact configured",
+      missingField: "Facility recipient",
+      reason: "A facility contact is required before email preparation or Ready status.",
+      resolutionAction: "Add Contact",
+    });
+    expect(result.canCreateFinalPreview).toBe(true);
+    expect(result.canExport).toBe(true);
+    expect(result.canPrepareEmail).toBe(false);
+    expect(result.canMarkReady).toBe(false);
   });
 
   test("duplicate facility source rows with one stable ID produce one canonical facility", () => {
@@ -238,7 +348,7 @@ describe("configurable Weekly Cleanup reporting", () => {
   });
 
   test("ambiguous aliases are flagged and are never guessed", () => {
-    const result = report({ tracker: [{ id: "candidate-x", candidate: "Synthetic Ambiguous", site: "Shared Alias", status: "Submitted" }], requisitions: [] });
+    const result = report({ tracker: [{ id: "candidate-x", candidate: "Synthetic Ambiguous", site: "Shared Alias", status: "Submitted" }], requisitions: [], sites });
     expect(result.rows[0].values.facility).toBe("Unmapped Facility");
     expect(result.dataQuality.some((issue) => issue.Issue === "Ambiguous Facility")).toBe(true);
   });
@@ -321,7 +431,7 @@ describe("configurable Weekly Cleanup reporting", () => {
   });
 
   test("Data Quality includes missing IDs and ambiguous records", () => {
-    const result = report({ tracker: [{ id: "candidate-x", candidate: "Synthetic", site: "Shared Alias", status: "Submitted" }], requisitions: [] });
+    const result = report({ tracker: [{ id: "candidate-x", candidate: "Synthetic", site: "Shared Alias", status: "Submitted" }], requisitions: [], sites });
     expect(result.dataQuality.map((issue) => issue.Issue)).toEqual(expect.arrayContaining(["Ambiguous Facility", "Missing Facility ID", "Missing Requisition ID"]));
   });
 

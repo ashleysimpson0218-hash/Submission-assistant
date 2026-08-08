@@ -6,6 +6,9 @@ const theme = {
   primary2: "#6d28d9",
 };
 
+const timezone = process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
+const isNewYork = timezone === "America/New_York";
+
 function eventAt(hoursFromNow, overrides = {}) {
   const start = new Date(Date.now() + hoursFromNow * 3600000);
   const end = new Date(start.getTime() + 30 * 60000);
@@ -57,4 +60,46 @@ test("filters the Home agenda to interviews and exposes scheduling actions", () 
   expect(screen.queryByText("Candidate Phone Screen")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Schedule Interview" }));
   expect(onAddEvent).toHaveBeenCalled();
+});
+
+test("groups an evening New York interview on the selected local date and the next UTC date under UTC", () => {
+  jest.useFakeTimers();
+  jest.setSystemTime(new Date("2026-07-27T22:44:00.000Z"));
+  const interview = eventAt(2, { id: "interview-midnight", eventType: "Facility Interview", title: "Synthetic Evening Interview" });
+  const sourceBefore = JSON.stringify(interview);
+  render(<HomeCalendarWidget
+    theme={theme}
+    events={[interview]}
+    onAddEvent={jest.fn()}
+    onOpenCalendar={jest.fn()}
+    onOpenEvent={jest.fn()}
+  />);
+  fireEvent.click(screen.getByRole("tab", { name: "Interviews" }));
+
+  expect(Boolean(screen.queryByText("Facility Interview"))).toBe(isNewYork);
+  fireEvent.click(screen.getByRole("button", { name: /T 28/ }));
+  expect(Boolean(screen.queryByText("Facility Interview"))).toBe(!isNewYork);
+  expect(JSON.stringify(interview)).toBe(sourceBefore);
+});
+
+test("invalid event dates fail safely without mutating source events", () => {
+  jest.useFakeTimers();
+  jest.setSystemTime(new Date("2026-07-27T16:00:00.000Z"));
+  const invalidEvent = {
+    id: "invalid-date",
+    eventType: "Facility Interview",
+    title: "Invalid event",
+    startDateTime: "not-a-date",
+    endDateTime: "",
+    recruiterId: "current-recruiter",
+  };
+  const sourceBefore = JSON.stringify(invalidEvent);
+  expect(() => render(<HomeCalendarWidget
+    theme={theme}
+    events={[invalidEvent]}
+    onAddEvent={jest.fn()}
+    onOpenCalendar={jest.fn()}
+    onOpenEvent={jest.fn()}
+  />)).not.toThrow();
+  expect(JSON.stringify(invalidEvent)).toBe(sourceBefore);
 });

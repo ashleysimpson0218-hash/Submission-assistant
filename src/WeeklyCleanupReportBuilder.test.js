@@ -8,7 +8,7 @@ const settings = {
     { id: "facility-3", siteName: "Closed Center", status: "Inactive" },
   ],
   requisitions: [
-    { id: "req-1", reqNumber: "REQ-1", uniqueIdNumber: "UID-1", facilityId: "facility-1", siteName: "Burruss Training Center", positionTitle: "RN" },
+    { id: "req-1", reqNumber: "REQ-1", uniqueIdNumber: "UID-1", facilityId: "facility-1", siteName: "Burruss Training Center", positionTitle: "RN", fte: "1.0", shiftPreference: "Day", status: "Active" },
   ],
   contacts: [
     { id: "contact-1", name: "Synthetic Director", contactRole: "Regional Director", assignedFacilityIds: ["facility-1"], status: "Active" },
@@ -70,8 +70,7 @@ test("workspace hydration and load errors block report generation", () => {
   const { rerender } = render(<WeeklyCleanupReportBuilder settings={settings} tracker={tracker} hasLoaded={false} downloadExcelWorkbook={downloadExcelWorkbook} />);
   expect(screen.getByRole("button", { name: "Export Excel" })).toBeDisabled();
   rerender(<WeeklyCleanupReportBuilder settings={settings} tracker={tracker} hasLoaded loadError="WelcomeFlow could not load the current reporting data." downloadExcelWorkbook={downloadExcelWorkbook} />);
-  fireEvent.click(screen.getByRole("button", { name: "Export Excel" }));
-  expect(screen.getByRole("status")).toHaveTextContent("Export was paused");
+  expect(screen.getByRole("button", { name: "Export Excel" })).toBeDisabled();
   expect(downloadExcelWorkbook).not.toHaveBeenCalled();
 });
 
@@ -81,4 +80,65 @@ test("regional contact scope reports only assigned canonical facilities", () => 
   fireEvent.click(screen.getByRole("checkbox", { name: /Synthetic Director/ }));
   fireEvent.click(screen.getByRole("button", { name: "Preview Report" }));
   expect(screen.getByText(/Regional Manager or Director · 1 facilities/)).toBeInTheDocument();
+});
+
+test("ambiguous aliases leave diagnostic preview available while disabling workbook export", () => {
+  const ambiguousSettings = {
+    ...settings,
+    sites: [
+      ...settings.sites,
+      { id: "facility-4", siteName: "East Center", aliases: ["Shared Alias"], status: "Active" },
+      { id: "facility-5", siteName: "West Center", aliases: ["Shared Alias"], status: "Active" },
+    ],
+  };
+  const ambiguousTracker = [
+    ...tracker,
+    {
+      id: "candidate-ambiguous",
+      name: "Synthetic Ambiguous Candidate",
+      facility: "Shared Alias",
+      status: "Active",
+      nextAction: "Resolve facility",
+    },
+  ];
+  const { downloadExcelWorkbook } = renderBuilder({ settings: ambiguousSettings, tracker: ambiguousTracker });
+
+  expect(screen.getByRole("button", { name: "Export Excel" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Preview Report" }));
+  expect(screen.getByText("Diagnostic Preview — Final Output Blocked")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Ambiguous Facility/ })).toBeInTheDocument();
+  expect(downloadExcelWorkbook).not.toHaveBeenCalled();
+});
+
+test("missing contact does not prevent a local workbook download", () => {
+  const { downloadExcelWorkbook } = renderBuilder();
+
+  expect(screen.getByRole("button", { name: "Export Excel" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Export Excel" }));
+  expect(downloadExcelWorkbook).toHaveBeenCalledTimes(1);
+});
+
+test("grouped issues keep missing shift discoverable after many earlier blockers", () => {
+  const manyIssuesSettings = {
+    ...settings,
+    requisitions: Array.from({ length: 10 }, (_, index) => ({
+      id: `req-${index + 1}`,
+      reqNumber: `REQ-${index + 1}`,
+      uniqueIdNumber: `UID-${index + 1}`,
+      facilityId: "facility-1",
+      siteName: "Burruss Training Center",
+      positionTitle: `Synthetic Role ${index + 1}`,
+      fte: "",
+      shiftPreference: index === 9 ? "" : "Day",
+      status: "Active",
+    })),
+  };
+  renderBuilder({ settings: manyIssuesSettings });
+
+  fireEvent.click(screen.getByRole("button", { name: "Preview Report" }));
+  const shiftGroup = screen.getByRole("button", { name: /Missing shift/ });
+  expect(shiftGroup).toHaveTextContent("1");
+  fireEvent.click(shiftGroup);
+  expect(screen.getByText(/Synthetic Role 10/)).toBeInTheDocument();
+  expect(screen.getByText(/Next action: Add Shift/)).toBeInTheDocument();
 });

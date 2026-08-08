@@ -71,7 +71,29 @@ import {
   requisitionDraftChanges,
   updateExistingRequisition,
 } from "./requisitionCommunicationDetails";
-import WeeklyCleanupReportBuilder from "./WeeklyCleanupReportBuilder";
+import { WeeklyReportingPage } from "./WeeklyReportingPage";
+import { ReportsHistoryPage, readSavedHistoryTarget, savedHistorySearch } from "./ReportsHistoryPage";
+import { normalizeReportsHistoryDestination } from "./reportsHistoryNavigation";
+import {
+  buildAudienceReportGroups,
+  buildReportingNavigation,
+  buildReportReviewNavigation,
+  buildCanonicalReportScope,
+  buildCanonicalReportContext,
+  policyRowsForReportAction as resolvePolicyRowsForReportAction,
+  readReportReviewTarget,
+  reportAudienceDefinition,
+  resolveReportReviewTarget,
+  serializeCanonicalReportHistoryRecord,
+} from "./reportContext";
+import { reportingPeriodFor, reportingTimeZone } from "./reportingPeriod";
+import {
+  createWeeklyReviewSessionReset,
+  confirmWeeklyReviewRestart,
+  normalizeWeeklyReportingStep,
+  resolveReportingNavigation,
+  selectWeeklyReportingPrimaryAction,
+} from "./weeklyReportingWorkflow";
 import { RecruiterWorkspacePage } from "./RecruiterWorkspacePage";
 import { applyWorkspaceTaskAction } from "./recruiterWorkspaceActions";
 import { InternalCalendarPage } from "./InternalCalendarPage";
@@ -90,6 +112,36 @@ import {
   normalizeReportingSettings,
   uniqueExcelSheetNames,
 } from "./weeklyCleanupReporting";
+import {
+  createMissingContactReportingIssue,
+  createReportingIssue,
+  deriveReportingActionState,
+  groupReportingIssues,
+  reportingActionEligibility,
+  reportStatusCountsAsComplete,
+} from "./weeklyReportingEligibility";
+import {
+  DEFAULT_FACILITY_READINESS_FILTERS,
+  buildReportingCorrectionRoute,
+  facilityReadinessCounts,
+  facilitySelectionSummary,
+  filterFacilityReadinessRows,
+  selectFacilityIds,
+  withFacilityReadiness,
+} from "./facilityReadinessNavigation";
+import {
+  applyNoOpeningOutcome,
+  clearWeeklyNoOpeningDecisions,
+  deriveNoOpeningFacilityOutcome,
+  deriveNoOpeningsPolicy,
+  hasStandardNoOpeningsTemplate,
+  noOpeningReportingSummary,
+  reportActionEligibleRows,
+  settingsWithNoOpeningsPolicy,
+  undoWeeklyNoOpeningDecision,
+  unresolvedOpeningRiskFacilityIds,
+  updateWeeklyNoOpeningDecision,
+} from "./noOpeningFacilityPolicy";
 import {
   DEFAULT_WEEKLY_REPORT_TEMPLATES,
   WEEKLY_REPORT_TEMPLATE_KEYS,
@@ -1678,6 +1730,7 @@ const DEFAULT_SETTINGS = {
     signOffLine: "",
     includeSignOffNameInEmails: true,
     includeSignatureLineInEmails: true,
+    timeZone: "(UTC-05:00) Eastern Time (US & Canada)",
   },
   options: {
     roleTypes: ROLE_TYPES,
@@ -4000,9 +4053,11 @@ function tentativeStartIsCurrent(item = {}, today = todayIso()) {
   return true;
 }
 
-function openingsForReq(req) {
-  const value = Number(req?.numberOfOpenings || req?.openings || req?.openingCount || 1);
-  return Number.isFinite(value) && value > 0 ? value : 1;
+export function openingsForReq(req) {
+  const raw = req?.numberOfOpenings ?? req?.openings ?? req?.openingCount;
+  if (raw === undefined || raw === null || raw === "") return 1;
+  const value = Number(raw);
+  return Number.isFinite(value) ? Math.max(0, value) : 1;
 }
 
 function candidateMatchesRequisition(item = {}, req = {}) {
@@ -5965,11 +6020,60 @@ function RecruiterApp() {
   const [loginMode, setLoginMode] = useState("signin");
   const [selectedPricingPlanId, setSelectedPricingPlanId] = useState("professional");
   const [pricingBillingCycle, setPricingBillingCycle] = useState("monthly");
-  const [activePage, setActivePage] = useState("home");
+  const initialReportReviewTarget = useMemo(
+    () => readReportReviewTarget(window.location.search),
+    [],
+  );
+  const initialSavedHistoryTarget = useMemo(
+    () => readSavedHistoryTarget(window.location.search),
+    [],
+  );
+  const [activePage, setActivePage] = useState(() => initialReportReviewTarget ? "reports" : initialSavedHistoryTarget ? "reporting" : "home");
   const [accountTab, setAccountTab] = useState("profile");
   const [activeSettingsTab, setActiveSettingsTab] = useState("general");
-  const [reportsTab, setReportsTab] = useState("metrics");
-  const [reportsHubTab, setReportsHubTab] = useState("preview");
+  const [reportsTab, setReportsTabState] = useState(() => initialReportReviewTarget ? "review-reports" : "overview");
+  const setReportsTab = useCallback((value) => {
+    setReportsTabState((current) => normalizeWeeklyReportingStep(typeof value === "function" ? value(current) : value));
+  }, []);
+  const [reportsHubTab, setReportsHubTabState] = useState("ready-review");
+  const [reportsReviewAudience, setReportsReviewAudience] = useState("Facility");
+  const [reportReviewTargetId, setReportReviewTargetId] = useState(initialReportReviewTarget);
+  const reportReviewTargetRestoredRef = useRef("");
+  const reportReviewPreviewRestoredRef = useRef("");
+  useEffect(() => {
+    const restoreReportTargetFromLocation = () => {
+      const targetId = readReportReviewTarget(window.location.search);
+      const historyTargetId = readSavedHistoryTarget(window.location.search);
+      setReportReviewTargetId(targetId);
+      reportReviewTargetRestoredRef.current = "";
+      reportReviewPreviewRestoredRef.current = "";
+      if (targetId) {
+        setActivePage("reports");
+        setReportsTab("review-reports");
+      } else if (historyTargetId) {
+        setActivePage("reporting");
+        setReportsHubTabState("ready-review");
+      } else if (window.history.state?.activePage) {
+        setActivePage(window.history.state.activePage);
+        if (window.history.state.reportsTab) setReportsTab(window.history.state.reportsTab);
+      }
+    };
+    window.addEventListener("popstate", restoreReportTargetFromLocation);
+    return () => window.removeEventListener("popstate", restoreReportTargetFromLocation);
+  }, [setReportsTab]);
+  const [reportHistoryStatusView, setReportHistoryStatusView] = useState("All");
+  const setReportsHubTab = useCallback((value) => {
+    const normalized = normalizeReportsHistoryDestination(value);
+    setReportsHubTabState(normalized.destination);
+    if (normalized.audience) {
+      const definition = reportAudienceDefinition(normalized.audience);
+      setReportsReviewAudience(definition.audience);
+      setSelectedReportType(definition.reportType);
+      setSelectedRecipientGroup(definition.recipientGroup);
+    }
+    if (normalized.historyFilter) setReportHistoryStatusView(normalized.historyFilter);
+  }, []);
+  const [expandedReportIssueCode, setExpandedReportIssueCode] = useState("");
   const [automationTab, setAutomationTab] = useState("report");
   const [candidateManagementTab, setCandidateManagementTab] = useState("connect");
   const [candidateManagementSearch, setCandidateManagementSearch] = useState("");
@@ -6018,14 +6122,12 @@ function RecruiterApp() {
   const [weeklySubject, setWeeklySubject] = useState("Weekly Submission Summary");
   const [atsCleanupFilter, setAtsCleanupFilter] = useState("All");
   const [atsCleanupSearch, setAtsCleanupSearch] = useState("");
-  const [reportStartDate, setReportStartDate] = useState(() => {
-    const date = new Date();
-    const day = date.getDay();
-    const mondayOffset = date.getDate() - day + (day === 0 ? -6 : 1);
-    const monday = new Date(date.setDate(mondayOffset));
-    return monday.toISOString().slice(0, 10);
-  });
-  const [reportEndDate, setReportEndDate] = useState(todayIso());
+  const initialReportingPeriod = useMemo(
+    () => reportingPeriodFor(new Date(), reportingTimeZone(DEFAULT_SETTINGS.general.timeZone)),
+    [],
+  );
+  const [reportStartDate, setReportStartDate] = useState(initialReportingPeriod.startDate);
+  const [reportEndDate, setReportEndDate] = useState(initialReportingPeriod.endDate);
   const [activeReportSection, setActiveReportSection] = useState("submitted");
   const [excludedReportIds, setExcludedReportIds] = useState([]);
   const [selectedFacility, setSelectedFacility] = useState("All Facilities");
@@ -6033,6 +6135,11 @@ function RecruiterApp() {
   const [selectedRecipientGroup, setSelectedRecipientGroup] = useState("Facility Contacts");
   const [selectedStatusFilter, setSelectedStatusFilter] = useState("All");
   const [selectedFacilityReports, setSelectedFacilityReports] = useState([]);
+  const [facilityReadinessFilters, setFacilityReadinessFilters] = useState(() => ({ ...DEFAULT_FACILITY_READINESS_FILTERS }));
+  const [facilityReadinessVisibleLimit, setFacilityReadinessVisibleLimit] = useState(20);
+  const [reportCorrectionTarget, setReportCorrectionTarget] = useState(null);
+  const [noOpeningsPolicyDraft, setNoOpeningsPolicyDraft] = useState("");
+  const [noOpeningWeeklyDecisions, setNoOpeningWeeklyDecisions] = useState({});
   const [completedFacilityReports, setCompletedFacilityReports] = useState({});
   const [generatedReportPreview, setGeneratedReportPreview] = useState("");
   const [reportHistory, setReportHistory] = useState([]);
@@ -6095,6 +6202,7 @@ function RecruiterApp() {
   const [selectedCandidateOutreachId, setSelectedCandidateOutreachId] = useState("email-candidateWarmth");
   const [selectedCandidateOutreachCategory, setSelectedCandidateOutreachCategory] = useState("Candidate Email");
   const [hasLoaded, setHasLoaded] = useState(false);
+  const reportingPeriodInitializedForWorkspace = useRef(false);
   const [cloudStatus, setCloudStatus] = useState("Connecting to cloud storage...");
   const [acceptanceVerified, setAcceptanceVerified] = useState(false);
   const [acceptanceVerifying, setAcceptanceVerifying] = useState(false);
@@ -6546,6 +6654,17 @@ function RecruiterApp() {
   useEffect(() => { if (hasLoaded && browserPersistenceEnabled) saveStoredValue(HOT_LEAD_BULK_DRAFTS_KEY, hotLeadBulkDrafts); }, [hotLeadBulkDrafts, hasLoaded]);
   useEffect(() => { if (hasLoaded && browserPersistenceEnabled) saveStoredValue(HOT_LEAD_WORKING_REQ_KEY, hotLeadWorkingReqId); }, [hotLeadWorkingReqId, hasLoaded]);
   useEffect(() => { if (hasLoaded && browserPersistenceEnabled) saveStoredValue(REPORT_HISTORY_KEY, reportHistory); }, [reportHistory, hasLoaded]);
+  useEffect(() => {
+    if (!hasLoaded || reportingPeriodInitializedForWorkspace.current) return;
+    reportingPeriodInitializedForWorkspace.current = true;
+    const period = reportingPeriodFor(
+      new Date(),
+      reportingTimeZone(settings.general?.timeZone || DEFAULT_SETTINGS.general.timeZone),
+    );
+    setReportStartDate(period.startDate);
+    setReportEndDate(period.endDate);
+  }, [hasLoaded, settings.general?.timeZone]);
+
   useEffect(() => {
     if (!hasLoaded || !workspacePersistenceEnabled) return;
     setTracker((prev) => {
@@ -13624,17 +13743,41 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
   }
 
   function clearAndRegenerateWeeklyReports() {
-    setCompletedFacilityReports({});
-    setSelectedFacilityReports([]);
-    setExcludedReportIds([]);
-    setGeneratedReportPreview("");
-    setWeeklyReport("");
-    setWeeklySubject("Weekly Active Candidate Report");
-    setActiveReportSection("submitted");
+    const reset = createWeeklyReviewSessionReset();
+    setCompletedFacilityReports(reset.completedFacilityReports);
+    setNoOpeningWeeklyDecisions(clearWeeklyNoOpeningDecisions(reset.noOpeningWeeklyDecisions));
+    setSelectedFacilityReports(reset.selectedFacilityReports);
+    setExcludedReportIds(reset.excludedReportIds);
+    setGeneratedReportPreview(reset.generatedReportPreview);
+    setWeeklyReport(reset.weeklyReport);
+    setWeeklySubject(reset.weeklySubject);
+    setActiveReportSection(reset.activeReportSection);
+    setReportsTab(reset.reportsTab);
     setCopyNotice("Weekly report selections and facility completion were cleared. Regenerate from the current data when ready.");
   }
 
+  function restartWeeklyReview() {
+    confirmWeeklyReviewRestart((message) => window.confirm(message), clearAndRegenerateWeeklyReports);
+  }
+
+  function saveNoOpeningsPolicy() {
+    setSettings((current) => settingsWithNoOpeningsPolicy(current, noOpeningsPolicySelection));
+    setNoOpeningsPolicyDraft("");
+    setCopyNotice("No-opening facility policy saved. Existing settings and report history were not rewritten.");
+  }
+
+  function setWeeklyNoOpeningDecision(facilityId, decision) {
+    setNoOpeningWeeklyDecisions((current) => updateWeeklyNoOpeningDecision(current, facilityId, decision));
+    setCopyNotice("This no-opening choice applies to the current session only and will reset on reload.");
+  }
+
+  function undoNoOpeningWeeklyDecision(facilityId) {
+    setNoOpeningWeeklyDecisions((current) => undoWeeklyNoOpeningDecision(current, facilityId));
+    setCopyNotice("Weekly no-opening choice removed. The facility needs review again.");
+  }
+
   function generateWeeklyReport() {
+    if (blockReportAction("canGenerateReport", selectedFacilityActionRows, "Weekly report generation")) return;
     const weeklyRows = includedReportRows;
     const activeRows = weeklyRows.filter((item) => !isClosedStatus(item.status) && !item.archived);
     const hiredRows = weeklyRows.filter((item) => item.status === "Hired" || item.status === "Placed" || item.archiveOutcome === "Hired");
@@ -13806,6 +13949,9 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
   ];
 
   const reportAutomation = settings.options?.reportAutomation || {};
+  const noOpeningsPolicy = deriveNoOpeningsPolicy(settings);
+  const noOpeningsPolicySelection = noOpeningsPolicyDraft || noOpeningsPolicy;
+  const standardNoOpeningsTemplateAvailable = hasStandardNoOpeningsTemplate(settings);
   const reportAutomationEnabled = Boolean(reportAutomation.enabled);
   const reportAutomationDay = reportAutomation.day || "Friday";
   const reportAutomationTime = reportAutomation.time || "2:00 PM";
@@ -13829,12 +13975,13 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
   );
 
   const facilityReportQueue = useMemo(() => {
-    const completedStatuses = new Set(["Sent", "Copied", "Exported", "Scheduled", "Manually Completed"]);
     return reportFacilityRecords.map((facilityRecord) => {
       const facilityId = facilityRecord.facilityId;
       const facility = facilityRecord.facilityName;
-      const facilityReqs = canonicalReportingModel.requisitions
-        .filter((record) => record.facilityId === facilityId && isLiveRequisition(record.source))
+      const facilityRequisitionRecords = canonicalReportingModel.requisitions
+        .filter((record) => record.facilityId === facilityId);
+      const facilityReqs = facilityRequisitionRecords
+        .filter((record) => isLiveRequisition(record.source) && openingsForReq(record.source) > 0)
         .map((record) => record.reportingItem);
       const facilityRows = includedReportRows.filter((item) => item.facilityId === facilityId);
       const site = canonicalReportingModel.facilityIndex.byId.get(facilityId);
@@ -13860,6 +14007,8 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
         facilityId,
         facility,
         originalFacilityLabel: facilityRecord.siteName,
+        aliases: site?.aliases || [],
+        facilityCode: site?.facilityCode || "",
         regionId: facilityRecord.regionId || "",
         regionName: facilityRecord.regionName || "",
         report: facilityReqs.length ? "Weekly" : "No Openings",
@@ -13867,12 +14016,16 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
         recipientGroup: stored?.recipientGroup || "Facility Contacts",
         status,
         lastAction,
-        action: completedStatuses.has(status) ? "View" : status === "Missing Contact" ? "Fix" : status === "Needs Review" ? "Review" : "Preview",
+        action: reportStatusCountsAsComplete(status) ? "View" : status === "Missing Contact" ? "Fix" : status === "Needs Review" ? "Review" : "Preview",
         activeReqs: facilityReqs,
         candidates: facilityRows,
         missingContact,
         highRisk,
-        complete: completedStatuses.has(status),
+        complete: reportStatusCountsAsComplete(status),
+        canonicalResolutionComplete: Boolean(facilityId && site),
+        requisitionStatusReliable: facilityRequisitionRecords.every((record) => (
+          isLiveRequisition(record.source) || isArchiveRequisitionStatus(record.source?.status)
+        )),
       };
     });
   }, [reportFacilityRecords, canonicalReportingModel.requisitions, canonicalReportingModel.facilityIndex, includedReportRows, completedFacilityReports, preventMissingContactSend, flagHighRiskForReview, reportAutomationEnabled, reportAutomationDay, reportAutomationTime]);
@@ -13894,25 +14047,14 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
 
   const selectedFacilityReportRows = useMemo(() => {
     const selected = new Set(selectedFacilityReports);
-    const rows = selected.size ? facilityReportQueueFiltered.filter((row) => selected.has(row.id) || selected.has(row.facility)) : facilityReportQueueFiltered;
-    return rows.length ? rows : facilityReportQueueFiltered;
-  }, [selectedFacilityReports, facilityReportQueueFiltered]);
-
-  const reportCompletionSummary = useMemo(() => {
-    const done = facilityReportQueue.filter((row) => ["Sent", "Copied", "Exported", "Scheduled", "Manually Completed"].includes(row.status)).length;
-    return {
-      total: facilityReportQueue.length,
-      done,
-      remaining: Math.max(0, facilityReportQueue.length - done),
-      scheduled: facilityReportQueue.filter((row) => row.status === "Scheduled").length,
-      review: facilityReportQueue.filter((row) => row.status === "Needs Review").length,
-      missing: facilityReportQueue.filter((row) => row.status === "Missing Contact").length,
-    };
-  }, [facilityReportQueue]);
+    if (!selected.size) return [];
+    return facilityReportQueue.filter((row) => selected.has(row.id) || selected.has(row.facility));
+  }, [selectedFacilityReports, facilityReportQueue]);
 
   const reportHistoryFiltered = useMemo(() => {
     return (reportHistory || []).filter((record) => {
-      if (reportHistoryFilters.facility !== "All" && record.facility !== reportHistoryFilters.facility) return false;
+      const savedFacilityNames = Array.isArray(record.facilityNames) ? record.facilityNames : [record.facility].filter(Boolean);
+      if (reportHistoryFilters.facility !== "All" && !savedFacilityNames.includes(reportHistoryFilters.facility)) return false;
       if (reportHistoryFilters.reportType !== "All" && record.reportType !== reportHistoryFilters.reportType) return false;
       if (reportHistoryFilters.status !== "All" && record.status !== reportHistoryFilters.status) return false;
       if (reportHistoryFilters.audience !== "All" && record.audience !== reportHistoryFilters.audience) return false;
@@ -13924,36 +14066,192 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
   }, [reportHistory, reportHistoryFilters]);
 
   const reportValidationIssues = useMemo(() => {
-    const issues = canonicalReportingModel.dataQuality.map((issue) => ({
+    const issues = canonicalReportingModel.dataQuality.map((issue) => createReportingIssue({
+      ...issue,
       type: issue.issue,
-      detail: [issue.originalFacilityLabel, issue.identifier].filter(Boolean).join(" | "),
-      recordType: issue.recordType,
-      facilityId: "",
-      requisitionId: issue.recordType === "Requisition" ? issue.identifier : "",
+      detail: [issue.facilityName || issue.originalFacilityLabel, issue.position, issue.requisitionNumber && `Req ${issue.requisitionNumber}`, issue.missingField].filter(Boolean).join(" | ") || issue.identifier,
       source: "Canonical reporting data quality",
-      blocking: ["Ambiguous Facility", "Unmapped Facility", "Missing Facility ID", "Missing Requisition ID", "Ambiguous Requisition"].includes(issue.issue),
     }));
-    facilityReportQueue.forEach((row) => {
-      if (row.missingContact) issues.push({ type: "Missing facility contact", detail: row.facility, facilityId: row.facilityId, source: "Facility", blocking: true });
-    });
-    canonicalReportingModel.requisitions.forEach((record) => {
-      const req = record.source;
-      if (!isLiveRequisition(req)) return;
-      const detail = `${record.facilityName || "Unmapped Facility"} | ${record.requisitionNumber || "No req"} | ${req.positionTitle || "No position"}`;
-      if (!req.reqNumber) issues.push({ type: "Missing requisition number", detail, facilityId: record.facilityId, requisitionId: record.requisitionId, source: "Requisition", blocking: true });
-      if (!record.facilityId) issues.push({ type: "Missing facility", detail, facilityId: "", requisitionId: record.requisitionId, source: "Requisition", blocking: true });
-      if (!req.fte) issues.push({ type: "Missing FTE", detail, facilityId: record.facilityId, requisitionId: record.requisitionId, source: "Requisition", blocking: true });
-      if (!req.shiftPreference && !req.shift) issues.push({ type: "Missing shift", detail, facilityId: record.facilityId, requisitionId: record.requisitionId, source: "Requisition", blocking: true });
-    });
     canonicalReportingModel.candidates.forEach((record) => {
       const item = record.reportingItem;
       const detail = `${record.facilityName} | ${record.requisitionNumber || "No req"} | ${item.candidate || "Unnamed candidate"}`;
-      if (!item.status) issues.push({ type: "Missing candidate status", detail, facilityId: record.facilityId, requisitionId: record.requisitionId, candidateId: record.candidateId, source: "Candidate", blocking: true });
-      if ((item.status === "Hired" || item.archiveOutcome === "Hired") && !tentativeStartDateFor(item)) issues.push({ type: "Missing tentative start date", detail, facilityId: record.facilityId, requisitionId: record.requisitionId, candidateId: record.candidateId, source: "Candidate", blocking: true });
-      if ((item.archived || item.status === "Archived") && !archivedOutcomeApplies(item)) issues.push({ type: "Archived candidate missing outcome", detail, facilityId: record.facilityId, requisitionId: record.requisitionId, candidateId: record.candidateId, source: "Candidate", blocking: true });
+      const shared = { detail, facilityId: record.facilityId, facilityName: record.facilityName, requisitionId: record.requisitionId, requisitionNumber: record.requisitionNumber, position: record.position, candidateId: record.candidateId, source: "Candidate" };
+      if (!item.status) issues.push(createReportingIssue({ ...shared, type: "Missing candidate status", issue: "Missing candidate status", missingField: "Candidate status" }));
+      if ((item.status === "Hired" || item.archiveOutcome === "Hired") && !tentativeStartDateFor(item)) issues.push(createReportingIssue({ ...shared, type: "Missing tentative start date", issue: "Missing tentative start date", missingField: "Tentative start date" }));
+      if ((item.archived || item.status === "Archived") && !archivedOutcomeApplies(item)) issues.push(createReportingIssue({ ...shared, type: "Archived candidate missing outcome", issue: "Archived candidate missing outcome", missingField: "Archive outcome" }));
+    });
+    facilityReportQueue.filter((row) => row.missingContact).forEach((row) => {
+      const contactIssue = createMissingContactReportingIssue(row);
+      const existingIndex = issues.findIndex((issue) => (
+        issue.code === contactIssue.code
+        && issue.facilityIds.includes(contactIssue.facilityId)
+      ));
+      if (existingIndex < 0) {
+        issues.push(contactIssue);
+        return;
+      }
+      issues[existingIndex] = createReportingIssue({
+        ...contactIssue,
+        ...issues[existingIndex],
+        audienceContext: issues[existingIndex].audienceContext || contactIssue.audienceContext,
+        recipientGroup: issues[existingIndex].recipientGroup || contactIssue.recipientGroup,
+        missingContactRole: issues[existingIndex].missingContactRole || contactIssue.missingContactRole,
+        affectedReportScope: issues[existingIndex].affectedReportScope || contactIssue.affectedReportScope,
+        resolutionAction: issues[existingIndex].resolutionAction || contactIssue.resolutionAction,
+      });
     });
     return issues;
   }, [canonicalReportingModel, facilityReportQueue]);
+  const unresolvedOpeningRiskIds = useMemo(() => new Set(unresolvedOpeningRiskFacilityIds(
+    canonicalReportingModel.dataQuality.filter((issue) => {
+      if (issue.recordType !== "Requisition" || !["Ambiguous Facility", "Unmapped Facility"].includes(issue.issue)) return false;
+      const record = canonicalReportingModel.requisitions.find((candidate) => (
+        candidate.requisitionId === issue.requisitionId || candidate.id === issue.identifier
+      ));
+      return !record || (isLiveRequisition(record.source) && openingsForReq(record.source) > 0);
+    }),
+  )), [canonicalReportingModel]);
+
+  const selectedReportEligibilityScope = useMemo(() => ({
+    all: selectedFacility === "All Facilities" && selectedFacilityReports.length === 0 && facilityReportQueueFiltered.length === facilityReportQueue.length,
+    facilityIds: selectedFacilityReportRows.map((row) => row.facilityId).filter(Boolean),
+    requisitionIds: selectedFacilityReportRows.flatMap((row) => row.activeReqs.map((req) => req.id)).filter(Boolean),
+    candidateIds: selectedFacilityReportRows.flatMap((row) => row.candidates.map((candidate) => candidate.id)).filter(Boolean),
+  }), [selectedFacility, selectedFacilityReports, selectedFacilityReportRows, facilityReportQueueFiltered.length, facilityReportQueue.length]);
+  const selectedReportEligibility = useMemo(
+    () => reportingActionEligibility(reportValidationIssues, selectedReportEligibilityScope),
+    [reportValidationIssues, selectedReportEligibilityScope],
+  );
+  const reportIssueGroups = useMemo(
+    () => groupReportingIssues(reportValidationIssues, selectedReportEligibilityScope),
+    [reportValidationIssues, selectedReportEligibilityScope],
+  );
+  const facilityReadinessRows = useMemo(
+    () => facilityReportQueue.map((row) => {
+      const scope = {
+        facilityIds: [row.facilityId],
+        requisitionIds: row.activeReqs.map((req) => req.id).filter(Boolean),
+        candidateIds: row.candidates.map((candidate) => candidate.id).filter(Boolean),
+      };
+      const eligibility = reportingActionEligibility(reportValidationIssues, scope);
+      const outcome = deriveNoOpeningFacilityOutcome({
+        row,
+        policy: noOpeningsPolicy,
+        weeklyDecision: noOpeningWeeklyDecisions[row.facilityId],
+        eligibility,
+        hasTemplate: standardNoOpeningsTemplateAvailable,
+        unresolvedOpeningRisk: unresolvedOpeningRiskIds.has(row.facilityId),
+      });
+      return withFacilityReadiness(applyNoOpeningOutcome(row, outcome), eligibility.scopedIssues);
+    }),
+    [facilityReportQueue, reportValidationIssues, noOpeningsPolicy, noOpeningWeeklyDecisions, standardNoOpeningsTemplateAvailable, unresolvedOpeningRiskIds],
+  );
+  const reportReviewTargetResolution = useMemo(
+    () => resolveReportReviewTarget(facilityReadinessRows, reportReviewTargetId),
+    [facilityReadinessRows, reportReviewTargetId],
+  );
+  const reportReviewTargetNotFound = Boolean(
+    hasLoaded
+    && reportReviewTargetId
+    && reportReviewTargetResolution.status === "not-found",
+  );
+  useEffect(() => {
+    if (!hasLoaded || !reportReviewTargetId || reportReviewTargetRestoredRef.current === reportReviewTargetId) return;
+    if (reportReviewTargetResolution.status !== "found") return;
+    const targets = reportReviewTargetResolution.rows;
+    const definition = reportAudienceDefinition(reportReviewTargetResolution.audience);
+    reportReviewTargetRestoredRef.current = reportReviewTargetId;
+    setActivePage("reports");
+    setReportsTab("review-reports");
+    setSelectedFacility(targets.length === 1 ? targets[0].facility : "All Facilities");
+    setSelectedFacilityReports(targets.map((target) => target.id || target.facilityId).filter(Boolean));
+    setReportsReviewAudience(definition.audience);
+    setSelectedReportType(reportReviewTargetResolution.reportType || definition.reportType);
+    setSelectedRecipientGroup(
+      targets.length === 1
+        ? targets[0].recipientGroup || definition.recipientGroup
+        : definition.recipientGroup,
+    );
+  }, [hasLoaded, reportReviewTargetId, reportReviewTargetResolution, setReportsTab]);
+  const selectedFacilityPolicyRows = useMemo(() => {
+    const selected = new Set(selectedFacilityReports);
+    return facilityReadinessRows.filter((row) => selected.has(row.id) || selected.has(row.facility));
+  }, [selectedFacilityReports, facilityReadinessRows]);
+  const reportingActionState = useMemo(
+    () => deriveReportingActionState({
+      rows: facilityReadinessRows,
+      selectedReportIds: selectedFacilityReports,
+      issues: reportValidationIssues,
+    }),
+    [facilityReadinessRows, selectedFacilityReports, reportValidationIssues],
+  );
+  const facilityReadinessRowsById = useMemo(
+    () => new Map(facilityReadinessRows.map((row) => [String(row.id || row.facilityId), row])),
+    [facilityReadinessRows],
+  );
+  const reportRowsForActionIds = (ids = []) => ids.map((id) => facilityReadinessRowsById.get(String(id))).filter(Boolean);
+  const selectedFacilityActionRows = useMemo(
+    () => reportActionEligibleRows(selectedFacilityPolicyRows),
+    [selectedFacilityPolicyRows],
+  );
+  const selectedPreviewableReportRows = reportRowsForActionIds(reportingActionState.selectedPreviewableReportIds);
+  const selectedDownloadableReportRows = reportRowsForActionIds(reportingActionState.selectedDownloadableReportIds);
+  const selectedEmailReportRows = reportRowsForActionIds(reportingActionState.selectedEmailReportIds);
+  const selectedReadyReportRows = reportRowsForActionIds(reportingActionState.selectedReadyReportIds);
+  const selectedMarkReviewedReportRows = reportRowsForActionIds(reportingActionState.selectedMarkReviewedReportIds);
+  const selectedMarkSentReportRows = reportRowsForActionIds(reportingActionState.selectedMarkSentReportIds);
+  const selectedFacilityActionEligibility = useMemo(
+    () => reportingActionEligibility(reportValidationIssues, {
+      facilityIds: selectedFacilityActionRows.map((row) => row.facilityId).filter(Boolean),
+      requisitionIds: selectedFacilityActionRows.flatMap((row) => row.activeReqs.map((req) => req.id)).filter(Boolean),
+      candidateIds: selectedFacilityActionRows.flatMap((row) => row.candidates.map((candidate) => candidate.id)).filter(Boolean),
+    }),
+    [reportValidationIssues, selectedFacilityActionRows],
+  );
+  const reportCompletionSummary = useMemo(
+    () => noOpeningReportingSummary(facilityReadinessRows),
+    [facilityReadinessRows],
+  );
+  const facilityReadinessMatchingRows = useMemo(
+    () => filterFacilityReadinessRows(facilityReadinessRows, facilityReadinessFilters),
+    [facilityReadinessRows, facilityReadinessFilters],
+  );
+  const facilityReadinessVisibleRows = useMemo(
+    () => facilityReadinessMatchingRows.slice(0, facilityReadinessVisibleLimit),
+    [facilityReadinessMatchingRows, facilityReadinessVisibleLimit],
+  );
+  const facilityReadinessStatusCounts = useMemo(
+    () => facilityReadinessCounts(facilityReadinessRows, facilityReadinessFilters),
+    [facilityReadinessRows, facilityReadinessFilters],
+  );
+  const facilityReadinessSelection = useMemo(
+    () => facilitySelectionSummary(selectedFacilityReports, facilityReadinessVisibleRows),
+    [selectedFacilityReports, facilityReadinessVisibleRows],
+  );
+  const facilityReadinessRegions = useMemo(
+    () => Array.from(new Map(facilityReadinessRows.filter((row) => row.regionId).map((row) => [row.regionId, row.regionName || row.regionId])).entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [facilityReadinessRows],
+  );
+  const facilityReadinessIssueGroups = useMemo(
+    () => groupReportingIssues(reportValidationIssues, { all: true }),
+    [reportValidationIssues],
+  );
+  const weeklyReportingBlockerCount = useMemo(
+    () => facilityReadinessIssueGroups.filter((group) => group.blocking).reduce((total, group) => total + group.count, 0),
+    [facilityReadinessIssueGroups],
+  );
+  const weeklyReportingCandidateCleanupCount = atsCleanupRows().filter((row) => !row.atsUpdatedAt).length;
+  const weeklyReportingPrimaryAction = useMemo(
+    () => selectWeeklyReportingPrimaryAction({
+      blockerCount: weeklyReportingBlockerCount,
+      candidateCleanupCount: weeklyReportingCandidateCleanupCount,
+      readyReportCount: reportingActionState.totalReadyReportIds.length,
+      reviewedReportCount: reportingActionState.totalMarkSentReportIds.length,
+    }),
+    [weeklyReportingBlockerCount, weeklyReportingCandidateCleanupCount, reportingActionState],
+  );
 
   const routingPreviewSummary = useMemo(() => ({
     facilityReports: facilityReportQueue.length,
@@ -13997,7 +14295,7 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
     ].join(NL);
   }
 
-  function facilityReportBundle(rows = selectedFacilityReportRows) {
+  function facilityReportBundle(rows = selectedFacilityActionRows) {
     const sourceRows = rows.length ? rows : facilityReportQueueFiltered;
     const header = [
       `${selectedReportType} | ${selectedRecipientGroup}`,
@@ -14045,7 +14343,9 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
     const facility = reportFacilityRecord(facilityReference);
     if (!facility) return [];
     return canonicalReportingModel.requisitions
-      .filter((record) => record.facilityId === facility.facilityId && (includeClosed || isLiveRequisition(record.source)))
+      .filter((record) => record.facilityId === facility.facilityId && (
+        includeClosed || (isLiveRequisition(record.source) && openingsForReq(record.source) > 0)
+      ))
       .map((record) => record.reportingItem);
   }
 
@@ -14067,7 +14367,7 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
     const rows = rowsForReportFacility(facilityId);
     const groups = reportRowsByGroup(rows);
     const reqs = reqsForReportFacility(facilityId, reportInclusions.closedRequisitions);
-    const openReqs = reqs.filter((req) => isLiveRequisition(req));
+    const openReqs = reqs.filter((req) => isLiveRequisition(req) && openingsForReq(req) > 0);
     const leadershipReqs = openReqs.filter((req) => isLeadershipRequisition(req, settings.roles));
     const contacts = reportContactsForFacility(facilityId);
     return {
@@ -14141,10 +14441,10 @@ function rowifyCandidate(item = {}) {
     };
   }
 
-  function baseWeeklyReportTokens() {
+  function baseWeeklyReportTokens(reportType = selectedReportType) {
     const dateRange = `${displayDate(reportStartDate)} to ${displayDate(reportEndDate)}`;
     return {
-      report_type: selectedReportType,
+      report_type: reportType,
       report_start_date: displayDate(reportStartDate),
       report_end_date: displayDate(reportEndDate),
       reporting_week: dateRange,
@@ -14269,7 +14569,7 @@ function rowifyCandidate(item = {}) {
     const leadershipLines = model.leadershipReqs.length ? model.leadershipReqs.map((req) => `${req.positionTitle || "No Position"} | ${req.reqNumber || "No Req"} | ${fteLabel(req.fte) || "N/A"} | ${req.shiftPreference || req.shift || "N/A"} | ${openingsForReq(req)} | ${model.rows.filter((item) => candidateMatchesRequisition(item, req)).map((item) => item.status).filter(Boolean).join(", ") || "No candidate activity"}`) : ["No active leadership roles open."];
     const key = reportType === "No Openings Update" || !model.openReqs.length ? WEEKLY_REPORT_TEMPLATE_KEYS.noOpenings : WEEKLY_REPORT_TEMPLATE_KEYS.facility;
     return renderWeeklyReportContent(settings, key, {
-      ...baseWeeklyReportTokens(),
+      ...baseWeeklyReportTokens(reportType),
       report_type: reportType,
       facility: model.facility,
       facilities_included: model.facility,
@@ -14293,7 +14593,7 @@ function rowifyCandidate(item = {}) {
     const highRiskFacilities = models.filter((model) => model.riskCandidates.length).map((model) => `${model.facility} (${model.riskCandidates.length})`);
     const awaitingOverFive = models.flatMap((model) => model.awaitingFeedback.filter((item) => daysBetween(item.submissionDate) > 5).map((item) => `${item.candidate || "Unnamed Candidate"} | ${model.facility} | ${daysBetween(item.submissionDate)} days`));
     return renderWeeklyReportContent(settings, WEEKLY_REPORT_TEMPLATE_KEYS.regional, {
-      ...baseWeeklyReportTokens(),
+      ...baseWeeklyReportTokens("Regional Manager Summary"),
       facilities_included: models.map((model) => model.facility).join(", ") || "None selected",
       total_open_requisitions: openReqCount,
       facilities_with_no_openings: noOpeningFacilities.length ? noOpeningFacilities.join(", ") : "None",
@@ -14319,7 +14619,7 @@ function rowifyCandidate(item = {}) {
     const agingFeedbackCount = models.flatMap((model) => model.awaitingFeedback.filter((item) => daysBetween(item.submissionDate) > 5)).length;
     const noOpeningCount = models.filter((model) => !model.openReqs.length).length;
     return renderWeeklyReportContent(settings, WEEKLY_REPORT_TEMPLATE_KEYS.leadership, {
-      ...baseWeeklyReportTokens(),
+      ...baseWeeklyReportTokens("C-Suite Leadership Report"),
       facilities_included: models.map((model) => model.facility).join(", ") || "None selected",
       total_open_requisitions: models.reduce((total, model) => total + model.openReqs.length, 0),
       total_active_candidates: activeCandidates.length,
@@ -14338,22 +14638,23 @@ function rowifyCandidate(item = {}) {
     return cSuiteEmailContent(rows).body;
   }
 
-  function selectedAudienceEmailContent(rows = selectedFacilityReportRows) {
+  function selectedAudienceEmailContent(rows = selectedFacilityActionRows, audience = reportsReviewAudience) {
     const sourceRows = rows.length ? rows : facilityReportQueueFiltered;
-    if (selectedReportType === "Regional Manager Summary") return regionalEmailContent(sourceRows);
-    if (selectedReportType === "C-Suite Leadership Report") return cSuiteEmailContent(sourceRows);
-    if (sourceRows.length === 1) return facilityEmailContent(facilityReportModel(sourceRows[0].facility), selectedReportType);
-    const contents = sourceRows.map((row) => facilityEmailContent(facilityReportModel(row.facilityId || row.id || row.facility), selectedReportType));
-    const subjectTemplate = contents[0] || facilityEmailContent(facilityReportModel(""), selectedReportType);
+    const definition = reportAudienceDefinition(audience);
+    if (definition.audience === "Regional") return regionalEmailContent(sourceRows);
+    if (definition.audience === "Executive") return cSuiteEmailContent(sourceRows);
+    if (sourceRows.length === 1) return facilityEmailContent(facilityReportModel(sourceRows[0].facility), definition.reportType);
+    const contents = sourceRows.map((row) => facilityEmailContent(facilityReportModel(row.facilityId || row.id || row.facility), definition.reportType));
+    const subjectTemplate = contents[0] || facilityEmailContent(facilityReportModel(""), definition.reportType);
     return {
       ...subjectTemplate,
-      subject: `${selectedReportType}: ${displayDate(reportStartDate)} - ${displayDate(reportEndDate)}`,
+      subject: `${definition.reportType}: ${displayDate(reportStartDate)} - ${displayDate(reportEndDate)}`,
       body: contents.map((content) => content.body).join(`${NL}${NL}---${NL}${NL}`),
     };
   }
 
-  function selectedAudienceEmailBody(rows = selectedFacilityReportRows) {
-    return selectedAudienceEmailContent(rows).body;
+  function selectedAudienceEmailBody(rows = selectedFacilityActionRows, audience = reportsReviewAudience) {
+    return selectedAudienceEmailContent(rows, audience).body;
   }
 
   function facilityWorkbookSheets(model) {
@@ -14396,8 +14697,18 @@ function rowifyCandidate(item = {}) {
     return sheets;
   }
 
-  function buildAllFacilityWorkbookSheets() {
-    const models = reportFacilityRecords.map((facility) => facilityReportModel(facility.facilityId));
+  function buildFacilityScopeWorkbookSheets(includedFacilityIds = []) {
+    const facilityIds = new Set(includedFacilityIds.map((value) => String(value || "").trim()).filter(Boolean));
+    const models = Array.from(facilityIds).map((facilityId) => facilityReportModel(facilityId));
+    const scopedIncludedReportRows = includedReportRows.filter((item) => {
+      const facility = reportFacilityRecord(
+        item.facilityId
+          || item.canonicalFacilityName
+          || item.site
+          || item.formSnapshot?.siteName,
+      );
+      return facilityIds.has(facility?.facilityId);
+    });
     const candidateColumns = ["Candidate", "Position", "Facility ID", "Facility", "Original Facility Label", "Requisition ID", "Req Number", "Submitted", "Current Status", "Next Action", "Awaiting Feedback", "Pending Offer", "Interview Date", "Interview Time", "Booking Status", "Calendar Source", "Tentative Start", "Risk", "Attention", "Timing Risk", "Delay Type", "Next Recommended Timing Action", "Outreach Response Time", "Outreach Response Bucket", "Submittal To Interview", "Submittal To Interview Bucket", "Interview To Decision", "Interview To Decision Bucket", "HR Response Time", "HR Response Bucket"];
     const openReqs = models.flatMap((model) => model.openReqs);
     const activeRows = models.flatMap((model) => model.activeCandidates);
@@ -14406,8 +14717,10 @@ function rowifyCandidate(item = {}) {
     const startRows = models.flatMap((model) => model.hiresTentativeStarts);
     const leadershipReqs = models.flatMap((model) => model.leadershipReqs);
     const riskRows = models.flatMap((model) => model.riskCandidates);
+    const allFacilitiesIncluded = facilityIds.size === reportFacilityRecords.length
+      && reportFacilityRecords.every((facility) => facilityIds.has(facility.facilityId));
     const sheets = [
-      { name: "All Facilities Summary", columns: ["Metric", "Value"], rows: [
+      { name: allFacilitiesIncluded ? "All Facilities Summary" : "Report Scope Summary", columns: ["Metric", "Value"], rows: [
         { Metric: "Facilities", Value: models.length },
         { Metric: "Open Requisitions", Value: openReqs.length },
         { Metric: "Active Candidates", Value: activeRows.length },
@@ -14424,20 +14737,147 @@ function rowifyCandidate(item = {}) {
       { name: "Hires and Starts", columns: candidateColumns, rows: startRows.map(rowifyCandidate) },
       { name: "Leadership Openings", columns: ["Position", "Requisition ID", "Req Number", "Unique ID", "FTE", "Shift", "Openings", "Employment Type", "Facility ID", "Facility", "Original Facility Label", "Status"], rows: leadershipReqs.map(rowifyReq) },
       { name: "Risk and Attention", columns: candidateColumns, rows: riskRows.map(rowifyCandidate) },
-      { name: "Candidate Timing", columns: ["Candidate", "Facility", "Req Number", "Position", "Main Stage", "Current Action Status", "Last Action Date", "Days Since Last Action", "Delay Type", "Next Recommended Action", "Candidate Timing Risk", "Initial Outreach Sent", "Candidate First Response", "Outreach Response Time", "Outreach Response Bucket", "Submitted To Facility", "Interview Scheduled", "Actual Interview", "Submittal To Interview", "Submittal To Interview Bucket", "Interview To Decision", "Interview To Decision Bucket", "HR Request Sent", "HR Response Received", "HR Response Time", "HR Response Bucket", "Final Outcome", "Made It Through Process"], rows: includedReportRows.map((item) => {
+      { name: "Candidate Timing", columns: ["Candidate", "Facility", "Req Number", "Position", "Main Stage", "Current Action Status", "Last Action Date", "Days Since Last Action", "Delay Type", "Next Recommended Action", "Candidate Timing Risk", "Initial Outreach Sent", "Candidate First Response", "Outreach Response Time", "Outreach Response Bucket", "Submitted To Facility", "Interview Scheduled", "Actual Interview", "Submittal To Interview", "Submittal To Interview Bucket", "Interview To Decision", "Interview To Decision Bucket", "HR Request Sent", "HR Response Received", "HR Response Time", "HR Response Bucket", "Final Outcome", "Made It Through Process"], rows: scopedIncludedReportRows.map((item) => {
         const timing = candidateTimingFor(item);
         return { Candidate: timing.candidateName, Facility: timing.facility, "Req Number": timing.reqNumber, Position: timing.position, "Main Stage": timing.mainStage, "Current Action Status": timing.currentActionStatus, "Last Action Date": timing.lastActionDate, "Days Since Last Action": timing.daysSinceLastAction, "Delay Type": timing.delayType, "Next Recommended Action": timing.nextRecommendedAction, "Candidate Timing Risk": timing.candidateTimingRisk, "Initial Outreach Sent": timing.initialOutreachSentAt, "Candidate First Response": timing.candidateFirstResponseAt, "Outreach Response Time": timing.outreachResponseTime, "Outreach Response Bucket": timing.outreachResponseBucket, "Submitted To Facility": timing.candidateSubmittedToFacilityAt, "Interview Scheduled": timing.interviewScheduledAt, "Actual Interview": timing.actualInterviewAt, "Submittal To Interview": timing.submittalToInterviewScheduledTime, "Submittal To Interview Bucket": timing.submittalToInterviewScheduledBucket, "Interview To Decision": timing.interviewToDecisionTime, "Interview To Decision Bucket": timing.interviewToDecisionBucket, "HR Request Sent": timing.hrVerificationRequestSentAt, "HR Response Received": timing.hrVerificationResponseReceivedAt, "HR Response Time": timing.hrResponseTime, "HR Response Bucket": timing.hrResponseBucket, "Final Outcome": timing.finalCandidateOutcome, "Made It Through Process": timing.candidateMadeItThroughProcess };
       }) },
-      { name: "ATS Cleanup", columns: ["Candidate", "Requisition ID", "Req Number", "Position", "Facility ID", "Facility", "Original Facility Label", "Status", "Next Action"], rows: includedReportRows.map((item) => ({ Candidate: item.candidate || "", "Requisition ID": item.requisitionId || "", "Req Number": item.requisitionNumber || item.reqNumber || item.formSnapshot?.reqNumber || "", Position: item.position || "", "Facility ID": item.facilityId || "", Facility: item.canonicalFacilityName || item.site || "Unmapped Facility", "Original Facility Label": item.originalFacilityLabel || "", Status: item.status || "", "Next Action": item.nextAction || "" })) },
+      { name: "ATS Cleanup", columns: ["Candidate", "Requisition ID", "Req Number", "Position", "Facility ID", "Facility", "Original Facility Label", "Status", "Next Action"], rows: scopedIncludedReportRows.map((item) => ({ Candidate: item.candidate || "", "Requisition ID": item.requisitionId || "", "Req Number": item.requisitionNumber || item.reqNumber || item.formSnapshot?.reqNumber || "", Position: item.position || "", "Facility ID": item.facilityId || "", Facility: item.canonicalFacilityName || item.site || "Unmapped Facility", "Original Facility Label": item.originalFacilityLabel || "", Status: item.status || "", "Next Action": item.nextAction || "" })) },
       { name: "No Opening Facilities", columns: ["Facility", "Status"], rows: models.filter((model) => !model.openReqs.length).map((model) => ({ Facility: model.facility, Status: "No current openings this week" })) },
     ];
-    if (reportInclusions.closedRequisitions) sheets.push({ name: "Archived Requisitions", columns: ["Position", "Requisition ID", "Req Number", "Unique ID", "FTE", "Shift", "Openings", "Employment Type", "Facility ID", "Facility", "Original Facility Label", "Status"], rows: canonicalReportingModel.requisitions.filter((record) => !isLiveRequisition(record.source)).map((record) => rowifyReq(record.reportingItem)) });
+    if (reportInclusions.closedRequisitions) sheets.push({ name: "Archived Requisitions", columns: ["Position", "Requisition ID", "Req Number", "Unique ID", "FTE", "Shift", "Openings", "Employment Type", "Facility ID", "Facility", "Original Facility Label", "Status"], rows: canonicalReportingModel.requisitions.filter((record) => facilityIds.has(record.facilityId) && !isLiveRequisition(record.source)).map((record) => rowifyReq(record.reportingItem)) });
     models.forEach((model) => sheets.push({ name: model.facility, columns: ["Section", "Name", "Position", "Req Number", "Status", "Notes"], rows: [
       ...model.openReqs.map((req) => ({ Section: "Open Requisition", Name: req.positionTitle || "", Position: req.positionTitle || "", "Req Number": req.reqNumber || "", Status: req.status || "Active", Notes: `${fteLabel(req.fte) || "N/A"} | ${req.shiftPreference || "N/A"} | ${openingsForReq(req)} openings` })),
       ...model.activeCandidates.map((item) => ({ Section: "Candidate", Name: item.candidate || "", Position: item.position || "", "Req Number": item.reqNumber || item.formSnapshot?.reqNumber || "", Status: item.status || "", Notes: item.nextAction || "" })),
       ...model.riskCandidates.map((item) => ({ Section: "Risk", Name: item.candidate || "", Position: item.position || "", "Req Number": item.reqNumber || item.formSnapshot?.reqNumber || "", Status: riskFor(item), Notes: stuckReasonFor(item) || "" })),
     ] }));
     return sheets;
+  }
+
+  function buildAllFacilityWorkbookSheets(rows) {
+    const includedFacilityIds = rows === undefined
+      ? reportFacilityRecords.map((facility) => facility.facilityId)
+      : buildCanonicalReportScope({ audience: "Facility", rows }).includedFacilityIds;
+    return buildFacilityScopeWorkbookSheets(includedFacilityIds);
+  }
+
+  function selectReportsReviewAudience(audience) {
+    const definition = reportAudienceDefinition(audience);
+    setReportsReviewAudience(definition.audience);
+    setSelectedReportType(definition.reportType);
+    setSelectedRecipientGroup(definition.recipientGroup);
+  }
+
+  function canonicalReportTotals(rows = []) {
+    const sourceRows = safeObjectRecords(rows);
+    const requisitions = sourceRows.flatMap((row) => safeObjectRecords(row.activeReqs));
+    const requisitionIds = new Set(requisitions.map((req) => req.id || req.requisitionId).filter(Boolean));
+    const candidates = Array.from(new Map(sourceRows.flatMap((row) => safeObjectRecords(row.candidates)).map((candidate, index) => [candidate.id || candidate.candidateId || `unidentified-${index}`, candidate])).values());
+    return {
+      facilities: new Set(sourceRows.map((row) => row.facilityId || row.id).filter(Boolean)).size,
+      requisitions: requisitionIds.size,
+      openRequisitions: requisitions.length,
+      openings: requisitions.reduce((total, requisition) => total + openingsForReq(requisition), 0),
+      candidates: candidates.length,
+      activeCandidates: candidates.filter((candidate) => ["active", "awaitingFeedback", "risk"].includes(candidateReportStatusGroup(candidate))).length,
+      noOpeningFacilities: sourceRows.filter((row) => row.report === "No Openings" || !safeObjectRecords(row.activeReqs).length).length,
+      riskItems: candidates.filter((candidate) => riskFor(candidate) === "High" || Boolean(stuckReasonFor(candidate))).length,
+    };
+  }
+
+  function canonicalReportContextForRows(rows = [], audience = reportsReviewAudience, options = {}) {
+    const sourceRows = safeObjectRecords(rows);
+    const definition = reportAudienceDefinition(audience);
+    const scope = buildCanonicalReportScope({
+      audience: definition.audience,
+      rows: sourceRows,
+      reportType: options.reportType || definition.reportType,
+      recipient: options.recipient || options.recipientGroup || definition.recipientGroup,
+      recipientGroup: options.recipientGroup || definition.recipientGroup,
+    });
+    const content = selectedAudienceEmailContent(sourceRows, definition.audience);
+    const workbookSheets = definition.audience === "Facility" && scope.includedFacilityIds.length === 1
+      ? facilityWorkbookSheets(facilityReportModel(scope.includedFacilityIds[0]))
+      : buildFacilityScopeWorkbookSheets(scope.includedFacilityIds);
+    return buildCanonicalReportContext({
+      audience: definition.audience,
+      rows: sourceRows,
+      scope,
+      reportStartDate,
+      reportEndDate,
+      content,
+      workbookSheets,
+      canonicalTotals: canonicalReportTotals(sourceRows),
+      generatedAt: options.generatedAt || "",
+    });
+  }
+
+  const reportReviewDefinition = reportAudienceDefinition(reportsReviewAudience);
+  const reportReviewContext = canonicalReportContextForRows(
+    selectedFacilityActionRows,
+    reportReviewDefinition.audience,
+    {
+      reportType: selectedReportType,
+      recipient: selectedRecipientGroup,
+      recipientGroup: selectedRecipientGroup,
+      generatedAt: (reportHistory || [])[0]?.generatedDate || "",
+    },
+  );
+  const reportReviewListRows = buildAudienceReportGroups({
+    audience: reportReviewContext.audience,
+    rows: selectedFacilityActionRows,
+  }).map((group) => {
+    const context = canonicalReportContextForRows(group.rows, group.audience, {
+      reportType: group.reportType,
+      recipientGroup: group.recipientGroup,
+      generatedAt: (reportHistory || [])[0]?.generatedDate || "",
+    });
+    return {
+      ...group,
+      ...context,
+      sourceRows: group.rows,
+    };
+  });
+  useEffect(() => {
+    if (
+      !reportReviewTargetId
+      || reportReviewContext.reportId !== reportReviewTargetId
+      || reportReviewPreviewRestoredRef.current === reportReviewTargetId
+    ) return;
+    reportReviewPreviewRestoredRef.current = reportReviewTargetId;
+    setGeneratedReportPreview(reportReviewContext.body);
+    setWeeklyReport(reportReviewContext.body);
+    setWeeklySubject(reportReviewContext.subject);
+  }, [reportReviewContext.body, reportReviewContext.reportId, reportReviewContext.subject, reportReviewTargetId]);
+
+  function reportingScopeForRows(rows = []) {
+    return {
+      all: rows === selectedFacilityReportRows && selectedReportEligibilityScope.all,
+      facilityIds: rows.map((row) => row.facilityId || row.id).filter(Boolean),
+      requisitionIds: rows.flatMap((row) => safeObjectRecords(row.activeReqs).map((req) => req.id)).filter(Boolean),
+      candidateIds: rows.flatMap((row) => safeObjectRecords(row.candidates).map((candidate) => candidate.id)).filter(Boolean),
+    };
+  }
+
+  function policyRowsForReportAction(rows = selectedFacilityActionRows) {
+    return resolvePolicyRowsForReportAction({
+      rows,
+      facilityReadinessRows,
+      reportActionEligibleRows,
+    });
+  }
+
+  function eligibilityForReportRows(rows = selectedFacilityActionRows) {
+    if (rows === selectedFacilityActionRows) return selectedFacilityActionEligibility;
+    return reportingActionEligibility(reportValidationIssues, reportingScopeForRows(rows));
+  }
+
+  function blockReportAction(action, rows = selectedFacilityActionRows, label = "This report action") {
+    const eligibility = eligibilityForReportRows(rows);
+    if (eligibility[action]) return false;
+    const reasons = eligibility.reasonsByAction[action] || [];
+    const issueTypes = Array.from(new Set(reasons.map((issue) => issue.issue))).join(", ");
+    setCopyNotice(`${label} is blocked for the selected scope. Resolve: ${issueTypes || "reporting data issues"}. Diagnostic review remains available.`);
+    return true;
   }
 
   function markFacilityReports(rows, status) {
@@ -14451,38 +14891,188 @@ function rowifyCandidate(item = {}) {
     });
   }
 
-  function previewSelectedFacilityReports(rows = selectedFacilityReportRows) {
-    const sourceRows = rows.length ? rows : selectedFacilityReportRows;
-    const content = selectedAudienceEmailContent(sourceRows);
+  function previewSelectedFacilityReports(rows = selectedPreviewableReportRows, audience = reportsReviewAudience) {
+    let sourceRows;
+    try {
+      sourceRows = policyRowsForReportAction(rows);
+    } catch (error) {
+      console.error("Report preview contract error", error);
+      setCopyNotice("The report preview could not open because its selected-report data was invalid. No report data or status was changed.");
+      return false;
+    }
+    if (!sourceRows.length) {
+      setCopyNotice("Select at least one facility report before previewing.");
+      return false;
+    }
+    if (blockReportAction("canViewDraftPreview", sourceRows, "Diagnostic report preview")) return false;
+    const definition = reportAudienceDefinition(audience);
+    const content = selectedAudienceEmailContent(sourceRows, definition.audience);
     setGeneratedReportPreview(content.body);
     setWeeklyReport(content.body);
     setWeeklySubject(content.subject);
-    addHistory("Facility Report Preview", selectedReportType, content.body, "");
-    setCopyNotice("Facility report preview generated.");
+    setCopyNotice(`${definition.audience} report preview generated.`);
+    return true;
+  }
+
+  function openReportReview(rowOrRows, context = {}) {
+    const rows = (Array.isArray(rowOrRows) ? rowOrRows : [rowOrRows]).filter(Boolean);
+    const definition = reportAudienceDefinition(context.audience || "Facility");
+    const navigation = buildReportReviewNavigation({
+      search: window.location.search,
+      audience: definition.audience,
+      reportType: context.reportType || (rows.length === 1 ? rows[0].reportType : "") || definition.reportType,
+      rows,
+    });
+    const targetId = navigation.reportId;
+    if (!targetId) {
+      setCopyNotice("This report does not have a stable identifier and cannot be opened.");
+      return false;
+    }
+    const selectedIds = rows.map((row) => String(row?.id || row?.facilityId || "").trim()).filter(Boolean);
+    setActivePage("reports");
+    setReportsTab("review-reports");
+    setSelectedFacility(rows.length === 1 ? rows[0].facility || "All Facilities" : "All Facilities");
+    setSelectedFacilityReports(selectedIds);
+    setReportReviewTargetId(targetId);
+    reportReviewTargetRestoredRef.current = targetId;
+    reportReviewPreviewRestoredRef.current = "";
+    setReportsReviewAudience(definition.audience);
+    setSelectedReportType(context.reportType || (rows.length === 1 ? rows[0].reportType : "") || definition.reportType);
+    setSelectedRecipientGroup(context.recipientGroup || (rows.length === 1 ? rows[0].recipientGroup : "") || definition.recipientGroup);
+    const nextLocation = `${window.location.pathname}${navigation.search}${window.location.hash}`;
+    const historyMethod = readReportReviewTarget(window.location.search) === targetId ? "replaceState" : "pushState";
+    if (historyMethod === "pushState") {
+      window.history.replaceState(
+        {
+          ...(window.history.state || {}),
+          activePage,
+          reportsTab,
+          reportReviewTargetId: readReportReviewTarget(window.location.search),
+        },
+        "",
+        `${window.location.pathname}${window.location.search}${window.location.hash}`,
+      );
+    }
+    window.history[historyMethod](
+      { ...(window.history.state || {}), ...navigation.state },
+      "",
+      nextLocation,
+    );
+    return previewSelectedFacilityReports(rows, definition.audience);
   }
 
   function copySelectedFacilityReports() {
-    const rows = selectedFacilityReportRows;
-    const body = facilityReportBundle(rows);
-    safeCopy(body);
-    markFacilityReports(rows, "Copied");
-    setCopyNotice("Selected facility reports copied and marked complete.");
+    const rows = selectedEmailReportRows;
+    if (!rows.length) {
+      setCopyNotice("Select at least one facility report before copying.");
+      return;
+    }
+    if (rows.length !== selectedFacilityActionRows.length) {
+      setCopyNotice("Copy Email Body is unavailable because one or more selected reports cannot be prepared for email.");
+      return;
+    }
+    if (blockReportAction("canPrepareEmail", rows, "Copying the report email")) return;
+    safeCopy(reportReviewContext.body);
+    setCopyNotice(`${reportReviewContext.audience} report email copied. Report status was not changed.`);
+  }
+
+  function copyReportEmailContent(value, label = "Email content") {
+    if (blockReportAction("canPrepareEmail", selectedFacilityActionRows, `Copying ${label.toLowerCase()}`)) return;
+    safeCopy(value);
+    setCopyNotice(`${label} copied. Report status was not changed.`);
   }
 
   function exportSelectedFacilityReports() {
-    const rows = selectedFacilityReportRows;
-    if (rows.length === 1) {
-      const model = facilityReportModel(rows[0].facilityId || rows[0].id || rows[0].facility);
-      downloadExcelWorkbook(`welcomeflow-${safeExcelSheetName(model.facility).replace(/\s+/g, "-").toLowerCase()}-${reportStartDate}.xls`, facilityWorkbookSheets(model));
-    } else {
-      downloadExcelWorkbook(`welcomeflow-facility-reports-${reportStartDate}.xls`, buildAllFacilityWorkbookSheets());
+    const rows = selectedDownloadableReportRows;
+    if (!rows.length) {
+      setCopyNotice("Select at least one facility report before downloading.");
+      return;
     }
-    markFacilityReports(rows, "Exported");
-    setCopyNotice("Selected facility reports exported and marked complete.");
+    if (rows.length !== selectedFacilityActionRows.length) {
+      setCopyNotice("Download Combined Workbook is unavailable because one or more selected reports cannot be downloaded.");
+      return;
+    }
+    if (blockReportAction("canDownloadWorkbook", rows, "Workbook download")) return;
+    downloadExcelWorkbook(reportReviewContext.attachmentName, reportReviewContext.workbookSheets);
+    setCopyNotice(`${reportReviewContext.audience} workbook downloaded for the selected report scope. Report status was not changed.`);
+  }
+
+  function exportWeeklyFullDataWorkbook() {
+    if (blockReportAction("canDownloadWorkbook", selectedFacilityActionRows, "All-facility workbook download")) return;
+    exportFullDataWorkbook();
+  }
+
+  function downloadReportReviewWorkbook() {
+    const rows = selectedDownloadableReportRows;
+    if (!rows.length || !reportReviewContext.workbookSheets.length) {
+      setCopyNotice("No selected reports are eligible for this workbook download.");
+      return;
+    }
+    if (rows.length !== selectedFacilityActionRows.length) {
+      setCopyNotice("Download Workbook is unavailable because one or more selected reports cannot be downloaded.");
+      return;
+    }
+    if (blockReportAction("canDownloadWorkbook", rows, "Report review workbook download")) return;
+    downloadExcelWorkbook(reportReviewContext.attachmentName, reportReviewContext.workbookSheets);
+    setCopyNotice(`${reportReviewContext.audience} workbook downloaded for ${reportReviewContext.includedFacilityIds.length} facilit${reportReviewContext.includedFacilityIds.length === 1 ? "y" : "ies"}. Report status was not changed.`);
+  }
+
+  function downloadAudienceReportListEntry(entry) {
+    const rows = Array.isArray(entry?.sourceRows) ? entry.sourceRows : [];
+    if (!rows.length || !Array.isArray(entry?.workbookSheets) || !entry.workbookSheets.length) {
+      setCopyNotice("No report-list workbook is available for this audience scope.");
+      return;
+    }
+    if (blockReportAction("canDownloadWorkbook", rows, `${entry.audience || "Report"} workbook download`)) return;
+    downloadExcelWorkbook(entry.attachmentName, entry.workbookSheets);
+    setCopyNotice(`${entry.audience} workbook downloaded for the canonical report-list scope. Report status was not changed.`);
+  }
+
+  function downloadGeneratedFacilityReport(row) {
+    const rows = policyRowsForReportAction([row]);
+    if (!rows.length) {
+      setCopyNotice("No report is required for this facility under the current no-openings policy.");
+      return;
+    }
+    if (blockReportAction("canDownloadWorkbook", rows, "Facility workbook download")) return;
+    const model = facilityReportModel(row.facilityId || row.id || row.facility);
+    downloadExcelWorkbook(
+      `welcomeflow-${safeExcelSheetName(model.facility).replace(/\s+/g, "-").toLowerCase()}-${reportStartDate}.xls`,
+      facilityWorkbookSheets(model),
+    );
+    setCopyNotice("Facility workbook downloaded. Report status was not changed.");
+  }
+
+  function downloadHistoricalFacilityReport(record) {
+    const facilityIds = new Set((Array.isArray(record?.facilityIds) && record.facilityIds.length
+      ? record.facilityIds
+      : [record?.facilityId]).filter(Boolean));
+    const rows = facilityReadinessRows.filter((row) => facilityIds.has(row.facilityId || row.id));
+    if (!rows.length) {
+      setCopyNotice("The saved report scope is no longer available for current-data regeneration.");
+      return;
+    }
+    if (blockReportAction("canDownloadWorkbook", rows, "Historical workbook regeneration")) return;
+    const context = canonicalReportContextForRows(rows, record.audience || "Facility", {
+      reportType: record.reportType,
+      recipient: record.recipient,
+      recipientGroup: record.recipientGroup,
+    });
+    downloadExcelWorkbook(`current-data-${context.attachmentName}`, context.workbookSheets);
+    setCopyNotice("Current-data regenerated workbook downloaded. The saved report record was not changed.");
   }
 
   function exportFacilityWorkbooks() {
-    const rows = selectedFacilityReportRows.length ? selectedFacilityReportRows : facilityReportQueueFiltered;
+    const rows = selectedDownloadableReportRows;
+    if (!rows.length) {
+      setCopyNotice("Select at least one facility report before downloading.");
+      return;
+    }
+    if (rows.length !== selectedFacilityActionRows.length) {
+      setCopyNotice("Download Separate Facility Workbooks is unavailable because one or more selected reports cannot be downloaded.");
+      return;
+    }
+    if (blockReportAction("canDownloadWorkbook", rows, "Facility workbook download")) return;
     const sheets = rows.flatMap((row) => {
       const model = facilityReportModel(row.facilityId || row.id || row.facility);
       return facilityWorkbookSheets(model).map((sheet) => ({
@@ -14491,83 +15081,160 @@ function rowifyCandidate(item = {}) {
       }));
     });
     downloadExcelWorkbook(`welcomeflow-facility-workbooks-${reportStartDate}.xls`, sheets);
-    markFacilityReports(rows, "Exported");
-    setCopyNotice(`${rows.length} facility report${rows.length === 1 ? "" : "s"} downloaded in one Excel file.`);
+    setCopyNotice(`${rows.length} facility report${rows.length === 1 ? "" : "s"} downloaded in one Excel file. Report status was not changed.`);
   }
 
-  function saveReportsToHistory(rows = selectedFacilityReportRows, status = "Draft Generated") {
+  function saveReportsToHistory(rows = selectedFacilityActionRows, status = "Draft Generated") {
     const now = new Date().toISOString();
-    const sourceRows = rows.length ? rows : selectedFacilityReportRows;
-    const nextRecords = sourceRows.map((row) => {
-      const model = facilityReportModel(row.facilityId || row.id || row.facility);
-      const missingContact = model.missingContact;
-      return {
+    const sourceRows = policyRowsForReportAction(rows);
+    if (!sourceRows.length) {
+      setCopyNotice("Select at least one facility report before saving report history.");
+      return;
+    }
+    const definition = reportAudienceDefinition(reportsReviewAudience);
+    const historyGroups = buildAudienceReportGroups({ audience: definition.audience, rows: sourceRows });
+    const nextRecords = historyGroups.map((group) => {
+      const context = canonicalReportContextForRows(group.rows, group.audience, {
+        reportType: group.reportType,
+        recipientGroup: group.recipientGroup,
+        generatedAt: now,
+      });
+      const missingContact = group.rows.some((row) => facilityReportModel(row.facilityId || row.id || row.facility).missingContact);
+      return serializeCanonicalReportHistoryRecord({
+        context,
         id: makeId("report"),
-        reportWeek: `${reportStartDate} to ${reportEndDate}`,
-        generatedDate: now,
-        facilityId: model.facilityId,
-        facility: model.facility,
-        originalFacilityLabel: model.originalFacilityLabel,
-        regionId: model.regionId,
-        regionName: model.regionName,
-        reportType: selectedReportType,
-        audience: selectedRecipientGroup,
-        recipientGroup: selectedRecipientGroup,
         status: missingContact ? "Blocked, Missing Contact" : status,
-        previewStatus: weeklyReport ? "Previewed" : "Not previewed",
-        sentStatus: status === "Sent" ? "Sent" : "Not sent",
-        attachmentName: `welcomeflow-${safeExcelSheetName(model.facility).replace(/\s+/g, "-").toLowerCase()}-${reportStartDate}.xls`,
+        generatedDate: now,
         generatedBy: settings.general?.recruiterName || "Recruiter",
-        lastUpdated: now,
-        safetyGateStatus: missingContact ? "Missing contact" : row.status || "Ready",
+        previewStatus: generatedReportPreview || weeklyReport ? "Previewed" : "Not previewed",
+        sentStatus: status === "Sent" ? "Sent" : "Not sent",
+        safetyGateStatus: missingContact ? "Missing contact" : group.status || "Ready",
         missingContactWarning: missingContact ? "Missing facility contact" : "",
-        emailSubject: facilityEmailContent(model, row.reportType || selectedReportType).subject,
-        emailBody: facilityEmailContent(model, row.reportType || selectedReportType).body,
-        attachmentTabs: facilityWorkbookSheets(model).map((sheet) => sheet.name).join(", "),
-      };
+      });
     });
     setReportHistory((prev) => [...nextRecords, ...prev].slice(0, 300));
     setCopyNotice(`${nextRecords.length} report record${nextRecords.length === 1 ? "" : "s"} saved to Report History.`);
   }
 
-  function markSelectedFacilityReportsComplete() {
-    markFacilityReports(selectedFacilityReportRows, "Manually Completed");
-    setCopyNotice("Selected facility reports marked complete.");
+  function markSelectedFacilityReportsReviewed() {
+    const rows = selectedMarkReviewedReportRows;
+    if (!rows.length) {
+      setCopyNotice("No selected Ready reports are eligible to be marked reviewed.");
+      return;
+    }
+    if (blockReportAction("canMarkReady", rows, "Mark Reviewed")) return;
+    markFacilityReports(rows, "Reviewed");
+    saveReportsToHistory(rows, "Reviewed");
+    setCopyNotice("Selected facility reports marked reviewed.");
   }
 
   function markSelectedFacilityReportsSent() {
-    const rows = selectedFacilityReportRows.length ? selectedFacilityReportRows : facilityReportQueueFiltered.filter((row) => !["Missing Contact", "Needs Review"].includes(row.status));
+    const rows = selectedMarkSentReportRows;
     if (!rows.length) {
-      setCopyNotice("No ready facility reports selected to mark sent.");
+      setCopyNotice("No selected Reviewed reports are eligible to be marked sent.");
       return;
     }
+    if (blockReportAction("canMarkSent", rows, "Mark Sent")) return;
     markFacilityReports(rows, "Sent");
     saveReportsToHistory(rows, "Sent");
     setCopyNotice(`${rows.length} report${rows.length === 1 ? "" : "s"} marked sent and complete. Attach/send confirmation has been documented.`);
   }
 
   function sendReadyFacilityReports() {
-    const readyRows = selectedFacilityReportRows.filter((row) => !["Missing Contact", "Needs Review"].includes(row.status));
+    const readyRows = selectedReadyReportRows;
     if (!readyRows.length) {
       setCopyNotice("No ready reports to send. Resolve missing contacts or review items first.");
       return;
     }
+    if (blockReportAction("canPrepareEmail", readyRows, "Preparing report emails")) return;
+    if (blockReportAction("canMarkReady", readyRows, "Mark Ready")) return;
     const body = facilityReportBundle(readyRows);
     setGeneratedReportPreview(body);
     setWeeklyReport(body);
     setWeeklySubject(`${selectedReportType}: Ready to Send`);
-    markFacilityReports(readyRows, "Ready to Send");
-    saveReportsToHistory(readyRows, "Ready to Send");
-    setCopyNotice(`${readyRows.length} ready report${readyRows.length === 1 ? "" : "s"} loaded into preview. Open Email downloads the Excel attachment separately so you can attach it before sending.`);
+    setCopyNotice(`${readyRows.length} ready report${readyRows.length === 1 ? "" : "s"} loaded into preview without changing report status.`);
   }
 
   function toggleFacilityReportSelection(id, checked) {
     setSelectedFacilityReports((prev) => checked ? Array.from(new Set([...prev, id])) : prev.filter((item) => item !== id));
   }
 
+  function updateFacilityReadinessFilter(key, value) {
+    setFacilityReadinessFilters((current) => ({ ...current, [key]: value }));
+    setFacilityReadinessVisibleLimit(20);
+  }
+
+  function selectAllVisibleFacilityReports() {
+    setSelectedFacilityReports((current) => selectFacilityIds(current, facilityReadinessVisibleRows));
+  }
+
+  function selectAllMatchingFacilityReports() {
+    setSelectedFacilityReports((current) => selectFacilityIds(current, facilityReadinessMatchingRows));
+  }
+
+  function clearFacilityReportSelection() {
+    setSelectedFacilityReports([]);
+  }
+
+  function returnToFacilityReadiness() {
+    const context = reportCorrectionTarget?.reportingContext;
+    if (context?.filters) setFacilityReadinessFilters({ ...context.filters });
+    if (context?.selectedFacilityIds) setSelectedFacilityReports([...context.selectedFacilityIds]);
+    if (context?.expandedIssueCode) setExpandedReportIssueCode(context.expandedIssueCode);
+    if (context?.audience) selectReportsReviewAudience(context.audience);
+    else if (context?.recipientGroup) setSelectedRecipientGroup(context.recipientGroup);
+    setActivePage("reports");
+    setReportsTab(context?.reportsTab || "facility-readiness");
+    setReportCorrectionTarget(null);
+  }
+
+  function openReportingIssueCorrection(issue, contextOverrides = {}) {
+    const target = buildReportingCorrectionRoute(issue, {
+      reportsTab: contextOverrides.reportsTab || "facility-readiness",
+      filters: facilityReadinessFilters,
+      selectedFacilityIds: selectedFacilityReports,
+      expandedIssueCode: expandedReportIssueCode,
+      audience: contextOverrides.audience || reportsReviewAudience,
+      recipientGroup: contextOverrides.recipientGroup || selectedRecipientGroup,
+    });
+    if (!target.recordId) {
+      setCopyNotice(`${target.action || "Correction"} could not open because the affected record has no stable ID.`);
+      return;
+    }
+    setReportCorrectionTarget(target);
+    if (target.page === "workspace") {
+      setSelectedId(target.recordId);
+      setActiveProfileTab("overview");
+      setTrackerPanelOpen(false);
+      setActivePage("workspace");
+      return;
+    }
+    setActivePage("positions");
+  }
+
   function openReportAutomationSettings() {
     setActivePage("automation");
     setAutomationTab("report");
+    window.setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 30);
+  }
+
+  function openReportingSettingsSurface(surface) {
+    if (surface === "email-templates") {
+      setActiveSettingsTab("templates");
+      setActivePage("settings");
+    } else if (surface === "recipients") {
+      setActiveSettingsTab("contacts");
+      setActivePage("settings");
+    } else if (surface === "report-presets" || surface === "workbook-defaults") {
+      setActivePage("reports");
+      setReportsTab("send-export");
+    } else if (surface === "no-openings") {
+      setActivePage("reports");
+      setReportsTab("facility-readiness");
+    } else {
+      openReportAutomationSettings();
+      return;
+    }
     window.setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 30);
   }
 
@@ -14597,22 +15264,49 @@ function rowifyCandidate(item = {}) {
     ["candidates", "Candidates", "\uD83D\uDC65"],
     ["calendar", "Calendar", "\uD83D\uDCC5"],
     ["positions", "Facility & Position Setup", "\uD83C\uDFE2"],
-    ["reports", "Weekly Cleanup", "\uD83E\uDDF9"],
-    ["reporting", "Reports", "\uD83D\uDCCA"],
+    ["reports", "Weekly Reporting", "\uD83E\uDDF9"],
+    ["reporting", "Reports & History", "\uD83D\uDCCA"],
     ["settings", "Settings", "\u2699\uFE0F"],
     ["account", "Profile & Account", "\uD83D\uDC64"],
   ];
+  function navigateToReportingValue(value) {
+    const route = resolveReportingNavigation(value);
+    const navigation = buildReportingNavigation({
+      search: window.location.search,
+      activePage: route.destination,
+      reportsTab: route.step,
+    });
+    const nextSearch = savedHistorySearch(navigation.search, "");
+    const nextLocation = `${window.location.pathname}${nextSearch}${window.location.hash}`;
+    const currentState = window.history.state || {};
+    if (
+      readReportReviewTarget(window.location.search)
+      || currentState.activePage !== route.destination
+      || currentState.reportsTab !== route.step
+    ) {
+      window.history.pushState({ ...currentState, ...navigation.state }, "", nextLocation);
+    } else {
+      window.history.replaceState({ ...currentState, ...navigation.state }, "", nextLocation);
+    }
+    setReportReviewTargetId("");
+    reportReviewTargetRestoredRef.current = "";
+    reportReviewPreviewRestoredRef.current = "";
+    setReportsTab(route.step);
+    setActivePage(route.destination);
+  }
   function navigateToPage(key) {
     if (key === "actions") {
       setActivePage("home");
       return;
     }
     if (key === "reporting") {
-      setReportsTab("hub");
-      setActivePage("reports");
+      navigateToReportingValue("reports-history");
       return;
     }
-    if (key === "reports") setReportsTab("metrics");
+    if (key === "reports") {
+      navigateToReportingValue("overview");
+      return;
+    }
     setActivePage(key);
     if (key === "hot") {
       setHotLeadDetailOpen(false);
@@ -15253,6 +15947,17 @@ function rowifyCandidate(item = {}) {
           </div>
 
         {candidateRouteKeys.includes(activePage) ? <CandidateSectionNavigator onChange={navigateToCandidateSection} /> : null}
+        {reportCorrectionTarget && activePage !== "reports" ? (
+          <div role="status" style={{ marginBottom: 14, border: `1px solid ${THEME.primary2}`, borderRadius: 8, padding: 12, background: THEME.blueBg, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <div>
+              <strong>{reportCorrectionTarget.action}: {reportCorrectionTarget.label || "reporting record"}</strong>
+              <div style={{ color: THEME.muted, fontSize: 12, marginTop: 3 }}>
+                Correct the highlighted {labelFromKey(reportCorrectionTarget.field)} field, save explicitly, then return to the same Facility Readiness view.
+              </div>
+            </div>
+            <Button subtle onClick={returnToFacilityReadiness}>Return to Facility Readiness</Button>
+          </div>
+        ) : null}
 
         {activePage === "home" ? (
           <RecruiterWorkspacePage
@@ -15273,12 +15978,10 @@ function rowifyCandidate(item = {}) {
             }}
             onOpenRequisition={() => setActivePage("positions")}
             onOpenWeeklyCleanup={() => {
-              setReportsTab("metrics");
-              setActivePage("reports");
+              navigateToReportingValue("overview");
             }}
             onOpenReports={() => {
-              setReportsTab("hub");
-              setActivePage("reports");
+              navigateToReportingValue("reports-history");
             }}
             onOpenCalendar={() => setActivePage("calendar")}
             onOpenCalendarEvent={openCalendarEvent}
@@ -15340,7 +16043,7 @@ function rowifyCandidate(item = {}) {
                   ["Ready for Intake", hotLeads.filter((lead) => ["Ready for Intake", "Booked", "Responded"].includes(lead.outreachStatus)).length, "From last week", "Low", "\u2713", () => setActivePage("hot")],
                   ["Pending Actions", attentionActions.length, "Due this week", "Medium", "\u23F0", () => { setActivePage("actions"); openWorkspaceAction("attention"); }],
                   ["Interviews", actionQueues.upcomingInterviews.length, "Scheduled this week", "Interview", "\uD83D\uDCC5", () => { setActivePage("actions"); openWorkspaceAction("interviews"); }],
-                  ["Reports Generated", weeklyReport ? 1 : 0, "This week", "Clear", "\uD83D\uDCC4", () => { setActivePage("reports"); setReportsTab("hub"); }],
+                  ["Reports Generated", weeklyReport ? 1 : 0, "This week", "Clear", "\uD83D\uDCC4", () => navigateToReportingValue("reports-history")],
                 ].map(([label, value, detail, tone, icon, action]) => {
                   const colors = badgeColors(tone);
                   return (
@@ -15387,8 +16090,8 @@ function rowifyCandidate(item = {}) {
                       ["Add Candidate", "\u2795", () => setActivePage("submission")],
                       ["Hot Leads", "\uD83D\uDD25", () => setActivePage("hot")],
                       ["Position Management", "\uD83D\uDCCB", () => setActivePage("positions")],
-                      ["Weekly Cleanup", "\uD83E\uDDF9", () => { setActivePage("reports"); setReportsTab("metrics"); }],
-                      ["Reports", "\uD83D\uDCCA", () => { setActivePage("reports"); setReportsTab("exports"); }],
+                      ["Weekly Reporting", "\uD83E\uDDF9", () => navigateToReportingValue("overview")],
+                      ["Reports & History", "\uD83D\uDCCA", () => navigateToReportingValue("reports-history")],
                       ["Workspace Setup", "\u2302", () => { setActivePage("settings"); setActiveSettingsTab("general"); }],
                       ["Settings", "\u2699\uFE0F", () => setActivePage("settings")],
                     ].map(([label, icon, action]) => (
@@ -15430,7 +16133,7 @@ function rowifyCandidate(item = {}) {
                 <Card compact title="Announcements" subtitle="System reminders and updates." action={<Button subtle onClick={() => setActivePage("settings")}>View all</Button>}>
                   <div style={{ display: "grid", gap: 10 }}>
                     <div style={{ border: `1px solid ${THEME.green}`, borderRadius: 7, background: THEME.greenBg, padding: 12, display: "grid", gridTemplateColumns: "28px 1fr auto", gap: 10, alignItems: "center" }}><span style={{ color: THEME.green }}> </span><span><strong>System Update</strong><span style={{ display: "block", color: THEME.muted, fontSize: 12 }}>WelcomeFlow was updated to improve performance and reliability.</span></span><span style={{ color: THEME.muted, fontSize: 11 }}>{displayDate(todayIso())}</span></div>
-                    <div style={{ border: `1px solid ${THEME.amber}`, borderRadius: 7, background: THEME.amberBg, padding: 12, display: "grid", gridTemplateColumns: "28px 1fr auto", gap: 10, alignItems: "center" }}><span style={{ color: THEME.amber }}>!</span><span><strong>Weekly Cleanup Reminder</strong><span style={{ display: "block", color: THEME.muted, fontSize: 12 }}>{weeklyReport ? "Your weekly report is ready." : "Your weekly report has not been generated yet."}</span></span><span style={{ color: THEME.muted, fontSize: 11 }}>{displayDate(todayIso())}</span></div>
+                    <div style={{ border: `1px solid ${THEME.amber}`, borderRadius: 7, background: THEME.amberBg, padding: 12, display: "grid", gridTemplateColumns: "28px 1fr auto", gap: 10, alignItems: "center" }}><span style={{ color: THEME.amber }}>!</span><span><strong>Weekly Reporting Reminder</strong><span style={{ display: "block", color: THEME.muted, fontSize: 12 }}>{weeklyReport ? "Your weekly report is ready." : "Your weekly report has not been generated yet."}</span></span><span style={{ color: THEME.muted, fontSize: 11 }}>{displayDate(todayIso())}</span></div>
                   </div>
                 </Card>
                 <Card compact title="Upcoming Actions" subtitle="Your next tasks and follow-ups." action={<Button subtle onClick={() => setActivePage("actions")}>View all actions</Button>}>
@@ -15449,7 +16152,7 @@ function rowifyCandidate(item = {}) {
             </div>
             <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, background: THEME.panel, padding: 12, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}><span style={{ width: 30, height: 30, borderRadius: 999, display: "grid", placeItems: "center", background: THEME.blueBg, color: THEME.primary2, fontWeight: 950 }}>i</span><span><strong>Pro Tip</strong><span style={{ display: "block", color: THEME.muted, fontSize: 12 }}>Keep your weekly report up to date by reviewing metrics, cleaning ATS records, and generating your report every week.</span></span></div>
-              <Button primary onClick={() => { setActivePage("reports"); setReportsTab("metrics"); }}>Go to Weekly Cleanup</Button>
+              <Button primary onClick={() => navigateToReportingValue("overview")}>Go to Weekly Reporting</Button>
             </div>
           </div>
         ) : null}
@@ -16053,7 +16756,7 @@ function rowifyCandidate(item = {}) {
             </Card>
             {automationTab === "report" ? (
               <div style={{ display: "grid", gap: 16 }}>
-                <Card compact title={`Automation Status: ${reportAutomationEnabled ? "Active" : "Off"}`} subtitle="Report automation status lives here so Weekly Cleanup stays focused on execution.">
+                <Card compact title={`Automation Status: ${reportAutomationEnabled ? "Active" : "Off"}`} subtitle="Report automation status lives here so Weekly Reporting stays focused on execution.">
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center", border: `1px solid ${reportAutomationEnabled ? THEME.green : THEME.borderSoft}`, borderRadius: 8, padding: 12, background: reportAutomationEnabled ? THEME.greenBg : THEME.panelAlt }}>
                     <span><strong>{reportAutomationEnabled ? "Weekly report automation is active" : "Weekly report automation is off"}</strong><span style={{ display: "block", color: THEME.muted, fontSize: 12, marginTop: 3 }}>{reportAutomationDay} at {reportAutomationTime} | {reportSendMode}</span></span>
                     <Button primary onClick={() => updateSettings(["options", "reportAutomation", "enabled"], !reportAutomationEnabled)}>{reportAutomationEnabled ? "Turn Off" : "Turn On"}</Button>
@@ -16122,7 +16825,7 @@ function rowifyCandidate(item = {}) {
                     <ToggleField label="If feedback aging > 5 days, flag Regional" checked={reportAutomation.flagFeedbackAgingRegional !== false} onChange={(value) => updateSettings(["options", "reportAutomation", "flagFeedbackAgingRegional"], value)} />
                     <ToggleField label="Block missing recipients" checked={reportAutomation.blockMissingRecipients !== false} onChange={(value) => updateSettings(["options", "reportAutomation", "blockMissingRecipients"], value)} />
                     <ToggleField label="Require preview before send" checked={requirePreviewBeforeSend} onChange={(value) => updateSettings(["options", "reportAutomation", "requirePreviewBeforeSend"], value)} />
-                    <ToggleField label="Allow manual complete from Weekly Cleanup" checked={allowManualCompletion} onChange={(value) => updateSettings(["options", "reportAutomation", "allowManualCompletion"], value)} />
+                    <ToggleField label="Allow manual review from Weekly Reporting" checked={allowManualCompletion} onChange={(value) => updateSettings(["options", "reportAutomation", "allowManualCompletion"], value)} />
                   </div>
                 </Card>
               </div>
@@ -18755,564 +19458,225 @@ function rowifyCandidate(item = {}) {
             </Card>
           </div>
         ) : null}
-        {activePage === "reports" ? (
-          <div style={{ display: "grid", gap: 14 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-            <div>
-              <h1 style={{ margin: 0, color: THEME.text, fontSize: 22, fontWeight: 950 }}>{"\uD83E\uDDF9"} Weekly Cleanup</h1>
-              <div style={{ color: THEME.muted, fontSize: 12, marginTop: 4 }}>Build your weekly report, clean stale records, and export leadership-ready updates.</div>
-            </div>
-          </div>
-          <Card compact>
-            <div style={{ display: "grid", gap: 16, gridTemplateColumns: isNarrow ? "1fr" : "minmax(0, 1fr) 260px", alignItems: "center" }}>
-              <div>
-                <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 14 }}>
-                  <span style={{ width: 34, height: 34, borderRadius: 999, display: "grid", placeItems: "center", background: THEME.blueBg, color: THEME.primary2, fontSize: 17 }}>{"\uD83D\uDCC5"}</span>
-                  <span><strong style={{ display: "block", color: THEME.text }}>Weekly Cleanup Command Center</strong><span style={{ color: THEME.muted, fontSize: 12 }}>Review weekly metrics, clean ATS records, then generate and export the final report.</span></span>
-                </div>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "end", marginBottom: 14 }}>
-                  <Field label="Report Start Date"><TextInput type="date" value={reportStartDate} onChange={(event) => setReportStartDate(event.target.value)} style={{ width: isNarrow ? "100%" : 168 }} /></Field>
-                  <Field label="Report End Date"><TextInput type="date" value={reportEndDate} onChange={(event) => setReportEndDate(event.target.value)} style={{ width: isNarrow ? "100%" : 168 }} /></Field>
-                </div>
-                <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : "repeat(3, minmax(0, 1fr))" }}>
-                  <MiniStat label="Included" value={includedReportRows.length} tone="Interview" compact />
-                  <MiniStat label="Removed" value={excludedReportIds.length} tone={excludedReportIds.length ? "High" : "Low"} compact />
-                  <MiniStat label={weeklyReport ? "Generated" : "Not Generated"} value={weeklyReport ? "Ready" : "Report Status"} tone={weeklyReport ? "Low" : "Medium"} compact />
-                </div>
-              </div>
-              <div style={{ display: "grid", gap: 10 }}>
-                <Button primary onClick={generateWeeklyReport}>Generate Weekly Report</Button>
-                <Button subtle onClick={clearAndRegenerateWeeklyReports}>Clear + Regenerate Reports</Button>
-              </div>
-            </div>
-          </Card>
-          <Card compact>
-            <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : "repeat(5, minmax(0, 1fr))" }}>
-              {[
-                ["metrics", "Weekly Metrics"],
-                ["audience", "Audience Report Queue + Sender"],
-                ["facility", "Facility Completion"],
-                ["ats", "ATS Cleanup"],
-                ["exports", "Export"],
-                ["hub", "Reports Hub"],
-              ].map(([value, label], index) => (
-                <button key={value} type="button" onClick={() => setReportsTab(value)} style={{ border: `1px solid ${reportsTab === value ? THEME.primary2 : THEME.borderSoft}`, borderRadius: 6, padding: "10px 11px", background: reportsTab === value ? THEME.blueBg : THEME.panelAlt, color: THEME.text, cursor: "pointer", textAlign: "left", fontWeight: 850, fontSize: 12 }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: 999, background: reportsTab === value ? THEME.primary2 : THEME.panel, color: reportsTab === value ? "#fff" : THEME.primary2, marginRight: 8 }}>{index + 1}</span>
-                  <span>{label}</span>
-                  {reportsTab === value ? <span style={{ display: "block", height: 3, background: THEME.primary2, borderRadius: 999, marginTop: 8 }} /> : null}
-                </button>
-              ))}
-            </div>
-          </Card>
-          </div>
-        ) : null}
+        <WeeklyReportingPage
+          {...{
+            Accordion,
+            Badge,
+            Button,
+            Card,
+            EmailDocument,
+            EmptyState,
+            Field,
+            FileButton,
+            MiniStat,
+            ReportDetailPanel,
+            ReportTile,
+            SelectInput,
+            TextInput,
+            ToggleField,
+            THEME,
+            activePage,
+            activeReportSection,
+            allowManualCompletion,
+            atsCleanupFilter,
+            atsCleanupRows,
+            atsCleanupSearch,
+            candidateTimingDelayRows,
+            restartWeeklyReview,
+            clearFacilityReportSelection,
+            cloudStatus,
+            copySelectedFacilityReports,
+            copyWeeklyReport,
+            displayDate,
+            downloadExcelWorkbook,
+            downloadSelectedSubmittals,
+            eligibilityForReportRows,
+            excludedReportIds,
+            expandedReportIssueCode,
+            exportAtsCleanupCsv,
+            exportAtsUpdatePacketExcel,
+            exportFacilityWorkbooks,
+            exportFullBackup,
+            exportHistoryCsv,
+            exportHistoryExcel,
+            exportSelectedFacilityReports,
+            exportTrackerCsv,
+            exportWeeklyFullDataWorkbook,
+            facilityReadinessFilters,
+            facilityReadinessIssueGroups,
+            facilityReadinessMatchingRows,
+            facilityReadinessRegions,
+            facilityReadinessRows,
+            facilityReadinessSelection,
+            facilityReadinessStatusCounts,
+            facilityReadinessVisibleRows,
+            facilityReportQueueFiltered,
+            generateWeeklyReport,
+            hasLoaded,
+            history,
+            importAtsStatusSpreadsheet,
+            includedReportRows,
+            isMedium,
+            isNarrow,
+            labelFromKey,
+            markSelectedAtsUpdated,
+            markSelectedFacilityReportsReviewed,
+            markSelectedFacilityReportsSent,
+            noOpeningsPolicy,
+            noOpeningsPolicyDraft,
+            noOpeningsPolicySelection,
+            noOpeningWeeklyDecisions,
+            openReportAutomationSettings,
+            openReportReview,
+            openReportingIssueCorrection,
+            openTentativeStartReminder,
+            previewSelectedFacilityReports,
+            recipientGroupOptions,
+            removeFromWeeklyReport,
+            reportAutomation,
+            reportAutomationDay,
+            reportAutomationEnabled,
+            reportAutomationTime,
+            reportCategories,
+            reportCompletionSummary,
+            reportEndDate,
+            reportFacilityNames,
+            reportInclusions,
+            reportIssueGroups,
+            reportReviewTargetId,
+            reportReviewTargetNotFound,
+            reportRequisitionGroups,
+            reportRequisitionMetrics,
+            reportSendMode,
+            reportSourceMetrics,
+            reportStartDate,
+            reportStatusOptions,
+            reportTiles,
+            reportTypeOptions,
+            reportsTab,
+            restoreWeeklyReportRows,
+            saveNoOpeningsPolicy,
+            saveReportsToHistory,
+            selectAllMatchingFacilityReports,
+            selectAllVisibleFacilityReports,
+            selectedFacility,
+            selectedFacilityActionEligibility,
+            selectedFacilityActionRows,
+            selectedFacilityPolicyRows,
+            selectedFacilityReports,
+            reportingActionState,
+            selectedRecipientGroup,
+            selectedReportEligibility,
+            selectedReportType,
+            selectedStatusFilter,
+            selectedTrackerIds,
+            sendReadyFacilityReports,
+            setActivePage,
+            setActiveReportSection,
+            setAtsCleanupFilter,
+            setAtsCleanupSearch,
+            setExpandedReportIssueCode,
+            setFacilityReadinessVisibleLimit,
+            setNoOpeningsPolicyDraft,
+            setReportEndDate,
+            setReportInclusions,
+            setReportsTab: navigateToReportingValue,
+            setReportStartDate,
+            setSelectedFacility,
+            setSelectedFacilityReports,
+            setSelectedId,
+            setSelectedRecipientGroup,
+            setSelectedReportType,
+            setSelectedStatusFilter,
+            setSelectedTrackerIds,
+            setSettings,
+            setTrackerPanelOpen,
+            setWeeklyNoOpeningDecision,
+            settings,
+            timingSummary,
+            toggleFacilityReportSelection,
+            toggleTrackerSelection,
+            tracker,
+            undoNoOpeningWeeklyDecision,
+            updateFacilityReadinessFilter,
+            weeklyReport,
+            weeklyReportingBlockerCount,
+            weeklyReportingPrimaryAction,
+            weeklySubject,
+          }}
+        />
 
-        {activePage === "reports" && reportsTab === "ats" ? (() => {
-          const rows = atsCleanupRows().map((row) => ({ ...row, tracker: tracker.find((item) => item.id === row.id) }));
-          const counts = {
-            all: rows.length,
-            needsReview: rows.filter((row) => !row.atsUpdatedAt).length,
-            ready: rows.filter((row) => `${row.status} ${row.nextAction}`.toLowerCase().includes("ready")).length,
-            unresponsive: rows.filter((row) => `${row.status} ${row.nextAction}`.toLowerCase().includes("unresponsive")).length,
-            updated: rows.filter((row) => row.atsUpdatedAt).length,
-          };
-          const query = atsCleanupSearch.trim().toLowerCase();
-          const filteredRows = rows.filter((row) => {
-            const haystack = [row.candidate, row.tracker?.candidateEmail, row.tracker?.formSnapshot?.emailAddress, row.reqNumber, row.position, row.facility, row.status, row.nextAction].filter(Boolean).join(" ").toLowerCase();
-            const matchesSearch = !query || haystack.includes(query);
-            const matchesFilter = atsCleanupFilter === "All"
-              || (atsCleanupFilter === "Needs Review" && !row.atsUpdatedAt)
-              || (atsCleanupFilter === "Ready for Intake" && `${row.status} ${row.nextAction}`.toLowerCase().includes("ready"))
-              || (atsCleanupFilter === "Unresponsive" && `${row.status} ${row.nextAction}`.toLowerCase().includes("unresponsive"))
-              || (atsCleanupFilter === "Updated" && row.atsUpdatedAt);
-            return matchesSearch && matchesFilter;
-          });
-          const allVisibleSelected = Boolean(filteredRows.length) && filteredRows.every((row) => selectedTrackerIds.includes(row.id));
-          const toggleAllVisible = () => setSelectedTrackerIds((prev) => allVisibleSelected ? prev.filter((id) => !filteredRows.some((row) => row.id === id)) : Array.from(new Set([...prev, ...filteredRows.map((row) => row.id)])));
-          const chipDefs = [
-            ["All", "All", counts.all, THEME.primary2, THEME.blueBg],
-            ["Needs Review", "Needs Review", counts.needsReview, THEME.amber, THEME.amberBg],
-            ["Ready for Intake", "Ready for Intake", counts.ready, THEME.green, THEME.greenBg],
-            ["Unresponsive", "Unresponsive", counts.unresponsive, THEME.red, THEME.redBg],
-            ["Updated", "Updated", counts.updated, THEME.primary2, THEME.blueBg],
-          ];
-          const statusTone = (status) => {
-            const lower = String(status || "").toLowerCase();
-            if (lower.includes("unresponsive") || lower.includes("risk") || lower.includes("reject")) return "High";
-            if (lower.includes("ready") || lower.includes("offer") || lower.includes("hired")) return "Low";
-            if (lower.includes("interview")) return "Interview";
-            return "Medium";
-          };
-          return (
-            <div style={{ display: "grid", gap: 18 }}>
-              <Card compact>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "start", flexWrap: "wrap", marginBottom: 14 }}>
-                  <div>
-                    <h2 style={{ margin: 0, fontSize: 18 }}>ATS Cleanup Center</h2>
-                    <div style={{ color: THEME.muted, fontSize: 12, marginTop: 4 }}>Review and clean ATS records before generating your weekly report.</div>
-                  </div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                    <Button subtle onClick={exportAtsCleanupCsv}>Download ATS Cleanup CSV</Button>
-                    <Button primary onClick={exportAtsUpdatePacketExcel}>Export ATS Packet Excel</Button>
-                    <FileButton accept=".xlsx,.xltx,.xlsm,.xls,.xml,.csv,text/csv,.txt" onText={importAtsStatusSpreadsheet}>Import ATS Status</FileButton>
-                    <Button subtle onClick={markSelectedAtsUpdated} disabled={!selectedTrackerIds.length}>Mark Selected ATS Updated</Button>
-                    <Button subtle onClick={downloadSelectedSubmittals} disabled={!selectedTrackerIds.length}>Download Selected ATS Packet</Button>
-                  </div>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {chipDefs.map(([key, label, count, color, bg]) => (
-                      <button key={key} type="button" onClick={() => setAtsCleanupFilter(key)} style={{ border: `1px solid ${atsCleanupFilter === key ? color : THEME.borderSoft}`, borderRadius: 999, padding: "7px 10px", background: atsCleanupFilter === key ? bg : THEME.panelAlt, color: atsCleanupFilter === key ? color : THEME.muted, cursor: "pointer", fontWeight: 900, fontSize: 11 }}>{label} ({count})</button>
-                    ))}
-                  </div>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                    <Button subtle onClick={() => setAtsCleanupFilter("All")} style={{ padding: "7px 10px", fontSize: 11 }}>Filters</Button>
-                    <TextInput value={atsCleanupSearch} onChange={(event) => setAtsCleanupSearch(event.target.value)} placeholder="Search candidates..." style={{ minWidth: 220, height: 34 }} />
-                  </div>
-                </div>
-                {!filteredRows.length ? <EmptyState>No ATS cleanup items match this view.</EmptyState> : (
-                  <div style={{ overflowX: "auto", border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, background: THEME.panel }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1160 }}>
-                      <thead>
-                        <tr style={{ background: THEME.panelAlt }}>
-                          {["", "Candidate", "Req #", "Position", "Facility", "Status", "Next Action", "Submitted", "Aging", "ATS Updated", "Last Touch"].map((head, index) => (
-                            <th key={head || "select"} style={{ textAlign: "left", color: THEME.muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 0.45, padding: "11px 10px", borderBottom: `1px solid ${THEME.borderSoft}` }}>{index === 0 ? <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} /> : head}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredRows.map((item) => (
-                          <tr key={`${item.id}-${item.submitted}`} style={{ background: selectedTrackerIds.includes(item.id) ? THEME.blueBg : THEME.panel }}>
-                            <td style={{ padding: 10, borderBottom: `1px solid ${THEME.borderSoft}` }}><input type="checkbox" checked={selectedTrackerIds.includes(item.id)} onChange={() => toggleTrackerSelection(item.id)} /></td>
-                            <td style={{ padding: 10, borderBottom: `1px solid ${THEME.borderSoft}` }}><strong>{item.candidate}</strong><div style={{ color: THEME.muted, fontSize: 11, marginTop: 2 }}>{item.tracker?.candidateEmail || item.tracker?.formSnapshot?.emailAddress || "No email"}</div></td>
-                            <td style={{ padding: 10, borderBottom: `1px solid ${THEME.borderSoft}`, color: THEME.muted }}>{item.reqNumber || "N/A"}</td>
-                            <td style={{ padding: 10, borderBottom: `1px solid ${THEME.borderSoft}` }}>{item.position || "N/A"}</td>
-                            <td style={{ padding: 10, borderBottom: `1px solid ${THEME.borderSoft}`, color: THEME.muted }}>{item.facility || "N/A"}</td>
-                            <td style={{ padding: 10, borderBottom: `1px solid ${THEME.borderSoft}` }}><Badge tone={statusTone(item.status)}>{item.status || "No status"}</Badge></td>
-                            <td style={{ padding: 10, borderBottom: `1px solid ${THEME.borderSoft}`, color: THEME.muted }}>{item.nextAction || "No next action"}</td>
-                            <td style={{ padding: 10, borderBottom: `1px solid ${THEME.borderSoft}`, color: THEME.muted }}>{displayDate(item.submitted)}</td>
-                            <td style={{ padding: 10, borderBottom: `1px solid ${THEME.borderSoft}`, color: item.agingDays > 14 ? THEME.red : item.agingDays > 7 ? THEME.amber : THEME.muted, fontWeight: 900 }}>{item.agingDays} days</td>
-                            <td style={{ padding: 10, borderBottom: `1px solid ${THEME.borderSoft}`, color: item.atsUpdatedAt ? THEME.green : THEME.muted, fontWeight: 800 }}>{item.atsUpdatedAt ? new Date(item.atsUpdatedAt).toLocaleDateString() : "Not yet"}</td>
-                            <td style={{ padding: 10, borderBottom: `1px solid ${THEME.borderSoft}`, color: THEME.muted }}>{item.lastTouch ? new Date(item.lastTouch).toLocaleDateString() : "N/A"}<div style={{ fontSize: 11 }}>{item.historyCount} touch{item.historyCount === 1 ? "" : "es"}</div></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: 10, color: THEME.muted, fontSize: 12 }}>
-                      <span>Showing {filteredRows.length} of {rows.length} candidates</span>
-                      <span>{selectedTrackerIds.length} selected</span>
-                    </div>
-                  </div>
-                )}
-              </Card>
-              <Card compact>
-                <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 10, alignItems: "start" }}>
-                  <span style={{ color: THEME.primary2, fontWeight: 950 }}> </span>
-                  <div><strong>What this page is for</strong><p style={{ margin: "4px 0 0", color: THEME.muted, lineHeight: 1.6 }}>Use this page to review candidates that need ATS updates, resolve stale records, and clean your system before generating the weekly report. Statuses are based on last activity, response, and submission data.</p></div>
-                </div>
-              </Card>
-            </div>
-          );
-        })() : null}
-
-        {activePage === "reports" && reportsTab === "metrics" ? (
-          <div style={{ display: "grid", gap: 18 }}>
-            <div style={{ display: "grid", gap: 14 }}>
-              <Card title="Metrics + Reporting" subtitle="Review included rows, removable candidates, and leadership-ready sections." compact>
-                <div style={{ display: "grid", gap: 14 }}>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                    <Badge tone="Interview">{includedReportRows.length} Included</Badge>
-                    <Badge tone={excludedReportIds.length ? "High" : "Low"}>{excludedReportIds.length} Removed before generate</Badge>
-                    {excludedReportIds.length ? <Button subtle onClick={restoreWeeklyReportRows}>Restore Removed Rows</Button> : null}
-                  </div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <Button subtle onClick={exportHistoryCsv} disabled={!history.length}>Export History CSV</Button>
-                    <Button subtle onClick={exportHistoryExcel} disabled={!history.length}>Export History Excel</Button>
-                  </div>
-                  <div style={{ display: "grid", gap: 12, gridTemplateColumns: isNarrow ? "1fr" : "repeat(3, minmax(0, 1fr))" }}>
-                    {reportTiles.map((tile) => <ReportTile key={tile.key} item={tile} active={activeReportSection === tile.key} onClick={() => setActiveReportSection(tile.key)} />)}
-                  </div>
-                  <Accordion title={reportTiles.find((tile) => tile.key === activeReportSection)?.label || "Report Details"} subtitle="Click into each section, review the rows, and remove anything that should not generate.">
-                    <ReportDetailPanel section={activeReportSection} rows={reportCategories[activeReportSection] || []} sourceRows={reportSourceMetrics} requisitionRows={reportRequisitionMetrics} requisitionGroups={reportRequisitionGroups} settings={settings} onRemove={removeFromWeeklyReport} onOpenCandidate={(item) => { setSelectedId(item.id); setActivePage("workspace"); setTrackerPanelOpen(false); }} onOpenReminder={openTentativeStartReminder} compact={isNarrow} />
-                  </Accordion>
-                </div>
-              </Card>
-              <Card title="Candidate Timing + Delay Review" subtitle={`${timingSummary.timingDelays} active timing delay${timingSummary.timingDelays === 1 ? "" : "s"} surfaced from candidate movement timestamps. Completed, hired, onboarding, archived, and closed candidates are cleared from action-needed timing alerts.`} compact>
-                <div style={{ display: "grid", gap: 12 }}>
-                  <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : "repeat(5, minmax(0, 1fr))" }}>
-                    <MiniStat label="Timing Delays" value={timingSummary.timingDelays} tone={timingSummary.timingDelays ? "Medium" : "Low"} compact />
-                    <MiniStat label="High/Critical Risk" value={timingSummary.highOrCritical} tone={timingSummary.highOrCritical ? "High" : "Low"} compact />
-                    <MiniStat label="Avg Response" value={timingSummary.outreachResponse} tone="Interview" compact />
-                    <MiniStat label="Submit To Interview" value={timingSummary.submittalToInterview} tone="Interview" compact />
-                    <MiniStat label="Interview To Decision" value={timingSummary.interviewToDecision} tone="Interview" compact />
-                  </div>
-                  {!candidateTimingDelayRows.length ? <EmptyState>No active timing delays are currently flagged for this report period.</EmptyState> : (
-                    <div style={{ overflowX: "auto" }}>
-                      <div style={{ display: "grid", gap: 8, minWidth: isNarrow ? 0 : 920 }}>
-                        <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "1.1fr 1fr 1fr 90px 1.2fr auto", gap: 10, padding: "0 10px", color: THEME.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>
-                          <span>Candidate</span><span>Stage</span><span>Delay Type</span><span>Waiting</span><span>Next Action</span><span>Open</span>
-                        </div>
-                        {candidateTimingDelayRows.slice(0, 8).map((row) => (
-                          <div key={row.candidateId} style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "1.1fr 1fr 1fr 90px 1.2fr auto", gap: 10, alignItems: "center", border: `1px solid ${row.candidateTimingRisk === "Critical" || row.candidateTimingRisk === "High" ? THEME.amber : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panel }}>
-                            <div><strong>{row.candidateName || "Unnamed Candidate"}</strong><div style={{ color: THEME.muted, fontSize: 12 }}>{row.position || "No position"} | {row.facility || "No facility"}</div></div>
-                            <div><Badge tone={row.candidateTimingRisk === "High" || row.candidateTimingRisk === "Critical" ? "High" : row.candidateTimingRisk === "Medium" ? "Medium" : "Low"}>{row.mainStage}</Badge><div style={{ color: THEME.muted, fontSize: 11, marginTop: 4 }}>{row.currentActionStatus}</div></div>
-                            <div>{row.delayType}</div>
-                            <div>{row.daysSinceLastAction || 0}d</div>
-                            <strong>{row.nextRecommendedAction}</strong>
-                            <Button subtle onClick={() => { setSelectedId(row.candidateId); setActivePage("workspace"); setTrackerPanelOpen(false); }} style={{ padding: "6px 8px", fontSize: 11 }}>Open</Button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </Card>
-              {false ? (
-              <div style={{ display: "none", gap: 14 }}>
-                <Card title="Facility Report Completion" subtitle={`${reportCompletionSummary.done} of ${reportCompletionSummary.total} facility reports complete. ${reportCompletionSummary.remaining} remaining.`} compact>
-                  <div style={{ display: "grid", gap: 12 }}>
-                    <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 999, height: 12, background: THEME.panelAlt, overflow: "hidden" }}>
-                      <div style={{ width: `${reportCompletionSummary.total ? Math.round((reportCompletionSummary.done / reportCompletionSummary.total) * 100) : 0}%`, height: "100%", background: `linear-gradient(90deg, ${THEME.primary2}, ${THEME.green})` }} />
-                    </div>
-                    <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
-                      <MiniStat label="Done" value={reportCompletionSummary.done} tone="Low" compact />
-                      <MiniStat label="Scheduled" value={reportCompletionSummary.scheduled} tone={reportCompletionSummary.scheduled ? "Interview" : "Low"} compact />
-                      <MiniStat label="Review" value={reportCompletionSummary.review} tone={reportCompletionSummary.review ? "Medium" : "Low"} compact />
-                      <MiniStat label="Missing" value={reportCompletionSummary.missing} tone={reportCompletionSummary.missing ? "High" : "Low"} compact />
-                    </div>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      {["All", "Needs Action", "Missing Contacts", "Scheduled"].map((filter) => <Button key={filter} subtle={selectedStatusFilter !== filter} primary={selectedStatusFilter === filter} onClick={() => setSelectedStatusFilter(filter)} style={{ padding: "7px 9px", fontSize: 11 }}>{filter}</Button>)}
-                    </div>
-                    <div style={{ display: "grid", gap: 8 }}>
-                      <div style={{ display: "grid", gridTemplateColumns: "1.1fr 90px 105px 1fr 70px", gap: 8, color: THEME.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase", padding: "0 4px" }}>
-                        <span>Facility</span><span>Report</span><span>Status</span><span>Last Action</span><span>Action</span>
-                      </div>
-                      {facilityReportQueueFiltered.slice(0, 5).map((row) => (
-                        <div key={row.id} style={{ display: "grid", gridTemplateColumns: "1.1fr 90px 105px 1fr 70px", gap: 8, alignItems: "center", border: `1px solid ${row.status === "Missing Contact" ? THEME.red : row.status === "Needs Review" ? THEME.amber : THEME.borderSoft}`, borderRadius: 6, padding: 8, background: THEME.panel }}>
-                          <strong style={{ fontSize: 12 }}>{row.facility}</strong>
-                          <span style={{ color: THEME.muted, fontSize: 12 }}>{row.report}</span>
-                          <Badge tone={row.status === "Missing Contact" ? "High" : row.status === "Needs Review" ? "Medium" : row.complete ? "Low" : "Interview"}>{row.status}</Badge>
-                          <span style={{ color: THEME.muted, fontSize: 12 }}>{row.lastAction}</span>
-                            <Button subtle onClick={() => { setSelectedFacility(row.facility); setSelectedFacilityReports([row.id]); previewSelectedFacilityReports([row]); }} style={{ padding: "6px 7px", fontSize: 11 }}>{row.action}</Button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </Card>
-                <Card title="Weekly Report Preview" subtitle="Preview your weekly report before sharing." compact>
-                  <div style={{ border: `1px dashed ${THEME.border}`, borderRadius: 6, minHeight: 260, padding: 16, background: THEME.panelAlt, display: "grid", placeItems: weeklyReport ? "stretch" : "center" }}>
-                    {weeklyReport ? <EmailDocument title="Weekly Report" subject={weeklySubject} body={weeklyReport} attachmentLabel="Download Excel Attachment" onDownloadAttachment={exportFullDataWorkbook} onMarkSent={markSelectedFacilityReportsSent} attachmentNotice="Mailto opens the email body only. Download this Excel attachment, then attach it to the draft before sending. After sending, use Mark Sent to document completion." /> : <div style={{ textAlign: "center", color: THEME.muted }}><div style={{ fontSize: 36, marginBottom: 10 }}> </div><strong style={{ color: THEME.text }}>Generate the weekly report to preview it here.</strong><div style={{ marginTop: 12 }}><Button primary onClick={generateWeeklyReport}>Generate Weekly Report</Button></div></div>}
-                  </div>
-                </Card>
-              </div>
-              ) : null}
-            </div>
-            {false ? (
-            <div style={{ display: "none" }}>
-            <Card title="Audience Report Queue + Sender" subtitle="Choose the audience, review the facility queue, then preview, copy, export, send, or mark reports complete." compact>
-              <div style={{ display: "grid", gap: 14 }}>
-                <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : "repeat(4, minmax(0, 1fr))" }}>
-                  <Field label="Facility"><SelectInput value={selectedFacility} onChange={(event) => { setSelectedFacility(event.target.value); setSelectedFacilityReports([]); }} options={["All Facilities", "Facilities With Openings", "Facilities With No Openings", ...reportFacilityNames]} /></Field>
-                  <Field label="Report Type"><SelectInput value={selectedReportType} onChange={(event) => setSelectedReportType(event.target.value)} options={reportTypeOptions} /></Field>
-                  <Field label="Recipient Group"><SelectInput value={selectedRecipientGroup} onChange={(event) => setSelectedRecipientGroup(event.target.value)} options={recipientGroupOptions} /></Field>
-                  <Field label="Status Filter"><SelectInput value={selectedStatusFilter} onChange={(event) => { setSelectedStatusFilter(event.target.value); setSelectedFacilityReports([]); }} options={reportStatusOptions} /></Field>
-                </div>
-                <div style={{ display: "grid", gap: 12, gridTemplateColumns: isMedium ? "1fr" : "minmax(0, 1fr) 280px", alignItems: "start" }}>
-                  <div style={{ display: "grid", gap: 10 }}>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <Button primary onClick={previewSelectedFacilityReports}>Preview Selected</Button>
-                      <Button subtle onClick={copySelectedFacilityReports} disabled={!facilityReportQueueFiltered.length}>Copy Selected</Button>
-                      <Button subtle onClick={exportSelectedFacilityReports} disabled={!facilityReportQueueFiltered.length}>Export Selected</Button>
-                      <Button subtle onClick={markSelectedFacilityReportsComplete} disabled={!allowManualCompletion || !facilityReportQueueFiltered.length}>Mark Complete</Button>
-                      <Button primary onClick={sendReadyFacilityReports} disabled={!facilityReportQueueFiltered.length}>Send Ready</Button>
-                    </div>
-                    <div style={{ overflowX: "auto" }}>
-                      <div style={{ minWidth: isNarrow ? 760 : 0, display: "grid", gap: 8 }}>
-                        <div style={{ display: "grid", gridTemplateColumns: "34px 1.2fr 120px 140px 1fr 90px", gap: 10, padding: "0 10px", color: THEME.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>
-                          <span />
-                          <span>Facility</span>
-                          <span>Report</span>
-                          <span>Status</span>
-                          <span>Last Action</span>
-                          <span>Action</span>
-                        </div>
-                        {facilityReportQueueFiltered.length ? facilityReportQueueFiltered.map((row) => (
-                          <div key={row.id} style={{ display: "grid", gridTemplateColumns: "34px 1.2fr 120px 140px 1fr 90px", gap: 10, alignItems: "center", border: `1px solid ${selectedFacilityReports.includes(row.id) ? THEME.primary2 : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: selectedFacilityReports.includes(row.id) ? THEME.blueBg : THEME.panel }}>
-                            <input type="checkbox" checked={selectedFacilityReports.includes(row.id)} onChange={(event) => toggleFacilityReportSelection(row.id, event.target.checked)} aria-label={`Select ${row.facility} report`} />
-                            <strong>{row.facility}</strong>
-                            <span style={{ color: THEME.muted }}>{row.report}</span>
-                            <Badge tone={row.status === "Missing Contact" ? "High" : row.status === "Needs Review" ? "Medium" : row.complete ? "Low" : "Interview"}>{row.status}</Badge>
-                            <span style={{ color: THEME.muted }}>{row.lastAction}</span>
-                            <Button subtle onClick={() => { setSelectedFacilityReports([row.id]); previewSelectedFacilityReports(); }} style={{ padding: "6px 8px", fontSize: 11 }}>{row.action}</Button>
-                          </div>
-                        )) : <EmptyState>No facility reports match this filter.</EmptyState>}
-                      </div>
-                    </div>
-                  </div>
-                  <div style={{ border: `1px solid ${reportAutomationEnabled ? THEME.green : THEME.borderSoft}`, borderRadius: 8, padding: 14, background: reportAutomationEnabled ? THEME.greenBg : THEME.panelAlt, display: "grid", gap: 10 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                      <strong>Automation Status</strong>
-                      <Badge tone={reportAutomationEnabled ? "Low" : "Medium"}>{reportAutomationEnabled ? "Active" : "Off"}</Badge>
-                    </div>
-                    <div style={{ color: THEME.muted, fontSize: 12, lineHeight: 1.6 }}>
-                      Schedule: <strong style={{ color: THEME.text }}>{reportAutomationDay} at {reportAutomationTime}</strong><br />
-                      Send mode: <strong style={{ color: THEME.text }}>{reportSendMode}</strong>
-                    </div>
-                    <Button primary onClick={openReportAutomationSettings}>Manage Report Automation</Button>
-                  </div>
-                </div>
-              </div>
-            </Card>
-            </div>
-            ) : null}
-            <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 6, padding: 12, background: THEME.panelAlt, color: THEME.muted, fontSize: 12 }}>Tip: Review your metrics, clean up ATS records, then generate your report. You can export or copy the report once it is ready.</div>
-          </div>
-        ) : null}
-
-        {activePage === "reports" && reportsTab === "audience" ? (
-          <div style={{ display: "grid", gap: 18 }}>
-            <Card title="Audience Report Queue + Sender" subtitle="Select the report audience, then preview, copy, export, send, or mark selected reports complete." compact>
-              <div style={{ display: "grid", gap: 14 }}>
-                <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : "repeat(4, minmax(0, 1fr))" }}>
-                  <Field label="Facility"><SelectInput value={selectedFacility} onChange={(event) => { setSelectedFacility(event.target.value); setSelectedFacilityReports([]); }} options={["All Facilities", "Facilities With Openings", "Facilities With No Openings", ...reportFacilityNames]} /></Field>
-                  <Field label="Report Type"><SelectInput value={selectedReportType} onChange={(event) => setSelectedReportType(event.target.value)} options={reportTypeOptions} /></Field>
-                  <Field label="Recipient Group"><SelectInput value={selectedRecipientGroup} onChange={(event) => setSelectedRecipientGroup(event.target.value)} options={recipientGroupOptions} /></Field>
-                  <Field label="Status Filter"><SelectInput value={selectedStatusFilter} onChange={(event) => { setSelectedStatusFilter(event.target.value); setSelectedFacilityReports([]); }} options={reportStatusOptions} /></Field>
-                </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <Button primary onClick={previewSelectedFacilityReports}>Preview Selected</Button>
-                  <Button subtle onClick={() => saveReportsToHistory(selectedFacilityReportRows, "Draft Generated")} disabled={!facilityReportQueueFiltered.length}>Save to History</Button>
-                  <Button subtle onClick={copySelectedFacilityReports} disabled={!facilityReportQueueFiltered.length}>Copy Selected</Button>
-                  <Button subtle onClick={exportSelectedFacilityReports} disabled={!facilityReportQueueFiltered.length}>Export Selected</Button>
-                  <Button subtle onClick={exportFacilityWorkbooks} disabled={!facilityReportQueueFiltered.length}>Export Facility Workbooks</Button>
-                  <Button subtle onClick={markSelectedFacilityReportsComplete} disabled={!allowManualCompletion || !facilityReportQueueFiltered.length}>Mark Complete</Button>
-                  <Button primary onClick={sendReadyFacilityReports} disabled={!facilityReportQueueFiltered.length}>Send Ready</Button>
-                </div>
-                <Accordion title="Report Sections" subtitle="Choose what goes in the Excel attachment. Email stays concise." defaultOpen={false}>
-                  <div style={{ display: "grid", gap: 8, gridTemplateColumns: isNarrow ? "1fr" : "repeat(3, minmax(0, 1fr))" }}>
-                    {Object.entries(reportInclusions).map(([key, value]) => <ToggleField key={key} label={labelFromKey(key)} checked={Boolean(value)} onChange={(checked) => setReportInclusions((prev) => ({ ...prev, [key]: checked }))} />)}
-                  </div>
-                </Accordion>
-                {reportValidationIssues.length ? <Card compact title="Needs Review" subtitle={`${reportValidationIssues.length} report data issue${reportValidationIssues.length === 1 ? "" : "s"} found. These warn the recruiter but do not break the page.`}><div style={{ display: "grid", gap: 8 }}>{reportValidationIssues.slice(0, 8).map((issue, index) => <div key={`${issue.type}-${index}`} style={{ border: `1px solid ${THEME.amber}`, borderRadius: 6, padding: 9, background: THEME.amberBg }}><strong>{issue.type}</strong><div style={{ color: THEME.muted, fontSize: 12 }}>{issue.detail}</div></div>)}</div></Card> : null}
-                <div style={{ overflowX: "auto" }}>
-                  <div style={{ minWidth: isNarrow ? 760 : 0, display: "grid", gap: 8 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "34px 1.2fr 120px 140px 1fr 90px", gap: 10, padding: "0 10px", color: THEME.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>
-                      <span />
-                      <span>Facility</span>
-                      <span>Report</span>
-                      <span>Status</span>
-                      <span>Last Action</span>
-                      <span>Action</span>
-                    </div>
-                    {facilityReportQueueFiltered.length ? facilityReportQueueFiltered.map((row) => (
-                      <div key={row.id} style={{ display: "grid", gridTemplateColumns: "34px 1.2fr 120px 140px 1fr 90px", gap: 10, alignItems: "center", border: `1px solid ${selectedFacilityReports.includes(row.id) ? THEME.primary2 : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: selectedFacilityReports.includes(row.id) ? THEME.blueBg : THEME.panel }}>
-                        <input type="checkbox" checked={selectedFacilityReports.includes(row.id)} onChange={(event) => toggleFacilityReportSelection(row.id, event.target.checked)} aria-label={`Select ${row.facility} report`} />
-                        <strong>{row.facility}</strong>
-                        <span style={{ color: THEME.muted }}>{row.report}</span>
-                        <Badge tone={row.status === "Missing Contact" ? "High" : row.status === "Needs Review" ? "Medium" : row.complete ? "Low" : "Interview"}>{row.status}</Badge>
-                        <span style={{ color: THEME.muted }}>{row.lastAction}</span>
-                        <Button subtle onClick={() => { setSelectedFacilityReports([row.id]); previewSelectedFacilityReports([row]); }} style={{ padding: "6px 8px", fontSize: 11 }}>{row.action}</Button>
-                      </div>
-                    )) : <EmptyState>No facility reports match this filter.</EmptyState>}
-                  </div>
-                </div>
-              </div>
-            </Card>
-            <Card title="Weekly Report Preview" subtitle="Send Ready loads the selected ready reports here for final review." compact action={<Button subtle onClick={copyWeeklyReport} disabled={!weeklyReport}>Copy Weekly Report</Button>}>
-              <div style={{ border: `1px dashed ${THEME.border}`, borderRadius: 6, minHeight: 340, padding: 16, background: THEME.panelAlt, display: "grid", placeItems: weeklyReport ? "stretch" : "center" }}>
-                {weeklyReport ? <EmailDocument title="Weekly Report" subject={weeklySubject} body={weeklyReport} attachmentLabel="Download Excel Attachment" onDownloadAttachment={exportSelectedFacilityReports} onMarkSent={markSelectedFacilityReportsSent} attachmentNotice="Mailto cannot attach the Excel file automatically. This downloads the report workbook so you can attach it to the email draft. After sending, use Mark Sent to document completion." /> : <div style={{ textAlign: "center", color: THEME.muted }}><div style={{ fontSize: 36, marginBottom: 10 }}> </div><strong style={{ color: THEME.text }}>Preview or Send Ready to load report emails here.</strong></div>}
-              </div>
-            </Card>
-          </div>
-        ) : null}
-
-        {activePage === "reports" && reportsTab === "facility" ? (
-          <div style={{ display: "grid", gap: 18 }}>
-            <Card title="Facility Report Completion" subtitle={`${reportCompletionSummary.done} of ${reportCompletionSummary.total} facility reports complete. ${reportCompletionSummary.remaining} remaining.`} compact action={<Button subtle onClick={clearAndRegenerateWeeklyReports}>Clear Completion + Regenerate</Button>}>
-              <div style={{ display: "grid", gap: 14 }}>
-                <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 999, height: 12, background: THEME.panelAlt, overflow: "hidden" }}>
-                  <div style={{ width: `${reportCompletionSummary.total ? Math.round((reportCompletionSummary.done / reportCompletionSummary.total) * 100) : 0}%`, height: "100%", background: `linear-gradient(90deg, ${THEME.primary2}, ${THEME.green})` }} />
-                </div>
-                <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "repeat(2, minmax(0, 1fr))" : "repeat(5, minmax(0, 1fr))" }}>
-                  <MiniStat label="Done" value={reportCompletionSummary.done} tone="Low" compact />
-                  <MiniStat label="Remaining" value={reportCompletionSummary.remaining} tone={reportCompletionSummary.remaining ? "Medium" : "Low"} compact />
-                  <MiniStat label="Scheduled" value={reportCompletionSummary.scheduled} tone={reportCompletionSummary.scheduled ? "Interview" : "Low"} compact />
-                  <MiniStat label="Review" value={reportCompletionSummary.review} tone={reportCompletionSummary.review ? "Medium" : "Low"} compact />
-                  <MiniStat label="Missing" value={reportCompletionSummary.missing} tone={reportCompletionSummary.missing ? "High" : "Low"} compact />
-                </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {["All", "Needs Action", "Missing Contacts", "Scheduled", "Sent"].map((filter) => <Button key={filter} subtle={selectedStatusFilter !== filter} primary={selectedStatusFilter === filter} onClick={() => setSelectedStatusFilter(filter)} style={{ padding: "7px 9px", fontSize: 11 }}>{filter}</Button>)}
-                </div>
-                <div style={{ overflowX: "auto" }}>
-                  <div style={{ minWidth: isNarrow ? 760 : 0, display: "grid", gap: 8 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "1.2fr 120px 140px 1fr 100px", gap: 10, padding: "0 10px", color: THEME.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>
-                      <span>Facility</span><span>Report</span><span>Status</span><span>Last Action</span><span>Action</span>
-                    </div>
-                    {facilityReportQueueFiltered.length ? facilityReportQueueFiltered.map((row) => (
-                      <div key={row.id} style={{ display: "grid", gridTemplateColumns: "1.2fr 120px 140px 1fr 100px", gap: 10, alignItems: "center", border: `1px solid ${row.status === "Missing Contact" ? THEME.red : row.status === "Needs Review" ? THEME.amber : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panel }}>
-                        <strong>{row.facility}</strong>
-                        <span style={{ color: THEME.muted }}>{row.report}</span>
-                        <Badge tone={row.status === "Missing Contact" ? "High" : row.status === "Needs Review" ? "Medium" : row.complete ? "Low" : "Interview"}>{row.status}</Badge>
-                        <span style={{ color: THEME.muted }}>{row.lastAction}</span>
-                        <Button subtle onClick={() => { setReportsTab("audience"); setSelectedFacility(row.facility); setSelectedFacilityReports([row.id]); previewSelectedFacilityReports([row]); }} style={{ padding: "6px 8px", fontSize: 11 }}>{row.action}</Button>
-                      </div>
-                    )) : <EmptyState>No facility reports match this filter.</EmptyState>}
-                  </div>
-                </div>
-              </div>
-            </Card>
-          </div>
-        ) : null}
-
-        {activePage === "reports" && reportsTab === "exports" ? (
-          <div style={{ display: "grid", gap: 18 }}>
-            <WeeklyCleanupReportBuilder
-              settings={settings}
-              setSettings={setSettings}
-              tracker={includedReportRows}
-              history={history}
-              hasLoaded={hasLoaded}
-              loadError={/not ready|blocked|could not load/i.test(cloudStatus || "") ? cloudStatus : ""}
-              reportStartDate={reportStartDate}
-              reportEndDate={reportEndDate}
-              generatedBy={settings.general?.recruiterName || ""}
-              downloadExcelWorkbook={downloadExcelWorkbook}
-            />
-            <Card compact>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap", marginBottom: 16 }}>
-                <div>
-                  <h2 style={{ margin: 0, fontSize: 18 }}>Exports</h2>
-                  <div style={{ color: THEME.muted, fontSize: 12, marginTop: 4 }}>Choose the export you need. Use the bulk export for your full weekly report and the individual exports for specific sections.</div>
-                </div>
-                <Badge tone="Interview">Exports include the latest data as of today.</Badge>
-              </div>
-              <div style={{ display: "grid", gap: 12, gridTemplateColumns: isNarrow ? "1fr" : isMedium ? "repeat(2, minmax(0, 1fr))" : "repeat(5, minmax(0, 1fr))" }}>
-                {[
-                  { title: "Export All Data Excel", detail: "Export the complete weekly report with all sections and data.", action: exportFullDataWorkbook, button: "Export All Data Excel", icon: "", recommended: true, tone: THEME.primary2, bg: THEME.blueBg },
-                  { title: "Export Facility Workbooks", detail: "Download individual detailed Excel attachments by selected facility.", action: exportFacilityWorkbooks, button: "Export Facility Excel", icon: "", tone: THEME.primary2, bg: THEME.blueBg },
-                  { title: "Export Tracker CSV", detail: "Export candidate tracker data in CSV format.", action: exportTrackerCsv, button: "Export CSV", icon: "", tone: THEME.green, bg: THEME.greenBg },
-                  { title: "Export History CSV", detail: "Export your weekly cleanup history in CSV format.", action: exportHistoryCsv, button: "Export CSV", icon: "", disabled: !history.length, tone: THEME.primary2, bg: THEME.blueBg },
-                  { title: "Export History Excel", detail: "Export your weekly cleanup history in Excel format.", action: exportHistoryExcel, button: "Export Excel", icon: "X", disabled: !history.length, tone: THEME.green, bg: THEME.greenBg },
-                  { title: "Export JSON Backup", detail: "Backup all weekly cleanup data in JSON format.", action: exportFullBackup, button: "Export JSON", icon: "{}", tone: THEME.primary2, bg: THEME.blueBg },
-                ].map((item) => (
-                  <div key={item.title} style={{ border: `1px solid ${item.recommended ? THEME.primary2 : THEME.borderSoft}`, borderRadius: 8, padding: 14, background: THEME.panel, display: "grid", gap: 12, alignContent: "space-between", minHeight: 216, boxShadow: item.recommended ? "0 12px 28px rgba(109,40,217,0.08)" : "none" }}>
-                    <div>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "start" }}>
-                        <span style={{ width: 36, height: 36, borderRadius: 8, display: "grid", placeItems: "center", background: item.bg, color: item.tone, fontWeight: 950 }}>{item.icon}</span>
-                        {item.recommended ? <Badge tone="Interview">Recommended</Badge> : null}
-                      </div>
-                      <strong style={{ display: "block", marginTop: 18 }}>{item.title}</strong>
-                      <div style={{ color: THEME.muted, fontSize: 12, lineHeight: 1.45, marginTop: 6 }}>{item.detail}</div>
-                    </div>
-                    <Button primary={item.recommended} subtle={!item.recommended} onClick={item.action} disabled={item.disabled} style={{ width: "100%" }}>{item.button}</Button>
-                  </div>
-                ))}
-              </div>
-              <div style={{ marginTop: 16, border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 14, background: THEME.panelAlt, display: "grid", gap: 12, gridTemplateColumns: isNarrow ? "1fr" : "1.2fr repeat(3, minmax(0, 1fr))", alignItems: "center" }}>
-                <div><strong>Leader-Ready & Secure</strong><div style={{ color: THEME.muted, fontSize: 12, marginTop: 4 }}>All exports are formatted for leadership review and contain only the data you have access to.</div></div>
-                <div style={{ color: THEME.muted, fontSize: 12 }}><strong style={{ color: THEME.green, display: "block" }}>Up to date</strong>Real-time data</div>
-                <div style={{ color: THEME.muted, fontSize: 12 }}><strong style={{ color: THEME.primary2, display: "block" }}>Secure</strong>Role-based access</div>
-                <div style={{ color: THEME.muted, fontSize: 12 }}><strong style={{ color: THEME.primary2, display: "block" }}>Private</strong>Your data only</div>
-              </div>
-            </Card>
-          </div>
-        ) : null}
-
-        {activePage === "reports" && reportsTab === "hub" ? (
-          <div style={{ display: "grid", gap: 18 }}>
-            <Card title="Reports Hub" subtitle="Preview concise email snapshots, download detailed Excel attachments, and revisit generated report history." compact action={<Button subtle onClick={openReportAutomationSettings}>Report Settings</Button>}>
-              <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "repeat(2, minmax(0, 1fr))" : "repeat(5, minmax(0, 1fr))" }}>
-                {[
-                  ["preview", "Report Preview"],
-                  ["generated", "Generated Reports"],
-                  ["history", "Report History"],
-                  ["facility", "Facility Reports"],
-                  ["regional", "Regional Reports"],
-                  ["csuite", "C-Suite Reports"],
-                  ["download", "Download Center"],
-                  ["email", "Email Preview"],
-                  ["attachment", "Attachment Preview"],
-                  ["settings", "Report Settings"],
-                ].map(([value, label]) => <button key={value} type="button" onClick={() => setReportsHubTab(value)} style={{ border: `1px solid ${reportsHubTab === value ? THEME.primary2 : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: reportsHubTab === value ? THEME.blueBg : THEME.panelAlt, color: THEME.text, fontWeight: 850, cursor: "pointer", textAlign: "left" }}>{label}</button>)}
-              </div>
-            </Card>
-
-            {reportsHubTab === "preview" || reportsHubTab === "email" ? (
-              <Card title="Email Preview" subtitle="The email stays high-level. The Excel attachment carries the detail." compact>
-                <div style={{ display: "grid", gap: 12 }}>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <Button primary onClick={previewSelectedFacilityReports}>Preview Email</Button>
-                    <Button subtle onClick={() => safeCopy(weeklyReport || selectedAudienceEmailBody())}>Copy Email</Button>
-                    <Button subtle onClick={() => safeCopy(weeklySubject)}>Copy Subject</Button>
-                    <Button subtle onClick={() => saveReportsToHistory(selectedFacilityReportRows, "Draft Generated")}>Mark Reviewed</Button>
-                    <Button subtle onClick={() => saveReportsToHistory(selectedFacilityReportRows, "Held for Approval")}>Hold for Approval</Button>
-                    <Button subtle disabled>Send Later</Button>
-                  </div>
-                  <div style={{ border: `1px dashed ${THEME.border}`, borderRadius: 6, padding: 14, background: THEME.panelAlt, whiteSpace: "pre-wrap", lineHeight: 1.65 }}>{weeklyReport || selectedAudienceEmailBody()}</div>
-                </div>
-              </Card>
-            ) : null}
-
-            {reportsHubTab === "generated" || reportsHubTab === "facility" || reportsHubTab === "regional" || reportsHubTab === "csuite" ? (
-              <Card title="Generated Reports" subtitle="Report-ready audience drafts based on the current Weekly Cleanup selections." compact>
-                <div style={{ display: "grid", gap: 10 }}>
-                  {selectedFacilityReportRows.map((row) => {
-                    const model = facilityReportModel(row.facilityId || row.id || row.facility);
-                    const content = facilityEmailContent(model, row.reportType || selectedReportType);
-                    const subject = content.subject;
-                    return <div key={row.id} style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "1.3fr 1fr 1fr auto", gap: 10, alignItems: "center", border: `1px solid ${model.missingContact ? THEME.red : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panel }}><div><strong>{model.facility}</strong><div style={{ color: THEME.muted, fontSize: 12 }}>{subject}</div></div><Badge tone={model.missingContact ? "High" : row.status === "Needs Review" ? "Medium" : "Low"}>{model.missingContact ? "Blocked, Missing Contact" : row.status}</Badge><span style={{ color: THEME.muted }}>{facilityWorkbookSheets(model).length} attachment tabs</span><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button subtle onClick={() => { setWeeklySubject(subject); setWeeklyReport(content.body); }}>Preview</Button><Button subtle onClick={() => downloadExcelWorkbook(`welcomeflow-${safeExcelSheetName(model.facility).replace(/\s+/g, "-").toLowerCase()}-${reportStartDate}.xls`, facilityWorkbookSheets(model))}>Download</Button></div></div>;
-                  })}
-                  {selectedReportType === "Regional Manager Summary" ? <Card compact title="Regional Manager Email" subtitle="Grouped by selected facilities."><div style={{ whiteSpace: "pre-wrap", lineHeight: 1.65 }}>{regionalEmailBody(selectedFacilityReportRows)}</div></Card> : null}
-                  {selectedReportType === "C-Suite Leadership Report" ? <Card compact title="C-Suite Leadership Email" subtitle="High-level leadership visibility."><div style={{ whiteSpace: "pre-wrap", lineHeight: 1.65 }}>{cSuiteEmailBody(selectedFacilityReportRows)}</div></Card> : null}
-                </div>
-              </Card>
-            ) : null}
-
-            {reportsHubTab === "history" ? (
-              <Card title="Report History" subtitle="Visible record of generated weekly reports and their email/attachment details." compact>
-                <div style={{ display: "grid", gap: 12 }}>
-                  <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : "repeat(5, minmax(0, 1fr))" }}>
-                    <Field label="Facility"><SelectInput value={reportHistoryFilters.facility} onChange={(event) => setReportHistoryFilters((prev) => ({ ...prev, facility: event.target.value }))} options={["All", ...reportFacilityNames]} /></Field>
-                    <Field label="Report Type"><SelectInput value={reportHistoryFilters.reportType} onChange={(event) => setReportHistoryFilters((prev) => ({ ...prev, reportType: event.target.value }))} options={["All", ...reportTypeOptions]} /></Field>
-                    <Field label="Status"><SelectInput value={reportHistoryFilters.status} onChange={(event) => setReportHistoryFilters((prev) => ({ ...prev, status: event.target.value }))} options={["All", "Draft Generated", "Needs Review", "Ready to Send", "Sent", "Held for Approval", "Blocked, Missing Contact", "Downloaded Only"]} /></Field>
-                    <Field label="Start"><TextInput type="date" value={reportHistoryFilters.start} onChange={(event) => setReportHistoryFilters((prev) => ({ ...prev, start: event.target.value }))} /></Field>
-                    <Field label="End"><TextInput type="date" value={reportHistoryFilters.end} onChange={(event) => setReportHistoryFilters((prev) => ({ ...prev, end: event.target.value }))} /></Field>
-                  </div>
-                  <div style={{ overflowX: "auto" }}>
-                    <div style={{ minWidth: isNarrow ? 900 : 0, display: "grid", gap: 8 }}>
-                      <div style={{ display: "grid", gridTemplateColumns: "130px 130px 1fr 150px 140px 150px 1fr 220px", gap: 8, color: THEME.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase", padding: "0 8px" }}><span>Report Week</span><span>Generated</span><span>Facility</span><span>Report Type</span><span>Audience</span><span>Status</span><span>Attachment</span><span>Actions</span></div>
-                      {reportHistoryFiltered.length ? reportHistoryFiltered.map((record) => <div key={record.id} style={{ display: "grid", gridTemplateColumns: "130px 130px 1fr 150px 140px 150px 1fr 220px", gap: 8, alignItems: "center", border: `1px solid ${record.status === "Blocked, Missing Contact" ? THEME.red : THEME.borderSoft}`, borderRadius: 6, padding: 8, background: THEME.panel }}><span>{record.reportWeek}</span><span>{displayDate(String(record.generatedDate || "").slice(0, 10))}</span><strong>{record.facility}</strong><span>{record.reportType}</span><span>{record.audience}</span><Badge tone={record.status === "Blocked, Missing Contact" ? "High" : record.status === "Held for Approval" || record.status === "Needs Review" ? "Medium" : "Low"}>{record.status}</Badge><span style={{ color: THEME.muted }}>{record.attachmentName}{record.missingContactWarning ? <><br />{record.missingContactWarning}</> : null}</span><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}><Button subtle onClick={() => { setWeeklySubject(record.emailSubject); setWeeklyReport(record.emailBody); setReportsHubTab("email"); }} style={{ padding: "6px 8px", fontSize: 11 }}>Preview</Button><Button subtle onClick={() => safeCopy(record.emailBody)} style={{ padding: "6px 8px", fontSize: 11 }}>Copy</Button><Button subtle onClick={() => downloadExcelWorkbook(record.attachmentName || `welcomeflow-report-${todayIso()}.xls`, facilityWorkbookSheets(facilityReportModel(record.facility)))} style={{ padding: "6px 8px", fontSize: 11 }}>Download</Button></div></div>) : <EmptyState>No reports have been saved to history yet.</EmptyState>}
-                    </div>
-                  </div>
-                </div>
-              </Card>
-            ) : null}
-
-            {reportsHubTab === "download" || reportsHubTab === "attachment" ? (
-              <Card title="Download Center" subtitle="Download detailed Excel attachments without changing the concise email body." compact>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <Button primary onClick={exportFullDataWorkbook}>Download All-Facility Excel</Button>
-                  <Button subtle onClick={exportFacilityWorkbooks}>Download Facility Excel Files</Button>
-                  <Button subtle onClick={exportHistoryExcel} disabled={!history.length}>Download History Excel</Button>
-                  <Button subtle onClick={exportAtsUpdatePacketExcel}>Download ATS Packet Excel</Button>
-                </div>
-                <div style={{ marginTop: 14, display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : "repeat(2, minmax(0, 1fr))" }}>
-                  <MiniStat label="Selected Facilities" value={selectedFacilityReportRows.length} tone="Interview" compact />
-                  <MiniStat label="Attachment Tabs" value={buildAllFacilityWorkbookSheets().length} tone="Low" compact />
-                </div>
-              </Card>
-            ) : null}
-
-            {reportsHubTab === "settings" ? (
-              <Card title="Report Settings Shortcut" subtitle="Automation rules stay in Automation Center. Inclusion choices affect this week's workbook output." compact>
-                <div style={{ display: "grid", gap: 10 }}>
-                  <Button primary onClick={openReportAutomationSettings}>Open Automation Center Report Automation</Button>
-                  <div style={{ display: "grid", gap: 8, gridTemplateColumns: isNarrow ? "1fr" : "repeat(3, minmax(0, 1fr))" }}>{Object.entries(reportInclusions).map(([key, value]) => <ToggleField key={key} label={labelFromKey(key)} checked={Boolean(value)} onChange={(checked) => setReportInclusions((prev) => ({ ...prev, [key]: checked }))} />)}</div>
-                </div>
-              </Card>
-            ) : null}
-          </div>
-        ) : null}
+        <ReportsHistoryPage
+          {...{
+            Badge,
+            Button,
+            Card,
+            EmptyState,
+            Field,
+            MiniStat,
+            SelectInput,
+            TextInput,
+            ToggleField,
+            THEME,
+            activePage,
+            buildAllFacilityWorkbookSheets,
+            cSuiteEmailBody,
+            copyReportEmailContent,
+            displayDate,
+            downloadGeneratedFacilityReport,
+            downloadAudienceReportListEntry,
+            downloadHistoricalFacilityReport,
+            downloadReportReviewWorkbook,
+            eligibilityForReportRows,
+            exportAtsUpdatePacketExcel,
+            exportFacilityWorkbooks,
+            exportHistoryExcel,
+            exportWeeklyFullDataWorkbook,
+            facilityEmailContent,
+            facilityReportModel,
+            facilityWorkbookSheets,
+            history,
+            isNarrow,
+            labelFromKey,
+            markSelectedFacilityReportsReviewed,
+            markSelectedFacilityReportsSent,
+            openReportReview,
+            openReportingIssueCorrection,
+            openReportingSettingsSurface,
+            previewSelectedFacilityReports,
+            regionalEmailBody,
+            reportEndDate,
+            reportFacilityNames,
+            reportHistory,
+            reportHistoryFiltered,
+            reportHistoryFilters,
+            reportHistoryStatusView,
+            reportInclusions,
+            reportStartDate,
+            reportTypeOptions,
+            reportsHubTab,
+            reportsReviewAudience,
+            reportReviewContext,
+            reportReviewListRows,
+            reportingActionState,
+            safeCopy,
+            saveReportsToHistory,
+            selectedAudienceEmailBody,
+            selectedFacilityActionRows,
+            selectedRecipientGroup,
+            selectedReportEligibility,
+            selectedReportType,
+            setReportHistoryFilters,
+            setReportHistoryStatusView,
+            setReportInclusions,
+            setReportsHubTab,
+            setReportsReviewAudience: selectReportsReviewAudience,
+            setWeeklyReport,
+            setWeeklySubject,
+            weeklyReport,
+            weeklySubject,
+          }}
+        />
 
         {activePage === "positions" ? (
           <FacilityPositionSetupPage
@@ -19326,6 +19690,9 @@ function rowifyCandidate(item = {}) {
             onRequisitionReferenceChange={syncRequisitionReferences}
             exportFullDataWorkbook={exportFullDataWorkbook}
             onScheduleCalendar={openCalendarCreate}
+            correctionTarget={reportCorrectionTarget}
+            onCorrectionSaved={returnToFacilityReadiness}
+            onReturnToFacilityReadiness={returnToFacilityReadiness}
           />
         ) : null}
         {activePage === "settings" ? (
@@ -21119,7 +21486,7 @@ function CandidateManagementPage({ activeTab, setActiveTab, search, setSearch, h
   );
 }
 
-function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], activeSites = [], tracker = [], setActivePage = () => {}, setActiveSettingsTab = () => {}, onRequisitionReferenceChange = () => {}, exportFullDataWorkbook = () => {}, onScheduleCalendar = () => {} }) {
+export function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], activeSites = [], tracker = [], setActivePage = () => {}, setActiveSettingsTab = () => {}, onRequisitionReferenceChange = () => {}, exportFullDataWorkbook = () => {}, onScheduleCalendar = () => {}, correctionTarget = null, onCorrectionSaved = () => {}, onReturnToFacilityReadiness = () => {} }) {
   const width = useWindowWidth();
   const compact = width < 960;
   const [activeTab, setActiveTab] = useState("facilities");
@@ -21157,6 +21524,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
   const [readinessSearch, setReadinessSearch] = useState("");
   const [readinessIncludeArchived, setReadinessIncludeArchived] = useState(false);
   const [newRegionName, setNewRegionName] = useState("");
+  const correctionOpenedRef = useRef("");
 
   useEffect(() => {
     const handler = (event) => {
@@ -21179,6 +21547,53 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
     if (!communicationReadinessReport) return null;
     return filterCommunicationReadinessReport(communicationReadinessReport, { filter: readinessFilter, search: readinessSearch });
   }, [communicationReadinessReport, readinessFilter, readinessSearch]);
+
+  useEffect(() => {
+    if (!correctionTarget?.recordId) {
+      correctionOpenedRef.current = "";
+      return;
+    }
+    const targetKey = `${correctionTarget.recordType}:${correctionTarget.recordId}:${correctionTarget.field}`;
+    if (correctionOpenedRef.current === targetKey) return;
+    correctionOpenedRef.current = targetKey;
+
+    if (correctionTarget.recordType === "requisition") {
+      const requisition = allReqs.find((req) => req.id === correctionTarget.recordId);
+      if (!requisition) {
+        window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: SAFE_REQUISITION_ERROR }));
+        return;
+      }
+      setActiveTab("positions");
+      setDraftReq({ ...requisition });
+      setDrawerMode("edit");
+      setCommunicationReview(null);
+      setCommunicationSaveError("");
+      setRequisitionDirtyFields([]);
+      setDrawerOpen(true);
+    } else if (correctionTarget.recordType === "facility") {
+      const facility = allSites.find((site) => site.id === correctionTarget.recordId);
+      if (!facility) {
+        window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "The exact facility could not be opened." }));
+        return;
+      }
+      setActiveTab("facilities");
+      setSelectedSiteId(facility.id);
+      setDraftSite({
+        ...facility,
+        aliasesText: (facility.aliases || []).join("\n"),
+        originalSiteName: facility.siteName || "",
+        siteSpecificQuestionsText: serializeScreeningQuestions(facility.siteSpecificQuestions),
+      });
+      setFacilityDrawerMode("edit");
+      setFacilityDrawerOpen(true);
+    }
+
+    const focusTimer = window.setTimeout(() => {
+      const field = document.querySelector(`[data-correction-field="${correctionTarget.field}"] input, [data-correction-field="${correctionTarget.field}"] select, [data-correction-field="${correctionTarget.field}"] textarea`);
+      field?.focus();
+    }, 60);
+    return () => window.clearTimeout(focusTimer);
+  }, [allReqs, allSites, correctionTarget]);
 
   function openReadinessIssue(issue) {
     if (issue.updateLocation === "Existing requisition") {
@@ -21637,6 +22052,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
       setCommunicationSaveError(testRuntime.error || "Test environment safety check failed.");
       return;
     }
+    const completesCorrection = !addAnother && correctionTarget?.recordType === "requisition" && correctionTarget.recordId === draftReq.id;
     try {
       const result = updateExistingRequisition(safeObjectRecords(settings.requisitions), draftReq.id, draftReq, requisitionDirtyFields);
       setSettings((prev) => ({ ...prev, requisitions: result.requisitions }));
@@ -21658,6 +22074,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
     setCommunicationReview(null);
     setCommunicationSaveError("");
     setRequisitionDirtyFields([]);
+    if (completesCorrection) onCorrectionSaved();
   }
 
 
@@ -21783,6 +22200,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
     });
     setSelectedSiteId(saved.id);
     window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "Facility saved from Facility & Position Setup." }));
+    const completesCorrection = !addAnother && correctionTarget?.recordType === "facility" && correctionTarget.recordId === saved.id;
     if (addAnother) {
       setDraftSite({ ...emptySite(), siteSpecificQuestionsText: "" });
       setFacilityDrawerMode("add");
@@ -21791,6 +22209,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
       setDraftSite(null);
       setFacilityDrawerMode("add");
     }
+    if (completesCorrection) onCorrectionSaved();
   }
 
   function addReportingRegion() {
@@ -21974,6 +22393,26 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
+      {correctionTarget ? (
+        <div role="status" data-testid="reporting-correction-target" style={{ border: `1px solid ${THEME.primary2}`, borderRadius: 8, padding: 12, background: THEME.blueBg, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <div>
+            <strong>{correctionTarget.action}: {correctionTarget.label || "reporting record"}</strong>
+            <div style={{ color: THEME.muted, fontSize: 12, marginTop: 3 }}>The exact saved record is open. Make the correction and save explicitly; navigation alone changes nothing.</div>
+            {correctionTarget.sourceContext ? (
+              <div data-testid="reporting-correction-source-context" style={{ color: THEME.muted, fontSize: 11, marginTop: 5 }}>
+                {[
+                  correctionTarget.sourceContext.facilityId && `Facility ID: ${correctionTarget.sourceContext.facilityId}`,
+                  correctionTarget.sourceContext.regionName && `Region: ${correctionTarget.sourceContext.regionName}`,
+                  correctionTarget.sourceContext.audience && `Audience: ${correctionTarget.sourceContext.audience}`,
+                  correctionTarget.sourceContext.missingContactRole && `Missing role: ${correctionTarget.sourceContext.missingContactRole}`,
+                  correctionTarget.sourceContext.affectedReportScope && `Scope: ${correctionTarget.sourceContext.affectedReportScope}`,
+                ].filter(Boolean).join(" | ")}
+              </div>
+            ) : null}
+          </div>
+          <Button subtle onClick={onReturnToFacilityReadiness}>Return to Facility Readiness</Button>
+        </div>
+      ) : null}
       <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "start", flexWrap: "wrap" }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 24, lineHeight: 1.15 }}>Facility & Position Setup</h1>
@@ -22655,7 +23094,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
             </div>
             <div style={{ display: "grid", gap: 14 }}>
               <div style={{ display: "grid", gridTemplateColumns: width < 760 ? "1fr" : "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-                <Field label="Facility Name"><TextInput value={draftSite.siteName} onChange={(event) => updateDraftSite("siteName", event.target.value)} /></Field>
+                <div data-correction-field="siteName" data-testid="correction-field-siteName"><Field label="Facility Name"><TextInput value={draftSite.siteName} onChange={(event) => updateDraftSite("siteName", event.target.value)} /></Field></div>
                 <Field label="Stable Facility ID"><input value={draftSite.id || ""} readOnly style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panelAlt, color: THEME.muted }} /></Field>
                 <Field label="Organization Facility Code"><TextInput value={draftSite.facilityCode || ""} onChange={(event) => updateDraftSite("facilityCode", event.target.value)} placeholder="Optional facility code" /></Field>
                 <Field label="Region"><select value={draftSite.regionId || ""} onChange={(event) => updateDraftSite("regionId", event.target.value)} style={{ width: "100%", border: `1px solid ${THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panel }}><option value="">No region assigned</option>{reportingRegions.filter((region) => region.active !== false).map((region) => <option key={region.id} value={region.id}>{region.name}</option>)}</select></Field>
@@ -22675,7 +23114,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
                 <span style={{ color: THEME.muted, fontSize: 12 }}>Renaming this facility preserves its stable ID and automatically stores the previous canonical name as an alias.</span>
               </div>
 
-              <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 12, background: THEME.panelAlt }}>
+              <div data-correction-field="facilityContact" data-testid="correction-field-facilityContact" style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 12, background: THEME.panelAlt }}>
                 <strong>Facility Leadership / Contacts</strong>
                 <div style={{ display: "grid", gridTemplateColumns: width < 760 ? "1fr" : "repeat(2, minmax(0, 1fr))", gap: 10, marginTop: 12 }}>
                   <Field label="Hiring Manager Name"><TextInput value={draftSite.hiringManagerName} onChange={(event) => updateDraftSite("hiringManagerName", event.target.value)} /></Field>
@@ -22725,7 +23164,7 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
               <Button subtle onClick={() => setDrawerOpen(false)}>Cancel</Button>
             </div>
             <div style={{ display: "grid", gap: 12 }}>
-              <Field label="Facility"><SelectInput value={draftReq.siteName} onChange={(event) => updateDraftReq("siteName", event.target.value)} options={allSites.map((site) => site.siteName).filter(Boolean)} /></Field>
+              <div data-correction-field="siteName" data-testid="correction-field-siteName"><Field label="Facility"><SelectInput value={draftReq.siteName} onChange={(event) => updateDraftReq("siteName", event.target.value)} options={allSites.map((site) => site.siteName).filter(Boolean)} /></Field></div>
               <Field label="Position Title"><TextInput value={draftReq.positionTitle} onChange={(event) => updateDraftReq("positionTitle", event.target.value)} placeholder="Position title" /></Field>
               <div style={{ display: "grid", gridTemplateColumns: width < 720 ? "1fr" : "repeat(2, minmax(0, 1fr))", gap: 10 }}>
                 <Field label="Req Number"><TextInput value={draftReq.reqNumber} onChange={(event) => updateDraftReq("reqNumber", event.target.value)} /></Field>
@@ -22750,9 +23189,9 @@ function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], ac
                   <div style={{ display: "grid", gridTemplateColumns: width < 720 ? "1fr" : "repeat(2, minmax(0, 1fr))", gap: 10 }}>
                     <Field label="Employment Type"><SelectInput value={draftReq.employmentType || ""} onChange={(event) => updateDraftReq("employmentType", event.target.value)} options={["Full-time", "Part-time", "PRN", "Contract"]} /></Field>
                     <Field label="Benefits Eligible"><SelectInput value={draftReq.benefitsEligible === true ? "Yes" : draftReq.benefitsEligible === false ? "No" : "Unknown"} onChange={(event) => updateDraftReq("benefitsEligible", event.target.value === "Yes" ? true : event.target.value === "No" ? false : null)} options={["Unknown", "Yes", "No"]} /></Field>
-                    <Field label="FTE"><SelectInput value={draftReq.fte || ""} onChange={(event) => updateDraftReq("fte", event.target.value)} options={FTE_OPTIONS} /></Field>
+                    <div data-correction-field="fte" data-testid="correction-field-fte"><Field label="FTE"><SelectInput value={draftReq.fte || ""} onChange={(event) => updateDraftReq("fte", event.target.value)} options={FTE_OPTIONS} /></Field></div>
                     <Field label="Weekly Hours"><TextInput type="number" value={draftReq.weeklyHours ?? ""} onChange={(event) => updateDraftReq("weeklyHours", event.target.value)} placeholder="Example: 36" /></Field>
-                    <Field label="Shift"><SelectInput value={draftReq.shiftPreference || ""} onChange={(event) => updateDraftReq("shiftPreference", event.target.value)} options={settings.options?.shiftOptions || ["Day", "Night", "Evening", "As needed"]} /></Field>
+                    <div data-correction-field="shiftPreference" data-testid="correction-field-shiftPreference"><Field label="Shift"><SelectInput value={draftReq.shiftPreference || ""} onChange={(event) => updateDraftReq("shiftPreference", event.target.value)} options={settings.options?.shiftOptions || ["Day", "Night", "Evening", "As needed"]} /></Field></div>
                     <Field label="Schedule"><TextInput value={draftReq.workSchedule || ""} onChange={(event) => updateDraftReq("workSchedule", event.target.value)} placeholder="As Needed, Variable, Rotating, or schedule details" /></Field>
                     {String(draftReq.employmentType || "").toLowerCase() === "contract" ? <Field label="Contract Duration"><TextInput value={draftReq.contractDuration || ""} onChange={(event) => updateDraftReq("contractDuration", event.target.value)} placeholder="Example: 13 Weeks" /></Field> : null}
                   </div>
