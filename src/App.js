@@ -108,6 +108,7 @@ import {
   applyCanonicalFacilityUpdate,
   buildCanonicalReportingModel,
   resolveCanonicalFacility,
+  resolveRequisition,
   createDefaultReportPresets,
   normalizeFacilityKey,
   normalizeReportingSettings,
@@ -846,6 +847,42 @@ export function resolveActionCenterSetupTarget({ type = "", id = "", requisition
       recordType: "facility",
     },
   };
+}
+
+export function resolveActionCenterCandidateTarget({ candidateId = "", requisitionId = "", tracker = [], requisitions = [] } = {}) {
+  const stableCandidateId = String(candidateId || "").trim();
+  const stableRequisitionId = String(requisitionId || "").trim();
+  if (!stableCandidateId) return { ok: false, error: "The requested Action Center candidate has no valid stable identifier." };
+  const candidateMatches = safeObjectRecords(tracker).filter((candidate) => String(candidate.id || "").trim() === stableCandidateId);
+  const exactMatches = stableRequisitionId
+    ? candidateMatches.filter((candidate) => {
+      const resolution = resolveRequisition(candidate, requisitions);
+      const resolvedId = String(resolution.requisition?.id || resolution.requisition?.requisitionId || "").trim();
+      return resolution.status === "resolved" && resolvedId === stableRequisitionId;
+    })
+    : candidateMatches;
+  if (exactMatches.length !== 1) {
+    return { ok: false, error: "The exact candidate and requisition combination could not be opened." };
+  }
+  return {
+    ok: true,
+    candidate: exactMatches[0],
+    target: { candidateId: stableCandidateId, requisitionId: stableRequisitionId },
+  };
+}
+
+export function actionCenterNavigationState({ candidateTarget = null, setupTarget = null } = {}) {
+  return {
+    reportCorrectionTarget: null,
+    actionCenterCandidateTarget: candidateTarget,
+    actionCenterSetupTarget: setupTarget,
+  };
+}
+
+export function activeActionCenterCandidateTargetForSelection({ candidateTarget = null, selectedId = "" } = {}) {
+  if (!candidateTarget) return null;
+  const candidateId = String(candidateTarget.candidateId || "").trim();
+  return candidateId && candidateId === String(selectedId || "").trim() ? candidateTarget : null;
 }
 
 function credentialedProfileFor(item = {}) {
@@ -6179,6 +6216,7 @@ function RecruiterApp() {
   const [facilityReadinessVisibleLimit, setFacilityReadinessVisibleLimit] = useState(20);
   const [reportCorrectionTarget, setReportCorrectionTarget] = useState(null);
   const [actionCenterSetupTarget, setActionCenterSetupTarget] = useState(null);
+  const [actionCenterCandidateTarget, setActionCenterCandidateTarget] = useState(null);
   const [noOpeningsPolicyDraft, setNoOpeningsPolicyDraft] = useState("");
   const [noOpeningWeeklyDecisions, setNoOpeningWeeklyDecisions] = useState({});
   const [completedFacilityReports, setCompletedFacilityReports] = useState({});
@@ -6947,7 +6985,21 @@ function RecruiterApp() {
   const commuteDestination = selectedSite ? siteFullLocation(selectedSite) || selectedSite.siteName : (form.siteName || selectedRequisition?.siteName || "");
   const rehireEligibilityResolved = ["Eligible for rehire", "Bypassed by recruiter", "Not needed"].includes(form.rehireEligibility) || form.rehireWarningOptOut || form.rehireEligibilityBypassed;
   const rehireNeedsReview = ((form.previousEmployee === "Yes" || ["Internal", "Rehire"].includes(form.candidateType)) && !rehireEligibilityResolved);
-  const selectedSubmission = tracker.find((item) => item.id === selectedId) || tracker.find((item) => !item.archived && item.status !== "Archived") || tracker[0] || null;
+  const activeActionCenterCandidateTarget = useMemo(() => activeActionCenterCandidateTargetForSelection({
+    candidateTarget: actionCenterCandidateTarget,
+    selectedId,
+  }), [actionCenterCandidateTarget, selectedId]);
+  useEffect(() => {
+    if (actionCenterCandidateTarget && !activeActionCenterCandidateTarget) setActionCenterCandidateTarget(null);
+  }, [actionCenterCandidateTarget, activeActionCenterCandidateTarget]);
+  const actionCenterCandidateResolution = useMemo(() => activeActionCenterCandidateTarget ? resolveActionCenterCandidateTarget({
+    ...activeActionCenterCandidateTarget,
+    tracker,
+    requisitions: settings.requisitions,
+  }) : null, [activeActionCenterCandidateTarget, tracker, settings.requisitions]);
+  const selectedSubmission = activeActionCenterCandidateTarget
+    ? actionCenterCandidateResolution?.ok ? actionCenterCandidateResolution.candidate : null
+    : tracker.find((item) => item.id === selectedId) || tracker.find((item) => !item.archived && item.status !== "Archived") || tracker[0] || null;
   const onboardingPacketItem = useMemo(() => tracker.find((item) => item.id === onboardingPacketId) || selectedSubmission, [tracker, onboardingPacketId, selectedSubmission]);
   const selectedStoredOutput = selectedSubmission?.output || null;
   const visibleOutput = useMemo(() => output || (outputWizardOpen && selectedStoredOutput ? {
@@ -15242,6 +15294,8 @@ function rowifyCandidate(item = {}) {
       setCopyNotice(`${target.action || "Correction"} could not open because the affected record has no stable ID.`);
       return;
     }
+    setActionCenterSetupTarget(null);
+    setActionCenterCandidateTarget(null);
     setReportCorrectionTarget(target);
     if (target.page === "workspace") {
       setSelectedId(target.recordId);
@@ -15264,7 +15318,10 @@ function rowifyCandidate(item = {}) {
       setCopyNotice(resolution.error);
       return false;
     }
-    setActionCenterSetupTarget(resolution.target);
+    const navigation = actionCenterNavigationState({ setupTarget: resolution.target });
+    setReportCorrectionTarget(navigation.reportCorrectionTarget);
+    setActionCenterCandidateTarget(navigation.actionCenterCandidateTarget);
+    setActionCenterSetupTarget(navigation.actionCenterSetupTarget);
     setActivePage("positions");
     return true;
   }
@@ -16028,11 +16085,25 @@ function rowifyCandidate(item = {}) {
             isMedium={isMedium}
             recruiterName={settings.general?.recruiterName || "Recruiter"}
             calendarEvents={calendarEvents}
-            onOpenCandidate={(candidateId) => {
-              setActionCenterSetupTarget(null);
-              setSelectedId(candidateId);
+            onOpenCandidate={(candidateId, requisitionId) => {
+              const resolution = resolveActionCenterCandidateTarget({
+                candidateId,
+                requisitionId,
+                tracker: safeTrackerRows,
+                requisitions: settings.requisitions,
+              });
+              if (!resolution.ok) {
+                setCopyNotice(resolution.error);
+                return false;
+              }
+              const navigation = actionCenterNavigationState({ candidateTarget: resolution.target });
+              setReportCorrectionTarget(navigation.reportCorrectionTarget);
+              setActionCenterSetupTarget(navigation.actionCenterSetupTarget);
+              setActionCenterCandidateTarget(navigation.actionCenterCandidateTarget);
+              setSelectedId(resolution.target.candidateId);
               setTrackerPanelOpen(false);
               setActivePage("workspace");
+              return true;
             }}
             onOpenRequisition={(requisitionId) => openActionCenterSetupRecord("requisition", requisitionId)}
             onOpenFacility={(facilityId) => openActionCenterSetupRecord("facility", facilityId)}

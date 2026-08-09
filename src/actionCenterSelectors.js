@@ -1,7 +1,7 @@
 import { resolveExactRequisition, resolveFacilitySubmissionRecipients } from "./communicationGeneration";
 import { buildRecruiterWorkspaceModel } from "./recruiterWorkspaceSelectors";
 import { ACTION_STATES, normalizeReviewedCommunicationRecord } from "./submissionCommunicationActions";
-import { buildFacilityIndex, resolveCanonicalFacility } from "./weeklyCleanupReporting";
+import { buildFacilityIndex, resolveCanonicalFacility, resolveRequisition } from "./weeklyCleanupReporting";
 
 export const ACTION_CENTER_CATEGORIES = Object.freeze({
   all: "All",
@@ -69,15 +69,11 @@ function activeCandidate(candidate = {}) {
 }
 
 function activeRequisition(requisition = {}) {
-  return !requisition.archived && !["archived", "closed", "filled", "inactive"].includes(lower(requisition.status));
+  return !requisition.archived && lower(requisition.status) === "active";
 }
 
 function candidateName(candidate = {}) {
   return text(candidate.candidate || candidate.candidateName || candidate.formSnapshot?.fullName) || "Unnamed candidate";
-}
-
-function candidateRequisitionId(candidate = {}) {
-  return text(candidate.requisitionId || candidate.selectedRequisitionId || candidate.formSnapshot?.selectedRequisitionId);
 }
 
 function candidatePosition(candidate = {}, requisition = {}) {
@@ -98,17 +94,14 @@ function candidateLastActivity(candidate = {}) {
 }
 
 function activeExactRequisitionForCandidate(candidate, requisitions) {
-  const id = candidateRequisitionId(candidate);
-  if (!id) return { requisition: null, status: "missing" };
-  const resolution = resolveExactRequisition(requisitions, id);
-  if (!resolution.value) {
-    const ambiguous = resolution.blockers?.some((blocker) => blocker.code === "REQUISITION_AMBIGUOUS");
-    return { requisition: null, status: ambiguous ? "ambiguous" : "unmapped" };
+  const resolution = resolveRequisition(candidate, requisitions);
+  if (resolution.status !== "resolved" || !resolution.requisition) {
+    return { requisition: null, status: resolution.status === "ambiguous" ? "ambiguous" : "unmapped" };
   }
-  if (!activeRequisition(resolution.value) || lower(resolution.value.status) !== "active") {
+  if (!activeRequisition(resolution.requisition)) {
     return { requisition: null, status: "inactive" };
   }
-  return { requisition: resolution.value, status: "resolved" };
+  return { requisition: resolution.requisition, status: "resolved" };
 }
 
 function canonicalFacilityForSource({ candidate = {}, requisition = {}, sites = [], facilityIndex = null } = {}) {
@@ -147,7 +140,7 @@ function contextFor(candidate = {}, requisition = {}, facility = {}) {
     candidate: candidateName(candidate),
     candidateId: text(candidate.id),
     requisition: text(requisition.positionTitle || candidatePosition(candidate, requisition)),
-    requisitionId: text(requisition.id || requisition.requisitionId || candidateRequisitionId(candidate)),
+    requisitionId: text(requisition.id || requisition.requisitionId),
     requisitionNumber: text(requisition.reqNumber || requisition.uniqueIdNumber || candidate.reqNumber || candidate.formSnapshot?.reqNumber),
     facility: text(facility.siteName || facility.facilityName) || "Facility unresolved",
     facilityId: text(facility.id || facility.facilityId),
@@ -174,6 +167,7 @@ function stableActionItem({
   context = {},
   missingData = [],
   issueCode = "",
+  transitionAt = "",
 }) {
   const target = text(sourceId || candidateId || requisitionId || facilityId || calendarEventId || "unresolved");
   const segment = (value) => encodeURIComponent(text(value) || "unresolved");
@@ -200,34 +194,90 @@ function stableActionItem({
     context,
     missingData: [...missingData],
     issueCode,
+    transitionAt: text(transitionAt),
     sideEffectClass: "read-only",
     approvalRequired: "Recruiter approval is required before any record or communication changes.",
   };
 }
 
+const NON_FINAL_OUTCOMES = new Set([
+  "",
+  "active",
+  "awaiting decision",
+  "awaiting feedback",
+  "decision pending",
+  "feedback pending",
+  "interview completed",
+  "needs feedback",
+  "no decision",
+  "pending",
+  "still active",
+  "undecided",
+]);
+
+const FINAL_CANDIDATE_STATUSES = new Set([
+  "archived",
+  "closed",
+  "hired",
+  "not selected",
+  "offer",
+  "offer accepted",
+  "offered",
+  "onboarding",
+  "placed",
+  "rejected",
+  "verbal offer",
+  "withdrew",
+  "withdrawn",
+]);
+
+function substantiveOutcome(value) {
+  const normalized = lower(value);
+  return Boolean(normalized && !NON_FINAL_OUTCOMES.has(normalized));
+}
+
 function managerFeedbackReceived(candidate = {}) {
   return Boolean(text(candidate.hiringDecisionReceivedAt
     || candidate.managerFeedbackReceivedAt
-    || candidate.facilityFeedbackReceivedAt
-    || candidate.interviewFeedback
-    || candidate.interviewOutcome
-    || candidate.finalCandidateOutcome))
-    || /offer|hired|rejected|withdraw/.test(lower(candidate.status));
+    || candidate.facilityFeedbackReceivedAt))
+    || [candidate.interviewFeedback, candidate.interviewOutcome, candidate.finalCandidateOutcome, candidate.hiringDecisionOutcome, candidate.archiveOutcome].some(substantiveOutcome)
+    || FINAL_CANDIDATE_STATUSES.has(lower(candidate.status));
+}
+
+function configuredFeedbackThreshold(workflowRules = {}) {
+  const preferred = workflowRules.interviewFeedbackHours;
+  const fallback = workflowRules.workspaceInterviewDecisionDelayHours;
+  const value = preferred !== undefined && preferred !== null && preferred !== "" ? Number(preferred) : Number(fallback);
+  return Number.isFinite(value) && value >= 0 ? value : 24;
+}
+
+function completedInterviewAt(candidate = {}, now = new Date()) {
+  const completionStatus = [candidate.status, candidate.interviewCompletionStatus, candidate.bookingStatus, candidate.bookingRecord?.bookingStatus]
+    .some((value) => ["completed", "interview completed"].includes(lower(value)));
+  const source = candidate.actualInterviewAt || candidate.interviewCompletedAt || (completionStatus ? candidate.interviewDate : "");
+  const completedAt = parseDate(source);
+  return completedAt && completedAt.getTime() <= now.getTime() ? completedAt : null;
 }
 
 function managerFeedbackState(candidate, task, now, workflowRules) {
   if (managerFeedbackReceived(candidate)) return null;
   const explicit = /request feedback|interview feedback/.test(lower(candidate.nextAction));
-  const completed = lower(candidate.status) === "interview completed" || Boolean(candidate.actualInterviewAt || candidate.interviewDate);
-  if (!explicit && !completed && !(task?.ownerType === "Hiring Manager" && /feedback/.test(lower(task?.recommendedAction || task?.title)))) return null;
-  const interviewAt = candidate.actualInterviewAt || candidate.interviewDate;
-  const elapsed = hoursBetween(interviewAt, now);
-  const threshold = Math.max(0, Number(workflowRules.interviewFeedbackHours || workflowRules.workspaceInterviewDecisionDelayHours || 24));
+  const taskRequestsFeedback = task?.ownerType === "Hiring Manager" && /feedback/.test(lower(task?.recommendedAction || task?.title));
+  const completedAt = completedInterviewAt(candidate, now);
+  if (!explicit && !completedAt && !taskRequestsFeedback) return null;
+  const elapsed = completedAt ? hoursBetween(completedAt, now) : null;
+  const threshold = configuredFeedbackThreshold(workflowRules);
+  const overdue = elapsed != null && elapsed >= threshold;
+  const transitionAt = completedAt && !overdue
+    ? new Date(completedAt.getTime() + threshold * 3600000).toISOString()
+    : "";
   return {
     elapsed,
-    interviewAt: text(interviewAt),
-    overdue: elapsed != null && elapsed >= threshold,
+    interviewAt: completedAt ? completedAt.toISOString() : "",
+    overdue,
     threshold,
+    transitionAt,
+    completionConfirmed: Boolean(completedAt),
   };
 }
 
@@ -239,8 +289,9 @@ function candidateReadyPending(candidate = {}) {
 }
 
 function followUpDue(candidate, task, now, workflowRules, feedbackState = null) {
-  if (!task || task.ownerType !== "Recruiter" || feedbackState || candidateReadyPending(candidate)) return false;
-  const due = parseDate(task.dueAt);
+  const ownerType = text(task?.ownerType || candidate.ownerType || candidate.currentOwner);
+  if (ownerType !== "Recruiter" || feedbackState || candidateReadyPending(candidate)) return false;
+  const due = parseDate(task?.dueAt || candidate.nextActionDueDate);
   const lastActivity = candidateLastActivity(candidate);
   const inactiveHours = hoursBetween(lastActivity, now);
   const threshold = Math.max(1, Number(workflowRules.candidateFollowUpDays || 2)) * 24;
@@ -248,27 +299,50 @@ function followUpDue(candidate, task, now, workflowRules, feedbackState = null) 
   return Boolean((due && due <= now) || (explicit && (inactiveHours == null || inactiveHours >= threshold)));
 }
 
-function destinationFor(sourceType, sourceId) {
+function destinationFor(sourceType, sourceId, requisitionId = "") {
   if (!text(sourceId)) return { type: "unavailable", id: "", label: "Target unavailable", disabled: true, reason: "The affected record has no stable identifier." };
-  if (sourceType === "candidate") return { type: "candidate", id: sourceId, label: "Open Candidate" };
+  if (sourceType === "candidate") return { type: "candidate", id: sourceId, requisitionId: text(requisitionId), label: "Open Candidate" };
   if (sourceType === "requisition") return { type: "requisition", id: sourceId, label: "Open Requisition" };
   if (sourceType === "facility") return { type: "facility", id: sourceId, label: "Open Facility" };
   if (sourceType === "calendar") return { type: "calendar", id: sourceId, label: "View Event" };
   return { type: "reporting", id: sourceId, label: "Open Weekly Reporting" };
 }
 
+function candidateRowsForIssue(issue, sources) {
+  const sourceId = text(issue.sourceId);
+  const rows = sources.candidateRowsById.get(sourceId) || [];
+  if (rows.length <= 1) return rows;
+  return rows.filter((candidate) => {
+    const isolated = buildRecruiterWorkspaceModel({
+      tracker: [candidate],
+      requisitions: sources.requisitions,
+      sites: sources.sites,
+      history: [],
+      calendarEvents: sources.calendarEvents,
+      rules: sources.workflowRules,
+      now: sources.now,
+    });
+    return isolated.reportReadiness.issues.some((entry) => entry.sourceType === "candidate" && entry.code === issue.code && text(entry.sourceId) === sourceId);
+  });
+}
+
 function itemForReadinessIssue(issue, sources) {
   if (!ACTIONABLE_READINESS_CODES.has(issue.code)) return null;
   const sourceId = text(issue.sourceId);
   if (!sourceId) return null;
-  const candidate = issue.sourceType === "candidate" ? sources.candidateById.get(sourceId) : null;
+  const candidateMatches = issue.sourceType === "candidate" ? candidateRowsForIssue(issue, sources) : [];
+  const candidate = candidateMatches.length === 1 ? candidateMatches[0] : null;
   const candidateRequisitionResolution = candidate ? activeExactRequisitionForCandidate(candidate, sources.requisitions) : { requisition: null, status: "not-applicable" };
+  const exactRequisitionResolution = issue.sourceType === "requisition" && issue.code !== "missing-requisition-id"
+    ? resolveExactRequisition(sources.requisitions, sourceId)
+    : { value: null };
   const requisition = issue.sourceType === "requisition"
-    ? sources.requisitionById.get(sourceId) || sources.requisitions.find((entry) => text(entry.id || entry.requisitionId || entry.reqNumber || entry.positionTitle) === sourceId)
+    ? exactRequisitionResolution.value
     : candidateRequisitionResolution.requisition;
   const calendarEvent = issue.sourceType === "calendar" ? sources.calendarById.get(sourceId) : null;
   if (issue.sourceType === "candidate" && (!candidate || !activeCandidate(candidate))) return null;
-  if (issue.sourceType === "requisition" && (!requisition || !activeRequisition(requisition))) return null;
+  if (issue.sourceType === "requisition" && requisition && !activeRequisition(requisition)) return null;
+  if (issue.sourceType === "requisition" && !requisition && issue.code !== "missing-requisition-id") return null;
   if (issue.sourceType === "calendar" && !calendarEvent) return null;
   if (issue.sourceType === "candidate" && issue.code !== "missing-requisition-id" && candidateRequisitionResolution.status !== "resolved") return null;
   const facilityResolution = requisition
@@ -284,8 +358,21 @@ function itemForReadinessIssue(issue, sources) {
     facilityId: text(calendarEvent.facilityId),
     region: "",
     currentOwner: text(calendarEvent.recruiterName),
+  } : issue.sourceType === "requisition" && !requisition ? {
+    candidate: "",
+    candidateId: "",
+    requisition: sourceId,
+    requisitionId: "",
+    requisitionNumber: "",
+    facility: "Facility unresolved",
+    facilityId: "",
+    region: "",
+    currentOwner: "",
   } : contextFor(candidate || {}, requisition || {}, facility || {});
   const sourceType = issue.sourceType;
+  const destination = sourceType === "requisition" && !context.requisitionId
+    ? { type: "unavailable", id: "", label: "Target unavailable", disabled: true, reason: "The blocker has no exact canonical requisition identity." }
+    : destinationFor(sourceType, sourceType === "requisition" ? context.requisitionId : sourceId, context.requisitionId);
   return stableActionItem({
     category: ACTION_CENTER_CATEGORIES.dataBlocker,
     sourceType,
@@ -297,7 +384,7 @@ function itemForReadinessIssue(issue, sources) {
     title: issue.label,
     explanation: `${issue.label}. This prevents the affected workflow from being treated as complete.`,
     recommendedAction: `Review ${issue.fixLocation || "the affected source record"}`,
-    destination: destinationFor(sourceType, sourceType === "requisition" ? context.requisitionId : sourceId),
+    destination,
     priorityScore: ["facility-ambiguous", "facility-unmapped", "missing-requisition-id"].includes(issue.code) ? 88 : 58,
     riskLevel: ["facility-ambiguous", "facility-unmapped", "missing-requisition-id"].includes(issue.code) ? "High" : "Medium",
     context,
@@ -354,11 +441,14 @@ export function buildRecruiterActionCenter({ tracker = [], requisitions = [], si
   const workspace = buildRecruiterWorkspaceModel({ tracker: safeTracker, requisitions: safeRequisitions, sites: safeSites, history, calendarEvents: safeEvents, rules: workflowRules, now: current });
   const taskKey = (candidateId, requisitionId) => `${text(candidateId)}::${text(requisitionId)}`;
   const taskByCandidateRequisition = new Map(workspace.tasks.filter((task) => task.sourceType === "candidate").map((task) => [taskKey(task.sourceId, task.requisitionId), task]));
-  const candidateById = new Map(safeTracker.map((candidate) => [text(candidate.id), candidate]).filter(([id]) => id));
-  const requisitionById = new Map(safeRequisitions.flatMap((requisition) => [requisition.id, requisition.requisitionId].map(text).filter(Boolean).map((id) => [id, requisition])));
+  const candidateRowsById = safeTracker.reduce((result, candidate) => {
+    const id = text(candidate.id);
+    if (id) result.set(id, [...(result.get(id) || []), candidate]);
+    return result;
+  }, new Map());
   const calendarById = new Map(safeEvents.map((event) => [text(event.id), event]).filter(([id]) => id));
   const facilityIndex = buildFacilityIndex(safeSites);
-  const sources = { tracker: safeTracker, requisitions: safeRequisitions, sites: safeSites, calendarEvents: safeEvents, candidateById, requisitionById, calendarById, facilityIndex };
+  const sources = { tracker: safeTracker, requisitions: safeRequisitions, sites: safeSites, calendarEvents: safeEvents, candidateRowsById, calendarById, facilityIndex, workflowRules, now: current };
   const items = [];
 
   safeTracker.filter(activeCandidate).forEach((candidate) => {
@@ -380,7 +470,7 @@ export function buildRecruiterActionCenter({ tracker = [], requisitions = [], si
         title: facilityResolution.status === "disagreement" ? "Candidate and requisition facility context disagree" : facilityResolution.status === "ambiguous" ? "Facility identity is ambiguous" : "Facility could not be mapped",
         explanation: "The candidate and exact active requisition do not resolve to one canonical facility. Operational actions remain unavailable until the facility context is corrected.",
         recommendedAction: "Review the candidate facility assignment",
-        destination: destinationFor("candidate", candidateId),
+        destination: destinationFor("candidate", candidateId, text(requisition.id || requisition.requisitionId)),
         priorityScore: 88,
         riskLevel: "High",
         context,
@@ -399,7 +489,9 @@ export function buildRecruiterActionCenter({ tracker = [], requisitions = [], si
       const title = feedbackState.overdue ? `Manager feedback overdue for ${context.candidate}` : `Manager feedback pending for ${context.candidate}`;
       const explanation = feedbackState.overdue
         ? `${context.candidate}'s interview was recorded ${Math.max(1, elapsedHours)} hours ago, and manager feedback is overdue.`
-        : `${context.candidate}'s interview is complete, and manager feedback is pending${remainingHours == null ? "" : ` for ${elapsedHours} hours with ${remainingHours} hours remaining before escalation`}.`;
+        : feedbackState.completionConfirmed
+          ? `${context.candidate}'s interview is complete, and manager feedback is pending${remainingHours == null ? "" : ` for ${elapsedHours} hours with ${remainingHours} hours remaining before escalation`}.`
+          : `A manager feedback task is recorded for ${context.candidate}, and feedback is pending.`;
       items.push(stableActionItem({
         category: ACTION_CENTER_CATEGORIES.managerFeedback,
         sourceType: "candidate",
@@ -410,12 +502,13 @@ export function buildRecruiterActionCenter({ tracker = [], requisitions = [], si
         title,
         explanation,
         recommendedAction: "Review manager feedback follow-up",
-        destination: destinationFor("candidate", candidateId),
+        destination: destinationFor("candidate", candidateId, context.requisitionId),
         priorityScore: feedbackState.overdue ? 80 + Math.min(20, Math.floor((feedbackState.elapsed || 0) / 24) * 5) : 52,
         riskLevel: feedbackState.overdue ? "High" : "Medium",
         dueAt: task?.dueAt || feedbackState.interviewAt,
         context,
         missingData: context.requisitionId && context.facilityId ? [] : [!context.requisitionId ? "requisition" : "", !context.facilityId ? "facility" : ""].filter(Boolean),
+        transitionAt: feedbackState.transitionAt,
       }));
     } else if (followUpDue(candidate, task, current, workflowRules, feedbackState)) {
       items.push(stableActionItem({
@@ -428,7 +521,7 @@ export function buildRecruiterActionCenter({ tracker = [], requisitions = [], si
         title: `Recruiter follow-up due for ${context.candidate}`,
         explanation: task?.reason || `The recruiter-owned follow-up for ${context.candidate} is due.`,
         recommendedAction: "Review candidate follow-up",
-        destination: destinationFor("candidate", candidateId),
+        destination: destinationFor("candidate", candidateId, context.requisitionId),
         priorityScore: 60 + (task?.isOverdue ? 15 : 0) + (["High", "Critical"].includes(task?.riskLevel) ? 15 : 0),
         riskLevel: ["High", "Critical"].includes(task?.riskLevel) ? task.riskLevel : task?.isOverdue ? "High" : "Medium",
         dueAt: task?.dueAt,
@@ -448,7 +541,7 @@ export function buildRecruiterActionCenter({ tracker = [], requisitions = [], si
         title: `Candidate Ready submission pending for ${context.candidate}`,
         explanation: `The reviewed Candidate Ready package exists for ${context.candidate}, but the matching facility submission has not been recorded as sent.`,
         recommendedAction: "Review Candidate Ready package",
-        destination: destinationFor("candidate", candidateId),
+        destination: destinationFor("candidate", candidateId, context.requisitionId),
         priorityScore: 72,
         riskLevel: "Medium",
         context,
@@ -472,7 +565,8 @@ export function buildRecruiterActionCenter({ tracker = [], requisitions = [], si
     ...result,
     [filter]: filter === ACTION_CENTER_CATEGORIES.all ? uniqueItems.length : uniqueItems.filter((item) => item.category === filter).length,
   }), {});
-  return { items: uniqueItems, counts, calculatedAt: current.toISOString(), readOnly: true };
+  const nextRefreshAt = uniqueItems.map((item) => parseDate(item.transitionAt)).filter((value) => value && value > current).sort((a, b) => a - b)[0];
+  return { items: uniqueItems, counts, calculatedAt: current.toISOString(), nextRefreshAt: nextRefreshAt ? nextRefreshAt.toISOString() : "", readOnly: true };
 }
 
 export function filterRecruiterActionCenter(items = [], filter = ACTION_CENTER_CATEGORIES.all) {

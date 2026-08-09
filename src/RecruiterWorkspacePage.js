@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ACTION_CENTER_CATEGORIES,
   ACTION_CENTER_FILTERS,
@@ -159,13 +159,22 @@ export function RecruiterWorkspacePage({ tracker = [], requisitions = [], sites 
   const [wrapUpOpen, setWrapUpOpen] = useState(false);
   const [actionCenterFilter, setActionCenterFilter] = useState(ACTION_CENTER_CATEGORIES.all);
   const [actionCenterDetailId, setActionCenterDetailId] = useState("");
+  const [actionCenterNow, setActionCenterNow] = useState(() => new Date());
   const model = useMemo(() => buildRecruiterWorkspaceModel({ tracker, requisitions, sites, history, calendarEvents, rules: workflowRules }), [tracker, requisitions, sites, history, calendarEvents, workflowRules]);
-  const actionCenter = useMemo(() => buildRecruiterActionCenter({ tracker, requisitions, sites, history, calendarEvents, workflowRules }), [tracker, requisitions, sites, history, calendarEvents, workflowRules]);
+  const actionCenter = useMemo(() => buildRecruiterActionCenter({ tracker, requisitions, sites, history, calendarEvents, workflowRules, now: actionCenterNow }), [tracker, requisitions, sites, history, calendarEvents, workflowRules, actionCenterNow]);
+  useEffect(() => {
+    const transitionAt = Date.parse(actionCenter.nextRefreshAt);
+    if (!Number.isFinite(transitionAt)) return undefined;
+    const maximumDelay = 2147483647;
+    const delay = Math.min(maximumDelay, Math.max(0, transitionAt - Date.now()));
+    const timer = window.setTimeout(() => setActionCenterNow(new Date()), delay);
+    return () => window.clearTimeout(timer);
+  }, [actionCenter.nextRefreshAt, actionCenterNow]);
   const actionCenterItems = useMemo(() => filterRecruiterActionCenter(actionCenter.items, actionCenterFilter), [actionCenter.items, actionCenterFilter]);
   const actionCenterDetail = actionCenter.items.find((item) => item.id === actionCenterDetailId) || null;
   const openActionCenterItem = (item) => {
     if (item.destination.disabled) return;
-    if (item.destination.type === "candidate") onOpenCandidate(item.destination.id);
+    if (item.destination.type === "candidate") onOpenCandidate(item.destination.id, item.requisitionId, item);
     else if (item.destination.type === "requisition") onOpenRequisition(item.destination.id, item);
     else if (item.destination.type === "facility") onOpenFacility(item.destination.id, item);
     else if (item.destination.type === "calendar") onOpenCalendarEvent(item.destination.id);

@@ -96,6 +96,56 @@ test("does not create a manager-feedback action after feedback or a final decisi
   expect(result.items.some((entry) => entry.category === ACTION_CENTER_CATEGORIES.managerFeedback)).toBe(false);
 });
 
+test.each([
+  ["future scheduled interview", { status: "Interview Scheduled", nextAction: "Confirm interview", interviewDate: "2026-08-09T16:00:00.000Z" }],
+  ["past scheduled but incomplete interview", { status: "Interview Scheduled", nextAction: "Confirm interview", interviewDate: "2026-08-07T16:00:00.000Z" }],
+  ["future actual-interview timestamp", { status: "Interview Completed", nextAction: "Confirm interview", actualInterviewAt: "2026-08-09T16:00:00.000Z" }],
+])("does not treat a %s as completed", (label, interview) => {
+  const result = build({ tracker: [candidate({ id: `candidate-${label}`, ...interview })] });
+  expect(result.items.some((entry) => entry.category === ACTION_CENTER_CATEGORIES.managerFeedback)).toBe(false);
+});
+
+test("keeps placeholder outcomes eligible for Manager Feedback", () => {
+  const result = build({
+    tracker: [candidate({
+      id: "candidate-still-active",
+      status: "Interview Completed",
+      nextAction: "Request feedback",
+      ownerType: "Hiring Manager",
+      actualInterviewAt: "2026-08-06T15:00:00.000Z",
+      finalCandidateOutcome: "Still Active",
+      interviewOutcome: "Feedback pending",
+    })],
+  });
+  expect(result.items.find((entry) => entry.category === ACTION_CENTER_CATEGORIES.managerFeedback)).toMatchObject({
+    candidateId: "candidate-still-active",
+    riskLevel: "High",
+  });
+});
+
+test.each(["Hired", "Rejected", "Withdrawn", "Offer Accepted"])('removes Manager Feedback after the canonical final outcome "%s"', (finalCandidateOutcome) => {
+  const result = build({
+    tracker: [candidate({
+      id: `candidate-final-${finalCandidateOutcome}`,
+      status: "Interview Completed",
+      nextAction: "Request feedback",
+      actualInterviewAt: "2026-08-06T15:00:00.000Z",
+      finalCandidateOutcome,
+    })],
+  });
+  expect(result.items.some((entry) => entry.category === ACTION_CENTER_CATEGORIES.managerFeedback)).toBe(false);
+});
+
+test("keeps an explicit feedback task pending when completion is not confirmed", () => {
+  const result = build({
+    tracker: [candidate({ id: "candidate-feedback-task", status: "Interview Scheduled", nextAction: "Request feedback", interviewDate: "2026-08-10T16:00:00.000Z" })],
+  });
+  const item = result.items.find((entry) => entry.category === ACTION_CENTER_CATEGORIES.managerFeedback);
+  expect(item).toMatchObject({ title: "Manager feedback pending for Synthetic Candidate", riskLevel: "Medium", transitionAt: "" });
+  expect(item.explanation).toMatch(/feedback task.*pending/i);
+  expect(item.explanation).not.toMatch(/complete|overdue/i);
+});
+
 test("shows completed-interview feedback as pending before the configured threshold", () => {
   const result = build({
     tracker: [candidate({ id: "candidate-pending-feedback", status: "Interview Completed", nextAction: "Request feedback", ownerType: "Hiring Manager", actualInterviewAt: "2026-08-08T04:30:00.000Z" })],
@@ -171,6 +221,13 @@ test("surfaces a missing facility contact only for a facility in active scope", 
   expect(contacts[0]).toMatchObject({ sourceType: "facility", sourceId: "facility-no-contact", facilityId: "facility-no-contact", destination: { type: "facility", id: "facility-no-contact" } });
 });
 
+test.each(["Paused", "Cancelled", "Closed", "Filled", "Archived", "Inactive", "Unknown", ""])("does not create a facility-contact blocker for %s requisitions", (status) => {
+  const noContact = { ...facility, id: "facility-inactive-contact", siteName: "Inactive Contact Facility", hiringManagerName: "", hiringManagerEmail: "" };
+  const req = { ...requisition, id: `req-${status || "blank"}`, facilityId: noContact.id, siteName: noContact.siteName, status };
+  const result = build({ tracker: [], requisitions: [req], sites: [noContact] });
+  expect(result.items.some((entry) => entry.issueCode === "facility-recipient-missing")).toBe(false);
+});
+
 test.each(["Closed", "Rejected", "Hired", "Ineligible", "Archived", "Do Not Contact", "Not Interested", "Unresponsive"])("excludes terminal or non-contactable status %s", (status) => {
   const result = build({ tracker: [candidate({ status })] });
   expect(result.items.some((entry) => entry.candidateId === "candidate-1")).toBe(false);
@@ -185,6 +242,20 @@ test("keeps the active requisition when a separate closed requisition exists", (
   const result = build({ requisitions: [requisition, { ...requisition, id: "req-closed", reqNumber: "SYN-CLOSED", status: "Closed" }] });
   expect(result.items.some((entry) => entry.category === ACTION_CENTER_CATEGORIES.followUp && entry.requisitionId === "req-1")).toBe(true);
   expect(result.items.some((entry) => entry.requisitionId === "req-closed")).toBe(false);
+});
+
+test.each([
+  ["reqId", { reqId: "req-1" }],
+  ["selectedRequisitionId", { selectedRequisitionId: "req-1" }],
+  ["formSnapshot.selectedRequisitionId", { formSnapshot: { selectedRequisitionId: "req-1" } }],
+  ["formSnapshot.requisitionId", { formSnapshot: { requisitionId: "req-1" } }],
+  ["uniqueIdNumber", { uniqueIdNumber: "SYN-UNIQUE" }],
+  ["reqNumber", { reqNumber: "SYN-1001" }],
+])("resolves the canonical requisition through %s", (field, reference) => {
+  const canonicalReq = { ...requisition, uniqueIdNumber: "SYN-UNIQUE" };
+  const input = candidate({ requisitionId: "", reqNumber: "", selectedRequisitionId: "", formSnapshot: {}, ...reference });
+  const result = build({ tracker: [input], requisitions: [canonicalReq] });
+  expect(result.items.some((entry) => entry.category === ACTION_CENTER_CATEGORIES.followUp && entry.requisitionId === "req-1")).toBe(true);
 });
 
 test("uses the canonical missing-requisition blocker instead of an operational action", () => {
@@ -221,6 +292,35 @@ test("keeps only the active scope when the same candidate is linked to active an
   const followUps = result.items.filter((entry) => entry.category === ACTION_CENTER_CATEGORIES.followUp);
   expect(followUps).toHaveLength(1);
   expect(followUps[0].requisitionId).toBe("req-1");
+});
+
+test("keeps duplicate candidate-ID blockers attached to their exact requisitions", () => {
+  const secondReq = { ...requisition, id: "req-2", reqNumber: "SYN-1002" };
+  const missingNotes = candidate({ id: "duplicate-candidate", requisitionId: "req-1", candidateNotes: "", nextAction: "Follow up with candidate" });
+  const missingAction = candidate({ id: "duplicate-candidate", requisitionId: "req-2", reqNumber: "SYN-1002", candidateNotes: "Present", nextAction: "" });
+  const result = build({ tracker: [missingNotes, missingAction], requisitions: [requisition, secondReq] });
+  const noteBlocker = result.items.find((entry) => entry.issueCode === "missing-candidate-notes" && entry.candidateId === "duplicate-candidate");
+  const actionBlocker = result.items.find((entry) => entry.issueCode === "missing-next-action" && entry.candidateId === "duplicate-candidate");
+  expect(noteBlocker).toMatchObject({ requisitionId: "req-1", destination: { requisitionId: "req-1" } });
+  expect(actionBlocker).toMatchObject({ requisitionId: "req-2", destination: { requisitionId: "req-2" } });
+});
+
+test("never borrows a similarly named requisition for a blocker with no stable identity", () => {
+  const noStableId = { status: "Active", reqNumber: "", uniqueIdNumber: "", positionTitle: "Registered Nurse", siteName: "Synthetic Facility", facilityId: "facility-1" };
+  const similarlyNamed = { ...requisition, id: "req-similar", reqNumber: "SYN-SIMILAR", positionTitle: "Registered Nurse" };
+  const result = build({ tracker: [], requisitions: [noStableId, similarlyNamed] });
+  const blocker = result.items.find((entry) => entry.sourceType === "requisition" && entry.issueCode === "missing-requisition-id");
+  expect(blocker).toMatchObject({ requisitionId: "", destination: { type: "unavailable", disabled: true } });
+  expect(blocker.context.requisitionId).not.toBe("req-similar");
+});
+
+test("does not interpret a missing-requisition blocker label as another requisition's stable ID", () => {
+  const noStableId = { status: "Active", reqNumber: "", uniqueIdNumber: "", positionTitle: "Registered Nurse", siteName: "Synthetic Facility", facilityId: "facility-1" };
+  const collidingStableId = { ...requisition, id: "Registered Nurse", reqNumber: "SYN-COLLISION", positionTitle: "Licensed Practical Nurse" };
+  const result = build({ tracker: [], requisitions: [noStableId, collidingStableId] });
+  const blocker = result.items.find((entry) => entry.sourceType === "requisition" && entry.issueCode === "missing-requisition-id");
+  expect(blocker).toMatchObject({ requisitionId: "", destination: { type: "unavailable", disabled: true } });
+  expect(blocker.context.requisitionId).not.toBe("Registered Nurse");
 });
 
 test("encodes unusual stable identifiers without changing navigation targets", () => {

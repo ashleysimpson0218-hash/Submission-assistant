@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { RecruiterWorkspacePage } from "./RecruiterWorkspacePage";
-import { resolveActionCenterSetupTarget } from "./App";
+import { actionCenterNavigationState, activeActionCenterCandidateTargetForSelection, resolveActionCenterCandidateTarget, resolveActionCenterSetupTarget } from "./App";
 
 const theme = {
   panel: "#fff", panelAlt: "#f7f4ff", borderSoft: "#ddd", shadow: "none", text: "#17112f", muted: "#6b6680",
@@ -178,7 +178,7 @@ test("renders the read-only Action Center with the approved category filters and
   expect(candidate).toEqual(source);
 });
 
-test("opens a read-only detail preview and navigates with the exact candidate identifier", () => {
+test("opens a read-only detail preview and navigates with the exact candidate and requisition identifiers", () => {
   const onOpenCandidate = jest.fn();
   const onTaskAction = jest.fn();
   const onWorkspaceEvent = jest.fn();
@@ -216,9 +216,42 @@ test("opens a read-only detail preview and navigates with the exact candidate id
   expect(within(details).getByText(/Read-only preview/i)).toBeInTheDocument();
   expect(within(details).queryByRole("button", { name: /Send|Save|Complete|Resolve|Mark/i })).not.toBeInTheDocument();
   fireEvent.click(within(details).getByRole("button", { name: "Open Candidate" }));
-  expect(onOpenCandidate).toHaveBeenCalledWith("candidate-exact");
+  expect(onOpenCandidate).toHaveBeenCalledWith("candidate-exact", "req-exact", expect.objectContaining({ candidateId: "candidate-exact", requisitionId: "req-exact" }));
   expect(onTaskAction).not.toHaveBeenCalled();
   expect(onWorkspaceEvent).not.toHaveBeenCalled();
+});
+
+test("moves Manager Feedback from pending to overdue without remounting", () => {
+  const tracker = [{
+    id: "candidate-live-feedback",
+    candidate: "Synthetic Live Feedback Candidate",
+    status: "Interview Completed",
+    nextAction: "Request feedback",
+    actualInterviewAt: "2026-07-21T12:00:01.000Z",
+    candidateNotes: "Interview complete",
+    currentOwner: "Synthetic Manager",
+    ownerType: "Hiring Manager",
+    requisitionId: "req-live-feedback",
+    position: "RN",
+    site: "Synthetic Facility",
+    facilityId: "facility-live-feedback",
+  }];
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={tracker}
+    requisitions={[{ id: "req-live-feedback", reqNumber: "SYN-LIVE", positionTitle: "RN", siteName: "Synthetic Facility", facilityId: "facility-live-feedback", status: "Active" }]}
+    sites={[{ id: "facility-live-feedback", siteName: "Synthetic Facility", status: "Active", hiringManagerEmail: "manager@example.test" }]}
+    workflowRules={{ interviewFeedbackHours: 24 }}
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+  />);
+  expect(screen.getByText("Manager feedback pending for Synthetic Live Feedback Candidate")).toBeInTheDocument();
+  act(() => {
+    jest.advanceTimersByTime(1000);
+  });
+  expect(screen.getByText("Manager feedback overdue for Synthetic Live Feedback Candidate")).toBeInTheDocument();
 });
 
 test("routes missing facility contact review with the exact facility context", () => {
@@ -293,6 +326,45 @@ test("builds exact application setup targets without falling back to another rec
   expect(resolveActionCenterSetupTarget({ type: "facility", id: "facility-missing", requisitions, sites })).toMatchObject({ ok: false });
   expect(resolveActionCenterSetupTarget({ type: "requisition", id: "req-exact", requisitions: [...requisitions, ...requisitions], sites })).toMatchObject({ ok: false });
   expect(resolveActionCenterSetupTarget({ type: "facility", id: "facility-exact", requisitions, sites: [...sites, ...sites] })).toMatchObject({ ok: false });
+});
+
+test("resolves an exact candidate and requisition pair without duplicate-ID fallback", () => {
+  const requisitions = [
+    { id: "req-one", reqNumber: "SYN-ONE", positionTitle: "RN" },
+    { id: "req-two", reqNumber: "SYN-TWO", positionTitle: "LPN" },
+  ];
+  const tracker = [
+    { id: "candidate-shared", requisitionId: "req-one", candidate: "Synthetic One" },
+    { id: "candidate-shared", reqId: "req-two", candidate: "Synthetic Two" },
+  ];
+  expect(resolveActionCenterCandidateTarget({ candidateId: "candidate-shared", requisitionId: "req-two", tracker, requisitions })).toMatchObject({
+    ok: true,
+    candidate: { candidate: "Synthetic Two" },
+    target: { candidateId: "candidate-shared", requisitionId: "req-two" },
+  });
+  expect(resolveActionCenterCandidateTarget({ candidateId: "candidate-shared", requisitionId: "req-missing", tracker, requisitions })).toMatchObject({ ok: false });
+  expect(resolveActionCenterCandidateTarget({ candidateId: "candidate-shared", requisitionId: "req-one", tracker: [...tracker, { ...tracker[0] }], requisitions })).toMatchObject({ ok: false });
+});
+
+test("makes Action Center navigation supersede stale reporting correction state", () => {
+  const candidateTarget = { candidateId: "candidate-exact", requisitionId: "req-exact" };
+  const setupTarget = { recordType: "facility", recordId: "facility-exact" };
+  expect(actionCenterNavigationState({ candidateTarget })).toEqual({
+    reportCorrectionTarget: null,
+    actionCenterCandidateTarget: candidateTarget,
+    actionCenterSetupTarget: null,
+  });
+  expect(actionCenterNavigationState({ setupTarget })).toEqual({
+    reportCorrectionTarget: null,
+    actionCenterCandidateTarget: null,
+    actionCenterSetupTarget: setupTarget,
+  });
+});
+
+test("expires an Action Center candidate target when an ordinary candidate selection changes", () => {
+  const candidateTarget = { candidateId: "candidate-one", requisitionId: "req-one" };
+  expect(activeActionCenterCandidateTargetForSelection({ candidateTarget, selectedId: "candidate-one" })).toBe(candidateTarget);
+  expect(activeActionCenterCandidateTargetForSelection({ candidateTarget, selectedId: "candidate-two" })).toBeNull();
 });
 
 test("disables an unavailable requisition target instead of opening a generic setup screen", () => {
