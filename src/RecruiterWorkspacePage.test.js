@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { RecruiterWorkspacePage } from "./RecruiterWorkspacePage";
-import { actionCenterNavigationState, activeActionCenterCandidateTargetForSelection, resolveActionCenterCandidateTarget, resolveActionCenterSetupTarget } from "./App";
+import { FacilityPositionSetupPage, actionCenterNavigationState, activeActionCenterCandidateTargetForSelection, clearedActionCenterTargets, resolveActionCenterCandidateTarget, resolveActionCenterSetupTarget } from "./App";
 
 const theme = {
   panel: "#fff", panelAlt: "#f7f4ff", borderSoft: "#ddd", shadow: "none", text: "#17112f", muted: "#6b6680",
@@ -342,8 +342,111 @@ test("resolves an exact candidate and requisition pair without duplicate-ID fall
     candidate: { candidate: "Synthetic Two" },
     target: { candidateId: "candidate-shared", requisitionId: "req-two" },
   });
+  expect(resolveActionCenterCandidateTarget({ candidateId: "candidate-shared", requisitionId: "", tracker, requisitions })).toMatchObject({ ok: false });
+  expect(resolveActionCenterCandidateTarget({ candidateId: "candidate-missing", requisitionId: "req-two", tracker, requisitions })).toMatchObject({ ok: false });
   expect(resolveActionCenterCandidateTarget({ candidateId: "candidate-shared", requisitionId: "req-missing", tracker, requisitions })).toMatchObject({ ok: false });
   expect(resolveActionCenterCandidateTarget({ candidateId: "candidate-shared", requisitionId: "req-one", tracker: [...tracker, { ...tracker[0] }], requisitions })).toMatchObject({ ok: false });
+});
+
+test("keeps Action Center navigation separate while both candidate paths preserve exact requisition context", () => {
+  const onOpenCandidate = jest.fn();
+  const onOpenActionCenterCandidate = jest.fn();
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={[{
+      id: "candidate-dual-navigation",
+      candidate: "Synthetic Dual Navigation",
+      status: "Submitted",
+      nextAction: "Follow up with candidate",
+      nextActionDueDate: "2026-07-20",
+      lastActionAt: "2026-07-18T12:00:00.000Z",
+      candidateNotes: "Synthetic note",
+      currentOwner: "Recruiter",
+      requisitionId: "req-dual-navigation",
+      reqNumber: "SYN-DUAL",
+      position: "Registered Nurse",
+      site: "Synthetic Facility",
+      facilityId: "facility-dual-navigation",
+    }]}
+    requisitions={[{
+      id: "req-dual-navigation",
+      reqNumber: "SYN-DUAL",
+      positionTitle: "Registered Nurse",
+      siteName: "Synthetic Facility",
+      facilityId: "facility-dual-navigation",
+      status: "Active",
+      openings: 1,
+    }]}
+    sites={[{
+      id: "facility-dual-navigation",
+      siteName: "Synthetic Facility",
+      status: "Active",
+      hiringManagerName: "Synthetic Manager",
+      hiringManagerEmail: "manager@example.test",
+    }]}
+    onOpenCandidate={onOpenCandidate}
+    onOpenActionCenterCandidate={onOpenActionCenterCandidate}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+  />);
+
+  const [actionCenterOpen, workQueueOpen] = screen.getAllByRole("button", { name: "Open Candidate" });
+  fireEvent.click(actionCenterOpen);
+  expect(onOpenActionCenterCandidate).toHaveBeenCalledWith(
+    "candidate-dual-navigation",
+    "req-dual-navigation",
+    expect.objectContaining({ candidateId: "candidate-dual-navigation", requisitionId: "req-dual-navigation" }),
+  );
+  expect(onOpenCandidate).not.toHaveBeenCalled();
+
+  fireEvent.click(workQueueOpen);
+  expect(onOpenCandidate).toHaveBeenCalledWith(
+    "candidate-dual-navigation",
+    "req-dual-navigation",
+    expect.objectContaining({ sourceId: "candidate-dual-navigation", requisitionId: "req-dual-navigation" }),
+  );
+  expect(onOpenActionCenterCandidate).toHaveBeenCalledTimes(1);
+});
+
+test("uses the complete Action Center requisition collection to expose a missing-number blocker", () => {
+  const onOpenActionCenterRequisition = jest.fn();
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={[]}
+    requisitions={[]}
+    actionCenterRequisitions={[{
+      id: "req-missing-number",
+      reqNumber: "",
+      uniqueIdNumber: "",
+      positionTitle: "Registered Nurse",
+      siteName: "Synthetic Facility",
+      facilityId: "facility-missing-number",
+      status: "Active",
+      openings: 1,
+    }]}
+    sites={[{
+      id: "facility-missing-number",
+      siteName: "Synthetic Facility",
+      status: "Active",
+      hiringManagerName: "Synthetic Manager",
+      hiringManagerEmail: "manager@example.test",
+    }]}
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={jest.fn()}
+    onOpenActionCenterRequisition={onOpenActionCenterRequisition}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+  />);
+
+  const filters = screen.getByRole("tablist", { name: "Action Center filters" });
+  fireEvent.click(within(filters).getByRole("tab", { name: /Data Blockers/i }));
+  expect(screen.getByText("Req Number or Unique ID is missing")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Open Requisition" }));
+  expect(onOpenActionCenterRequisition).toHaveBeenCalledWith(
+    "req-missing-number",
+    expect.objectContaining({ issueCode: "missing-requisition-number", requisitionId: "req-missing-number" }),
+  );
 });
 
 test("makes Action Center navigation supersede stale reporting correction state", () => {
@@ -358,6 +461,15 @@ test("makes Action Center navigation supersede stale reporting correction state"
     reportCorrectionTarget: null,
     actionCenterCandidateTarget: null,
     actionCenterSetupTarget: setupTarget,
+  });
+});
+
+test("clears an old requisition target before ordinary navigation to the same candidate on another requisition", () => {
+  const staleTarget = { candidateId: "candidate-shared", requisitionId: "req-one" };
+  expect(actionCenterNavigationState({ candidateTarget: staleTarget }).actionCenterCandidateTarget).toEqual(staleTarget);
+  expect(clearedActionCenterTargets()).toEqual({
+    actionCenterCandidateTarget: null,
+    actionCenterSetupTarget: null,
   });
 });
 
@@ -383,4 +495,52 @@ test("disables an unavailable requisition target instead of opening a generic se
   expect(unavailable).toBeDisabled();
   fireEvent.click(unavailable);
   expect(onOpenRequisition).not.toHaveBeenCalled();
+});
+
+test("signals that an exact Action Center setup target was opened so its navigation state can be consumed", () => {
+  const onNavigationTargetOpened = jest.fn();
+  render(<FacilityPositionSetupPage
+    settings={{
+      sites: [{
+        id: "facility-consumed",
+        siteName: "Synthetic Facility",
+        aliases: [],
+        regionId: "synthetic-region",
+        status: "Active",
+        additionalHiringManagers: [],
+        siteSpecificQuestions: [],
+      }],
+      requisitions: [{
+        id: "req-consumed",
+        reqNumber: "SYN-CONSUMED",
+        uniqueIdNumber: "SYN-UNIQUE-CONSUMED",
+        positionTitle: "Registered Nurse",
+        siteName: "Synthetic Facility",
+        facilityId: "facility-consumed",
+        status: "Active",
+      }],
+      reporting: { regions: [{ id: "synthetic-region", name: "Synthetic Region", active: true }], reportPresets: [] },
+      contacts: [],
+      options: { featureFlags: {}, shiftOptions: ["Day"], requisitionStatusOptions: ["Active", "Filled", "Closed"] },
+      compensationStructure: { rules: [], enabledDimensions: [] },
+      communicationSettings: {},
+    }}
+    setSettings={jest.fn()}
+    correctionTarget={{
+      action: "Review Requisition",
+      page: "positions",
+      tab: "positions",
+      recordType: "requisition",
+      recordId: "req-consumed",
+      field: "reqNumber",
+      label: "SYN-CONSUMED",
+    }}
+    onNavigationTargetOpened={onNavigationTargetOpened}
+  />);
+
+  act(() => {
+    jest.advanceTimersByTime(60);
+  });
+  expect(screen.getByRole("heading", { name: "Edit Requisition" })).toBeInTheDocument();
+  expect(onNavigationTargetOpened).toHaveBeenCalledTimes(1);
 });

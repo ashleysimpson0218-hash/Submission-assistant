@@ -853,14 +853,13 @@ export function resolveActionCenterCandidateTarget({ candidateId = "", requisiti
   const stableCandidateId = String(candidateId || "").trim();
   const stableRequisitionId = String(requisitionId || "").trim();
   if (!stableCandidateId) return { ok: false, error: "The requested Action Center candidate has no valid stable identifier." };
+  if (!stableRequisitionId) return { ok: false, error: "The requested Action Center candidate has no exact requisition identifier." };
   const candidateMatches = safeObjectRecords(tracker).filter((candidate) => String(candidate.id || "").trim() === stableCandidateId);
-  const exactMatches = stableRequisitionId
-    ? candidateMatches.filter((candidate) => {
-      const resolution = resolveRequisition(candidate, requisitions);
-      const resolvedId = String(resolution.requisition?.id || resolution.requisition?.requisitionId || "").trim();
-      return resolution.status === "resolved" && resolvedId === stableRequisitionId;
-    })
-    : candidateMatches;
+  const exactMatches = candidateMatches.filter((candidate) => {
+    const resolution = resolveRequisition(candidate, requisitions);
+    const resolvedId = String(resolution.requisition?.id || resolution.requisition?.requisitionId || "").trim();
+    return resolution.status === "resolved" && resolvedId === stableRequisitionId;
+  });
   if (exactMatches.length !== 1) {
     return { ok: false, error: "The exact candidate and requisition combination could not be opened." };
   }
@@ -877,6 +876,10 @@ export function actionCenterNavigationState({ candidateTarget = null, setupTarge
     actionCenterCandidateTarget: candidateTarget,
     actionCenterSetupTarget: setupTarget,
   };
+}
+
+export function clearedActionCenterTargets() {
+  return { actionCenterCandidateTarget: null, actionCenterSetupTarget: null };
 }
 
 export function activeActionCenterCandidateTargetForSelection({ candidateTarget = null, selectedId = "" } = {}) {
@@ -6166,7 +6169,7 @@ function RecruiterApp() {
   const [tracker, setTracker] = useState([]);
   const safeTrackerRows = useMemo(() => (Array.isArray(tracker) ? tracker.filter((item) => item && typeof item === "object") : []), [tracker]);
   const [history, setHistory] = useState([]);
-  const [selectedId, setSelectedId] = useState("");
+  const [selectedId, setSelectedIdState] = useState("");
   const [output, setOutput] = useState(null);
   const [communicationPreview, setCommunicationPreview] = useState(null);
   const [communicationPreviewOpen, setCommunicationPreviewOpen] = useState(false);
@@ -6217,6 +6220,15 @@ function RecruiterApp() {
   const [reportCorrectionTarget, setReportCorrectionTarget] = useState(null);
   const [actionCenterSetupTarget, setActionCenterSetupTarget] = useState(null);
   const [actionCenterCandidateTarget, setActionCenterCandidateTarget] = useState(null);
+  const clearActionCenterNavigationTargets = useCallback(() => {
+    const cleared = clearedActionCenterTargets();
+    setActionCenterCandidateTarget(cleared.actionCenterCandidateTarget);
+    setActionCenterSetupTarget(cleared.actionCenterSetupTarget);
+  }, []);
+  const setSelectedId = useCallback((value) => {
+    clearActionCenterNavigationTargets();
+    setSelectedIdState(value);
+  }, [clearActionCenterNavigationTargets]);
   const [noOpeningsPolicyDraft, setNoOpeningsPolicyDraft] = useState("");
   const [noOpeningWeeklyDecisions, setNoOpeningWeeklyDecisions] = useState({});
   const [completedFacilityReports, setCompletedFacilityReports] = useState({});
@@ -6893,7 +6905,8 @@ function RecruiterApp() {
 
   const activeRoles = useMemo(() => (settings.roles || []).filter((role) => role.status === "Active"), [settings.roles]);
   const activeSites = useMemo(() => (settings.sites || []).filter((site) => site.status === "Active"), [settings.sites]);
-  const activeRequisitions = useMemo(() => safeObjectRecords(settings.requisitions).filter((req) => isLiveRequisition(req) && req.reqNumber), [settings.requisitions]);
+  const allRequisitions = useMemo(() => safeObjectRecords(settings.requisitions), [settings.requisitions]);
+  const activeRequisitions = useMemo(() => allRequisitions.filter((req) => isLiveRequisition(req) && req.reqNumber), [allRequisitions]);
   const hotLeadWorkingReq = useMemo(() => activeRequisitions.find((req) => req.id === hotLeadWorkingReqId) || null, [activeRequisitions, hotLeadWorkingReqId]);
   const selectedRole = useMemo(() => activeRoles.find((role) => role.positionTitle === form.position) || null, [activeRoles, form.position]);
   const selectedSite = useMemo(() => activeSites.find((site) => site.siteName === form.siteName) || null, [activeSites, form.siteName]);
@@ -6992,6 +7005,10 @@ function RecruiterApp() {
   useEffect(() => {
     if (actionCenterCandidateTarget && !activeActionCenterCandidateTarget) setActionCenterCandidateTarget(null);
   }, [actionCenterCandidateTarget, activeActionCenterCandidateTarget]);
+  useEffect(() => {
+    if (actionCenterCandidateTarget && activePage !== "workspace") setActionCenterCandidateTarget(null);
+    if (actionCenterSetupTarget && activePage !== "positions") setActionCenterSetupTarget(null);
+  }, [activePage, actionCenterCandidateTarget, actionCenterSetupTarget]);
   const actionCenterCandidateResolution = useMemo(() => activeActionCenterCandidateTarget ? resolveActionCenterCandidateTarget({
     ...activeActionCenterCandidateTarget,
     tracker,
@@ -8250,7 +8267,7 @@ function RecruiterApp() {
       },
     }));
     return [...profileRows, ...leadRows].sort((a, b) => String(b.archivedAt || "").localeCompare(String(a.archivedAt || "")) || String(a.candidate || "").localeCompare(String(b.candidate || "")));
-  }, [archivedCandidateProfiles, archivedHotLeads]);
+  }, [archivedCandidateProfiles, archivedHotLeads, setSelectedId]);
   const filteredCandidateArchiveRows = useMemo(() => {
     const search = candidateManagementSearch.trim().toLowerCase();
     if (!search) return candidateArchiveRows;
@@ -15326,6 +15343,27 @@ function rowifyCandidate(item = {}) {
     return true;
   }
 
+  function openActionCenterCandidateRecord(candidateId, requisitionId) {
+    const resolution = resolveActionCenterCandidateTarget({
+      candidateId,
+      requisitionId,
+      tracker: safeTrackerRows,
+      requisitions: allRequisitions,
+    });
+    if (!resolution.ok) {
+      setCopyNotice(resolution.error);
+      return false;
+    }
+    const navigation = actionCenterNavigationState({ candidateTarget: resolution.target });
+    setReportCorrectionTarget(navigation.reportCorrectionTarget);
+    setActionCenterSetupTarget(navigation.actionCenterSetupTarget);
+    setActionCenterCandidateTarget(navigation.actionCenterCandidateTarget);
+    setSelectedIdState(resolution.target.candidateId);
+    setTrackerPanelOpen(false);
+    setActivePage("workspace");
+    return true;
+  }
+
   function openReportAutomationSettings() {
     setActivePage("automation");
     setAutomationTab("report");
@@ -15384,6 +15422,7 @@ function rowifyCandidate(item = {}) {
     ["account", "Profile & Account", "\uD83D\uDC64"],
   ];
   function navigateToReportingValue(value) {
+    clearActionCenterNavigationTargets();
     const route = resolveReportingNavigation(value);
     const navigation = buildReportingNavigation({
       search: window.location.search,
@@ -15409,6 +15448,7 @@ function rowifyCandidate(item = {}) {
     setActivePage(route.destination);
   }
   function navigateToPage(key) {
+    clearActionCenterNavigationTargets();
     if (key === "actions") {
       setActivePage("home");
       return;
@@ -16077,6 +16117,7 @@ function rowifyCandidate(item = {}) {
           <RecruiterWorkspacePage
             tracker={safeTrackerRows}
             requisitions={activeRequisitions}
+            actionCenterRequisitions={allRequisitions}
             sites={settings.sites || []}
             history={history}
             workflowRules={settings.options?.workflowRules || {}}
@@ -16085,28 +16126,11 @@ function rowifyCandidate(item = {}) {
             isMedium={isMedium}
             recruiterName={settings.general?.recruiterName || "Recruiter"}
             calendarEvents={calendarEvents}
-            onOpenCandidate={(candidateId, requisitionId) => {
-              const resolution = resolveActionCenterCandidateTarget({
-                candidateId,
-                requisitionId,
-                tracker: safeTrackerRows,
-                requisitions: settings.requisitions,
-              });
-              if (!resolution.ok) {
-                setCopyNotice(resolution.error);
-                return false;
-              }
-              const navigation = actionCenterNavigationState({ candidateTarget: resolution.target });
-              setReportCorrectionTarget(navigation.reportCorrectionTarget);
-              setActionCenterSetupTarget(navigation.actionCenterSetupTarget);
-              setActionCenterCandidateTarget(navigation.actionCenterCandidateTarget);
-              setSelectedId(resolution.target.candidateId);
-              setTrackerPanelOpen(false);
-              setActivePage("workspace");
-              return true;
-            }}
-            onOpenRequisition={(requisitionId) => openActionCenterSetupRecord("requisition", requisitionId)}
-            onOpenFacility={(facilityId) => openActionCenterSetupRecord("facility", facilityId)}
+            onOpenCandidate={openActionCenterCandidateRecord}
+            onOpenActionCenterCandidate={openActionCenterCandidateRecord}
+            onOpenRequisition={() => setActivePage("positions")}
+            onOpenActionCenterRequisition={(requisitionId) => openActionCenterSetupRecord("requisition", requisitionId)}
+            onOpenActionCenterFacility={(facilityId) => openActionCenterSetupRecord("facility", facilityId)}
             onOpenWeeklyCleanup={() => {
               navigateToReportingValue("overview");
             }}
@@ -19823,6 +19847,7 @@ function rowifyCandidate(item = {}) {
             correctionTarget={reportCorrectionTarget || actionCenterSetupTarget}
             onCorrectionSaved={reportCorrectionTarget ? returnToFacilityReadiness : () => { setActionCenterSetupTarget(null); setActivePage("home"); }}
             onReturnToFacilityReadiness={reportCorrectionTarget ? returnToFacilityReadiness : () => { setActionCenterSetupTarget(null); setActivePage("home"); }}
+            onNavigationTargetOpened={!reportCorrectionTarget && actionCenterSetupTarget ? clearActionCenterNavigationTargets : null}
           />
         ) : null}
         {activePage === "settings" ? (
@@ -21616,7 +21641,7 @@ function CandidateManagementPage({ activeTab, setActiveTab, search, setSearch, h
   );
 }
 
-export function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], activeSites = [], tracker = [], setActivePage = () => {}, setActiveSettingsTab = () => {}, onRequisitionReferenceChange = () => {}, exportFullDataWorkbook = () => {}, onScheduleCalendar = () => {}, correctionTarget = null, onCorrectionSaved = () => {}, onReturnToFacilityReadiness = () => {} }) {
+export function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], activeSites = [], tracker = [], setActivePage = () => {}, setActiveSettingsTab = () => {}, onRequisitionReferenceChange = () => {}, exportFullDataWorkbook = () => {}, onScheduleCalendar = () => {}, correctionTarget = null, onCorrectionSaved = () => {}, onReturnToFacilityReadiness = () => {}, onNavigationTargetOpened = null }) {
   const width = useWindowWidth();
   const compact = width < 960;
   const [activeTab, setActiveTab] = useState("facilities");
@@ -21721,9 +21746,10 @@ export function FacilityPositionSetupPage({ settings, setSettings, activeRoles =
     const focusTimer = window.setTimeout(() => {
       const field = document.querySelector(`[data-correction-field="${correctionTarget.field}"] input, [data-correction-field="${correctionTarget.field}"] select, [data-correction-field="${correctionTarget.field}"] textarea`);
       field?.focus();
+      if (typeof onNavigationTargetOpened === "function") onNavigationTargetOpened();
     }, 60);
     return () => window.clearTimeout(focusTimer);
-  }, [allReqs, allSites, correctionTarget]);
+  }, [allReqs, allSites, correctionTarget, onNavigationTargetOpened]);
 
   function openReadinessIssue(issue) {
     if (issue.updateLocation === "Existing requisition") {

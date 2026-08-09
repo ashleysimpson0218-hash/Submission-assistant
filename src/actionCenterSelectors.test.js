@@ -136,6 +136,52 @@ test.each(["Hired", "Rejected", "Withdrawn", "Offer Accepted"])('removes Manager
   expect(result.items.some((entry) => entry.category === ACTION_CENTER_CATEGORIES.managerFeedback)).toBe(false);
 });
 
+test.each(["Manager reviewing", "Awaiting regional review", "Unknown imported outcome"])('does not treat the unknown outcome "%s" as a final decision', (finalCandidateOutcome) => {
+  const result = build({
+    tracker: [candidate({
+      id: `candidate-non-final-${finalCandidateOutcome}`,
+      status: "Interview Completed",
+      nextAction: "Request feedback",
+      ownerType: "Hiring Manager",
+      actualInterviewAt: "2026-08-06T15:00:00.000Z",
+      finalCandidateOutcome,
+    })],
+  });
+  expect(result.items.some((entry) => entry.category === ACTION_CENTER_CATEGORIES.managerFeedback)).toBe(true);
+});
+
+test("recognizes substantive interview feedback without treating arbitrary outcome text as feedback", () => {
+  const result = build({
+    tracker: [candidate({
+      id: "candidate-substantive-feedback",
+      status: "Interview Completed",
+      nextAction: "Request feedback",
+      ownerType: "Hiring Manager",
+      actualInterviewAt: "2026-08-06T15:00:00.000Z",
+      interviewFeedback: "The manager recommends moving forward.",
+      finalCandidateOutcome: "Manager reviewing",
+    })],
+  });
+  expect(result.items.some((entry) => entry.category === ACTION_CENTER_CATEGORIES.managerFeedback)).toBe(false);
+});
+
+test.each(["Hired", "Rejected", "Withdrawn", "Offer Accepted"])('excludes every candidate-scoped action after the canonical final outcome "%s"', (finalCandidateOutcome) => {
+  const result = build({
+    tracker: [candidate({
+      id: `candidate-terminal-${finalCandidateOutcome}`,
+      status: "Interview Completed",
+      nextAction: "Request feedback",
+      ownerType: "Hiring Manager",
+      actualInterviewAt: "2026-08-06T15:00:00.000Z",
+      candidateNotes: "",
+      reviewedSubmissionPackage: { rendered: {}, recipients: {}, snapshot: {} },
+      communicationActionStates: { facilitySubmission: "Ready to Send" },
+      finalCandidateOutcome,
+    })],
+  });
+  expect(result.items.some((entry) => entry.candidateId === `candidate-terminal-${finalCandidateOutcome}`)).toBe(false);
+});
+
 test("keeps an explicit feedback task pending when completion is not confirmed", () => {
   const result = build({
     tracker: [candidate({ id: "candidate-feedback-task", status: "Interview Scheduled", nextAction: "Request feedback", interviewDate: "2026-08-10T16:00:00.000Z" })],
@@ -264,6 +310,24 @@ test("uses the canonical missing-requisition blocker instead of an operational a
   expect(result.items.some((entry) => entry.issueCode === "missing-requisition-id" && entry.candidateId === "candidate-1")).toBe(true);
 });
 
+test("does not create an operational candidate action when a req-number match lacks a stable requisition ID", () => {
+  const requisitionWithoutId = { ...requisition, id: "", requisitionId: "", reqNumber: "SYN-1001" };
+  const result = build({ tracker: [candidate({ requisitionId: "", reqNumber: "SYN-1001" })], requisitions: [requisitionWithoutId] });
+  expect(result.items.some((entry) => [ACTION_CENTER_CATEGORIES.followUp, ACTION_CENTER_CATEGORIES.managerFeedback, ACTION_CENTER_CATEGORIES.candidateReady].includes(entry.category))).toBe(false);
+  expect(result.items.some((entry) => entry.id.includes("requisition:unresolved"))).toBe(false);
+  expect(result.items.find((entry) => entry.issueCode === "missing-requisition-id")).toMatchObject({
+    sourceType: "requisition",
+    destination: { type: "unavailable", disabled: true },
+  });
+});
+
+test("requires the resolved requisition stable ID to identify exactly one record", () => {
+  const first = { ...requisition, reqNumber: "SYN-1001" };
+  const duplicateId = { ...requisition, reqNumber: "SYN-2002" };
+  const result = build({ tracker: [candidate({ requisitionId: "", reqNumber: "SYN-1001" })], requisitions: [first, duplicateId] });
+  expect(result.items.some((entry) => [ACTION_CENTER_CATEGORIES.followUp, ACTION_CENTER_CATEGORIES.managerFeedback, ACTION_CENTER_CATEGORIES.candidateReady].includes(entry.category))).toBe(false);
+});
+
 test("does not guess when more than one requisition has the requested stable ID", () => {
   const result = build({ requisitions: [requisition, { ...requisition }] });
   expect(result.items.some((entry) => [ACTION_CENTER_CATEGORIES.followUp, ACTION_CENTER_CATEGORIES.managerFeedback, ACTION_CENTER_CATEGORIES.candidateReady].includes(entry.category))).toBe(false);
@@ -303,6 +367,65 @@ test("keeps duplicate candidate-ID blockers attached to their exact requisitions
   const actionBlocker = result.items.find((entry) => entry.issueCode === "missing-next-action" && entry.candidateId === "duplicate-candidate");
   expect(noteBlocker).toMatchObject({ requisitionId: "req-1", destination: { requisitionId: "req-1" } });
   expect(actionBlocker).toMatchObject({ requisitionId: "req-2", destination: { requisitionId: "req-2" } });
+});
+
+test("preserves the same blocker code for duplicate candidate IDs on two exact requisitions", () => {
+  const secondFacility = { ...facility, id: "facility-2", siteName: "Second Facility", regionName: "Second Region" };
+  const secondReq = { ...requisition, id: "req-2", reqNumber: "SYN-1002", facilityId: secondFacility.id, siteName: secondFacility.siteName };
+  const result = build({
+    tracker: [
+      candidate({ id: "duplicate-candidate", candidateNotes: "" }),
+      candidate({ id: "duplicate-candidate", requisitionId: "req-2", reqNumber: "SYN-1002", facilityId: secondFacility.id, site: secondFacility.siteName, candidateNotes: "" }),
+    ],
+    requisitions: [requisition, secondReq],
+    sites: [facility, secondFacility],
+  });
+  const blockers = result.items.filter((entry) => entry.issueCode === "missing-candidate-notes" && entry.candidateId === "duplicate-candidate");
+  expect(blockers).toHaveLength(2);
+  expect(blockers.map((entry) => entry.id)).toEqual([
+    "action-center-v1:Data Blockers:candidate:duplicate-candidate:requisition:req-1:missing-candidate-notes",
+    "action-center-v1:Data Blockers:candidate:duplicate-candidate:requisition:req-2:missing-candidate-notes",
+  ]);
+  expect(blockers.map((entry) => entry.context)).toEqual(expect.arrayContaining([
+    expect.objectContaining({ requisitionId: "req-1", facilityId: "facility-1", region: "Synthetic Region" }),
+    expect.objectContaining({ requisitionId: "req-2", facilityId: "facility-2", region: "Second Region" }),
+  ]));
+});
+
+test("deduplicates repeated derivations of the same exact candidate, requisition, and blocker", () => {
+  const duplicate = candidate({ id: "duplicate-candidate", candidateNotes: "" });
+  const result = build({ tracker: [duplicate, { ...duplicate }] });
+  expect(result.items.filter((entry) => entry.issueCode === "missing-candidate-notes" && entry.candidateId === "duplicate-candidate")).toHaveLength(1);
+});
+
+test("keeps duplicate-ID blockers only for exact active requisition scope", () => {
+  const inactiveReq = { ...requisition, id: "req-inactive", reqNumber: "SYN-INACTIVE", status: "Paused" };
+  const result = build({
+    tracker: [
+      candidate({ id: "duplicate-candidate", candidateNotes: "" }),
+      candidate({ id: "duplicate-candidate", requisitionId: inactiveReq.id, reqNumber: inactiveReq.reqNumber, candidateNotes: "" }),
+    ],
+    requisitions: [requisition, inactiveReq],
+  });
+  const blockers = result.items.filter((entry) => entry.issueCode === "missing-candidate-notes" && entry.candidateId === "duplicate-candidate");
+  expect(blockers).toHaveLength(1);
+  expect(blockers[0].requisitionId).toBe("req-1");
+});
+
+test("classifies an active stable-ID requisition with no req number as a data-quality blocker", () => {
+  const incomplete = { ...requisition, reqNumber: "", uniqueIdNumber: "" };
+  const result = build({ tracker: [], requisitions: [incomplete] });
+  expect(result.items.find((entry) => entry.issueCode === "missing-requisition-number")).toMatchObject({
+    sourceType: "requisition",
+    requisitionId: "req-1",
+    destination: { type: "requisition", id: "req-1" },
+  });
+});
+
+test.each(["Closed", "Paused", "Cancelled", "Filled", "Archived", "Inactive", "Unknown", ""])('does not turn an incomplete %s requisition into Action Center scope', (status) => {
+  const incomplete = { ...requisition, status, reqNumber: "", uniqueIdNumber: "" };
+  const result = build({ tracker: [], requisitions: [incomplete] });
+  expect(result.items.some((entry) => entry.requisitionId === "req-1" || entry.sourceId === "req-1")).toBe(false);
 });
 
 test("never borrows a similarly named requisition for a blocker with no stable identity", () => {

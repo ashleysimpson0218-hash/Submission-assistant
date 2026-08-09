@@ -55,7 +55,7 @@ function QueueRow({ task, theme, narrow, onOpenCandidate, onOpenRequisition, onO
       <span style={{ justifySelf: narrow ? "start" : "center", borderRadius: 999, padding: "4px 8px", color: colors.color, background: colors.background, fontSize: 11, fontWeight: 900 }}>{task.riskLevel}</span>
       <div><span style={{ display: "block", color: theme.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>Owner</span><strong style={{ fontSize: 12 }}>{task.ownerLabel}</strong></div>
       <div><span style={{ display: "block", color: theme.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>Timing</span><strong style={{ fontSize: 12 }}>{task.isOverdue ? "Overdue" : task.daysWaiting != null ? `${task.daysWaiting}d waiting` : "Current"}</strong><span style={{ display: "block", color: theme.muted, fontSize: 11 }}>{task.estimatedMinutes} min</span></div>
-      <button type="button" onClick={() => primaryAction(task.sourceId)} style={{ border: `1px solid ${theme.primary2}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "8px 10px", fontWeight: 900, cursor: "pointer" }}>{primaryLabel}</button>
+      <button type="button" onClick={() => primaryAction(task.sourceId, task.requisitionId, task)} style={{ border: `1px solid ${theme.primary2}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "8px 10px", fontWeight: 900, cursor: "pointer" }}>{primaryLabel}</button>
       {task.sourceType === "candidate" ? <button type="button" aria-label={`More actions for ${task.candidateName}`} onClick={() => onOpenActions(task)} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panelAlt, color: theme.text, width: 34, height: 34, fontWeight: 950, cursor: "pointer" }}>⋯</button> : <span />}
     </article>
   );
@@ -150,7 +150,7 @@ function ActionCenterDetail({ item, theme, onClose, onOpen }) {
   );
 }
 
-export function RecruiterWorkspacePage({ tracker = [], requisitions = [], sites = [], history = [], calendarEvents = [], workflowRules = {}, theme, isNarrow = false, isMedium = false, recruiterName = "Recruiter", onOpenCandidate, onOpenRequisition, onOpenFacility = onOpenRequisition, onOpenCalendar = () => {}, onOpenCalendarEvent = () => {}, onAddCalendarEvent = () => {}, onScheduleCalendar = () => {}, onOpenWeeklyCleanup, onOpenReports, onTaskAction = () => true, onWorkspaceEvent = () => true }) {
+export function RecruiterWorkspacePage({ tracker = [], requisitions = [], actionCenterRequisitions = null, sites = [], history = [], calendarEvents = [], workflowRules = {}, theme, isNarrow = false, isMedium = false, recruiterName = "Recruiter", onOpenCandidate, onOpenActionCenterCandidate = onOpenCandidate, onOpenRequisition, onOpenActionCenterRequisition = onOpenRequisition, onOpenFacility = onOpenRequisition, onOpenActionCenterFacility = onOpenFacility, onOpenCalendar = () => {}, onOpenCalendarEvent = () => {}, onAddCalendarEvent = () => {}, onScheduleCalendar = () => {}, onOpenWeeklyCleanup, onOpenReports, onTaskAction = () => true, onWorkspaceEvent = () => true }) {
   const [activeFilter, setActiveFilter] = useState("Do Now");
   const [actionTaskId, setActionTaskId] = useState("");
   const [focusMode, setFocusMode] = useState(false);
@@ -160,8 +160,9 @@ export function RecruiterWorkspacePage({ tracker = [], requisitions = [], sites 
   const [actionCenterFilter, setActionCenterFilter] = useState(ACTION_CENTER_CATEGORIES.all);
   const [actionCenterDetailId, setActionCenterDetailId] = useState("");
   const [actionCenterNow, setActionCenterNow] = useState(() => new Date());
+  const completeActionCenterRequisitions = Array.isArray(actionCenterRequisitions) ? actionCenterRequisitions : requisitions;
   const model = useMemo(() => buildRecruiterWorkspaceModel({ tracker, requisitions, sites, history, calendarEvents, rules: workflowRules }), [tracker, requisitions, sites, history, calendarEvents, workflowRules]);
-  const actionCenter = useMemo(() => buildRecruiterActionCenter({ tracker, requisitions, sites, history, calendarEvents, workflowRules, now: actionCenterNow }), [tracker, requisitions, sites, history, calendarEvents, workflowRules, actionCenterNow]);
+  const actionCenter = useMemo(() => buildRecruiterActionCenter({ tracker, requisitions: completeActionCenterRequisitions, sites, history, calendarEvents, workflowRules, now: actionCenterNow }), [tracker, completeActionCenterRequisitions, sites, history, calendarEvents, workflowRules, actionCenterNow]);
   useEffect(() => {
     const transitionAt = Date.parse(actionCenter.nextRefreshAt);
     if (!Number.isFinite(transitionAt)) return undefined;
@@ -174,9 +175,9 @@ export function RecruiterWorkspacePage({ tracker = [], requisitions = [], sites 
   const actionCenterDetail = actionCenter.items.find((item) => item.id === actionCenterDetailId) || null;
   const openActionCenterItem = (item) => {
     if (item.destination.disabled) return;
-    if (item.destination.type === "candidate") onOpenCandidate(item.destination.id, item.requisitionId, item);
-    else if (item.destination.type === "requisition") onOpenRequisition(item.destination.id, item);
-    else if (item.destination.type === "facility") onOpenFacility(item.destination.id, item);
+    if (item.destination.type === "candidate") onOpenActionCenterCandidate(item.destination.id, item.requisitionId, item);
+    else if (item.destination.type === "requisition") onOpenActionCenterRequisition(item.destination.id, item);
+    else if (item.destination.type === "facility") onOpenActionCenterFacility(item.destination.id, item);
     else if (item.destination.type === "calendar") onOpenCalendarEvent(item.destination.id);
     else onOpenWeeklyCleanup();
   };

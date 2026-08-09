@@ -15,13 +15,45 @@ export const ACTION_CENTER_FILTERS = Object.freeze(Object.values(ACTION_CENTER_C
 
 const TERMINAL_CANDIDATE_STATUSES = new Set([
   "archived",
+  "candidate withdrew",
   "closed",
   "do not contact",
   "do-not-contact",
   "hired",
   "ineligible",
+  "no response",
   "not interested",
+  "not selected",
+  "offer accepted",
+  "onboarding",
   "placed",
+  "rejected",
+  "unresponsive",
+  "withdrew",
+  "withdrawn",
+]);
+
+const CANONICAL_FINAL_OUTCOMES = new Set([
+  "archived",
+  "candidate withdrew",
+  "closed",
+  "do not rehire / do not hire",
+  "duplicate",
+  "future consideration",
+  "hired",
+  "ineligible",
+  "no response",
+  "no show",
+  "not interested",
+  "not moving forward",
+  "not selected",
+  "not selected by leadership",
+  "offer accepted",
+  "offer declined",
+  "offer rescinded",
+  "placed",
+  "position closed",
+  "position no longer available",
   "rejected",
   "unresponsive",
   "withdrew",
@@ -64,8 +96,19 @@ function hoursBetween(from, to) {
   return Math.max(0, (end.getTime() - start.getTime()) / 3600000);
 }
 
+function hasCanonicalFinalOutcome(candidate = {}) {
+  return [candidate.interviewOutcome, candidate.finalCandidateOutcome, candidate.hiringDecisionOutcome, candidate.archiveOutcome]
+    .some((value) => CANONICAL_FINAL_OUTCOMES.has(lower(value)));
+}
+
+function candidateIsTerminal(candidate = {}) {
+  return Boolean(candidate.archived)
+    || TERMINAL_CANDIDATE_STATUSES.has(lower(candidate.status))
+    || hasCanonicalFinalOutcome(candidate);
+}
+
 function activeCandidate(candidate = {}) {
-  return !candidate.archived && !TERMINAL_CANDIDATE_STATUSES.has(lower(candidate.status));
+  return !candidateIsTerminal(candidate);
 }
 
 function activeRequisition(requisition = {}) {
@@ -101,6 +144,10 @@ function activeExactRequisitionForCandidate(candidate, requisitions) {
   if (!activeRequisition(resolution.requisition)) {
     return { requisition: null, status: "inactive" };
   }
+  const stableId = text(resolution.requisition.id || resolution.requisition.requisitionId);
+  if (!stableId) return { requisition: null, status: "missing-id" };
+  const exact = resolveExactRequisition(requisitions, stableId);
+  if (!exact.value) return { requisition: null, status: exact.blockers?.[0]?.code === "REQUISITION_AMBIGUOUS" ? "ambiguous" : "unmapped" };
   return { requisition: resolution.requisition, status: "resolved" };
 }
 
@@ -215,23 +262,13 @@ const NON_FINAL_OUTCOMES = new Set([
   "undecided",
 ]);
 
-const FINAL_CANDIDATE_STATUSES = new Set([
-  "archived",
-  "closed",
-  "hired",
-  "not selected",
+const MANAGER_DECISION_STATUSES = new Set([
   "offer",
-  "offer accepted",
   "offered",
-  "onboarding",
-  "placed",
-  "rejected",
   "verbal offer",
-  "withdrew",
-  "withdrawn",
 ]);
 
-function substantiveOutcome(value) {
+function substantiveFeedback(value) {
   const normalized = lower(value);
   return Boolean(normalized && !NON_FINAL_OUTCOMES.has(normalized));
 }
@@ -240,8 +277,10 @@ function managerFeedbackReceived(candidate = {}) {
   return Boolean(text(candidate.hiringDecisionReceivedAt
     || candidate.managerFeedbackReceivedAt
     || candidate.facilityFeedbackReceivedAt))
-    || [candidate.interviewFeedback, candidate.interviewOutcome, candidate.finalCandidateOutcome, candidate.hiringDecisionOutcome, candidate.archiveOutcome].some(substantiveOutcome)
-    || FINAL_CANDIDATE_STATUSES.has(lower(candidate.status));
+    || substantiveFeedback(candidate.interviewFeedback)
+    || hasCanonicalFinalOutcome(candidate)
+    || candidateIsTerminal(candidate)
+    || MANAGER_DECISION_STATUSES.has(lower(candidate.status));
 }
 
 function configuredFeedbackThreshold(workflowRules = {}) {
@@ -301,6 +340,7 @@ function followUpDue(candidate, task, now, workflowRules, feedbackState = null) 
 
 function destinationFor(sourceType, sourceId, requisitionId = "") {
   if (!text(sourceId)) return { type: "unavailable", id: "", label: "Target unavailable", disabled: true, reason: "The affected record has no stable identifier." };
+  if (sourceType === "candidate" && !text(requisitionId)) return { type: "unavailable", id: "", requisitionId: "", label: "Target unavailable", disabled: true, reason: "The candidate is not connected to one exact requisition." };
   if (sourceType === "candidate") return { type: "candidate", id: sourceId, requisitionId: text(requisitionId), label: "Open Candidate" };
   if (sourceType === "requisition") return { type: "requisition", id: sourceId, label: "Open Requisition" };
   if (sourceType === "facility") return { type: "facility", id: sourceId, label: "Open Facility" };
@@ -326,12 +366,12 @@ function candidateRowsForIssue(issue, sources) {
   });
 }
 
-function itemForReadinessIssue(issue, sources) {
+function itemForReadinessIssue(issue, sources, exactCandidate = null) {
   if (!ACTIONABLE_READINESS_CODES.has(issue.code)) return null;
   const sourceId = text(issue.sourceId);
   if (!sourceId) return null;
-  const candidateMatches = issue.sourceType === "candidate" ? candidateRowsForIssue(issue, sources) : [];
-  const candidate = candidateMatches.length === 1 ? candidateMatches[0] : null;
+  const candidateMatches = issue.sourceType === "candidate" && !exactCandidate ? (sources.candidateRowsById.get(sourceId) || []) : [];
+  const candidate = exactCandidate || (candidateMatches.length === 1 ? candidateMatches[0] : null);
   const candidateRequisitionResolution = candidate ? activeExactRequisitionForCandidate(candidate, sources.requisitions) : { requisition: null, status: "not-applicable" };
   const exactRequisitionResolution = issue.sourceType === "requisition" && issue.code !== "missing-requisition-id"
     ? resolveExactRequisition(sources.requisitions, sourceId)
@@ -391,6 +431,16 @@ function itemForReadinessIssue(issue, sources) {
     missingData: [issue.code],
     issueCode: issue.code,
   });
+}
+
+function itemsForReadinessIssue(issue, sources) {
+  if (issue.sourceType !== "candidate") {
+    const item = itemForReadinessIssue(issue, sources);
+    return item ? [item] : [];
+  }
+  return candidateRowsForIssue(issue, sources)
+    .map((candidate) => itemForReadinessIssue(issue, sources, candidate))
+    .filter(Boolean);
 }
 
 function contactBlockers(sources) {
@@ -551,8 +601,7 @@ export function buildRecruiterActionCenter({ tracker = [], requisitions = [], si
   });
 
   workspace.reportReadiness.issues.forEach((issue) => {
-    const item = itemForReadinessIssue(issue, sources);
-    if (item) items.push(item);
+    items.push(...itemsForReadinessIssue(issue, sources));
   });
   items.push(...contactBlockers(sources));
 
