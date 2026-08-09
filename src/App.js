@@ -28,7 +28,7 @@ import { extractBrowserPdfText, PDF_INVALID_ERROR_CODE, PDF_PAGE_LIMIT_ERROR_COD
 import { workspaceCounts, workspaceFingerprint, verifyAcceptanceWorkspace } from "./acceptanceWorkspace";
 import { AcceptanceWorkspaceGate } from "./AcceptanceWorkspaceGate";
 import { readSavedIntakeDraftIdentity, savedDraftArray } from "./intakeDraftCompatibility";
-import { buildCommunicationPreview } from "./communicationGeneration";
+import { buildCommunicationPreview, resolveExactRequisition } from "./communicationGeneration";
 import {
   REVIEW_ACKNOWLEDGMENT,
   STALE_REVIEW_MESSAGE,
@@ -107,6 +107,7 @@ import {
   REGIONAL_CONTACT_ROLES,
   applyCanonicalFacilityUpdate,
   buildCanonicalReportingModel,
+  resolveCanonicalFacility,
   createDefaultReportPresets,
   normalizeFacilityKey,
   normalizeReportingSettings,
@@ -806,6 +807,45 @@ function requisitionSearchLabel(req = {}) {
 
 function safeObjectRecords(value) {
   return Array.isArray(value) ? value.filter((item) => item && typeof item === "object") : [];
+}
+
+export function resolveActionCenterSetupTarget({ type = "", id = "", requisitions = [], sites = [] } = {}) {
+  const stableId = String(id || "").trim();
+  if (!stableId || !["requisition", "facility"].includes(type)) {
+    return { ok: false, error: "The requested Action Center record has no valid stable identifier." };
+  }
+  if (type === "requisition") {
+    const resolution = resolveExactRequisition(requisitions, stableId);
+    if (!resolution.value) return { ok: false, error: "The exact requisition could not be opened." };
+    return {
+      ok: true,
+      target: {
+        action: "Review Requisition",
+        field: "reqNumber",
+        label: resolution.value.reqNumber || resolution.value.positionTitle || stableId,
+        recordId: stableId,
+        recordType: "requisition",
+      },
+    };
+  }
+  const facilityMatches = safeObjectRecords(sites).filter((site) => String(site.id || site.facilityId || "").trim() === stableId);
+  if (facilityMatches.length !== 1) {
+    return { ok: false, error: "The exact facility could not be opened." };
+  }
+  const resolution = resolveCanonicalFacility({ requisition: { facilityId: stableId }, sites });
+  if (resolution.status !== "resolved" || resolution.facility.id !== stableId) {
+    return { ok: false, error: "The exact facility could not be opened." };
+  }
+  return {
+    ok: true,
+    target: {
+      action: "Review Facility",
+      field: "siteName",
+      label: resolution.facility.siteName || stableId,
+      recordId: stableId,
+      recordType: "facility",
+    },
+  };
 }
 
 function credentialedProfileFor(item = {}) {
@@ -6138,6 +6178,7 @@ function RecruiterApp() {
   const [facilityReadinessFilters, setFacilityReadinessFilters] = useState(() => ({ ...DEFAULT_FACILITY_READINESS_FILTERS }));
   const [facilityReadinessVisibleLimit, setFacilityReadinessVisibleLimit] = useState(20);
   const [reportCorrectionTarget, setReportCorrectionTarget] = useState(null);
+  const [actionCenterSetupTarget, setActionCenterSetupTarget] = useState(null);
   const [noOpeningsPolicyDraft, setNoOpeningsPolicyDraft] = useState("");
   const [noOpeningWeeklyDecisions, setNoOpeningWeeklyDecisions] = useState({});
   const [completedFacilityReports, setCompletedFacilityReports] = useState({});
@@ -15212,6 +15253,22 @@ function rowifyCandidate(item = {}) {
     setActivePage("positions");
   }
 
+  function openActionCenterSetupRecord(type, id) {
+    const resolution = resolveActionCenterSetupTarget({
+      type,
+      id,
+      requisitions: settings.requisitions,
+      sites: settings.sites,
+    });
+    if (!resolution.ok) {
+      setCopyNotice(resolution.error);
+      return false;
+    }
+    setActionCenterSetupTarget(resolution.target);
+    setActivePage("positions");
+    return true;
+  }
+
   function openReportAutomationSettings() {
     setActivePage("automation");
     setAutomationTab("report");
@@ -15972,11 +16029,13 @@ function rowifyCandidate(item = {}) {
             recruiterName={settings.general?.recruiterName || "Recruiter"}
             calendarEvents={calendarEvents}
             onOpenCandidate={(candidateId) => {
+              setActionCenterSetupTarget(null);
               setSelectedId(candidateId);
               setTrackerPanelOpen(false);
               setActivePage("workspace");
             }}
-            onOpenRequisition={() => setActivePage("positions")}
+            onOpenRequisition={(requisitionId) => openActionCenterSetupRecord("requisition", requisitionId)}
+            onOpenFacility={(facilityId) => openActionCenterSetupRecord("facility", facilityId)}
             onOpenWeeklyCleanup={() => {
               navigateToReportingValue("overview");
             }}
@@ -19690,9 +19749,9 @@ function rowifyCandidate(item = {}) {
             onRequisitionReferenceChange={syncRequisitionReferences}
             exportFullDataWorkbook={exportFullDataWorkbook}
             onScheduleCalendar={openCalendarCreate}
-            correctionTarget={reportCorrectionTarget}
-            onCorrectionSaved={returnToFacilityReadiness}
-            onReturnToFacilityReadiness={returnToFacilityReadiness}
+            correctionTarget={reportCorrectionTarget || actionCenterSetupTarget}
+            onCorrectionSaved={reportCorrectionTarget ? returnToFacilityReadiness : () => { setActionCenterSetupTarget(null); setActivePage("home"); }}
+            onReturnToFacilityReadiness={reportCorrectionTarget ? returnToFacilityReadiness : () => { setActionCenterSetupTarget(null); setActivePage("home"); }}
           />
         ) : null}
         {activePage === "settings" ? (
