@@ -39,6 +39,25 @@ test("renders the recruiter command center and filters its shared queue", () => 
   expect(candidate).toEqual(source);
 });
 
+test("keeps the existing My Work Queue candidate opener independent from strict Action Center navigation", () => {
+  const onOpenCandidate = jest.fn();
+  const onOpenActionCenterCandidate = jest.fn();
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={[{ id: "candidate-no-exact-req", candidate: "Synthetic Unresolved Candidate", status: "Submitted", nextAction: "Follow up with candidate", candidateNotes: "Synthetic" }]}
+    requisitions={[]}
+    onOpenCandidate={onOpenCandidate}
+    onOpenActionCenterCandidate={onOpenActionCenterCandidate}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+  />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Open Candidate" }));
+  expect(onOpenCandidate).toHaveBeenCalledWith("candidate-no-exact-req", "", expect.objectContaining({ sourceId: "candidate-no-exact-req" }));
+  expect(onOpenActionCenterCandidate).not.toHaveBeenCalled();
+});
+
 test("keeps Hiring Manager ownership when an aged record uses the higher-priority risk explanation", () => {
   jest.setSystemTime(new Date("2026-07-29T12:00:00.000Z"));
   const candidate = { id: "candidate-aged", candidate: "Synthetic Aged Candidate", status: "Submitted", nextAction: "Await decision maker review", submissionDate: "2026-07-21", candidateNotes: "Synthetic" };

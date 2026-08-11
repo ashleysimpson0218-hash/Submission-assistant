@@ -112,7 +112,7 @@ function activeCandidate(candidate = {}) {
 }
 
 function activeRequisition(requisition = {}) {
-  return !requisition.archived && lower(requisition.status) === "active";
+  return !requisition.archived && lower(requisition.status || "Active") === "active";
 }
 
 function candidateName(candidate = {}) {
@@ -338,6 +338,22 @@ function followUpDue(candidate, task, now, workflowRules, feedbackState = null) 
   return Boolean((due && due <= now) || (explicit && (inactiveHours == null || inactiveHours >= threshold)));
 }
 
+function futureFollowUpEligibilityAt(candidate, task, now, workflowRules, feedbackState = null) {
+  const ownerType = text(task?.ownerType || candidate.ownerType || candidate.currentOwner);
+  if (ownerType !== "Recruiter" || feedbackState || candidateReadyPending(candidate)) return null;
+  const candidates = [];
+  const due = parseDate(task?.dueAt || candidate.nextActionDueDate);
+  if (due && due > now) candidates.push(due);
+  const explicit = /follow.?up|check.?in|reach out|contact candidate|candidate update/.test(lower(candidate.nextAction));
+  const lastActivity = candidateLastActivity(candidate);
+  if (explicit && lastActivity) {
+    const thresholdHours = Math.max(1, Number(workflowRules.candidateFollowUpDays || 2)) * 24;
+    const inactivityBoundary = new Date(lastActivity.getTime() + thresholdHours * 3600000);
+    if (inactivityBoundary > now) candidates.push(inactivityBoundary);
+  }
+  return candidates.sort((a, b) => a - b)[0] || null;
+}
+
 function destinationFor(sourceType, sourceId, requisitionId = "") {
   if (!text(sourceId)) return { type: "unavailable", id: "", label: "Target unavailable", disabled: true, reason: "The affected record has no stable identifier." };
   if (sourceType === "candidate" && !text(requisitionId)) return { type: "unavailable", id: "", requisitionId: "", label: "Target unavailable", disabled: true, reason: "The candidate is not connected to one exact requisition." };
@@ -500,6 +516,7 @@ export function buildRecruiterActionCenter({ tracker = [], requisitions = [], si
   const facilityIndex = buildFacilityIndex(safeSites);
   const sources = { tracker: safeTracker, requisitions: safeRequisitions, sites: safeSites, calendarEvents: safeEvents, candidateRowsById, calendarById, facilityIndex, workflowRules, now: current };
   const items = [];
+  const futureTransitions = [];
 
   safeTracker.filter(activeCandidate).forEach((candidate) => {
     const candidateId = text(candidate.id);
@@ -578,6 +595,9 @@ export function buildRecruiterActionCenter({ tracker = [], requisitions = [], si
         context,
         missingData: context.requisitionId ? [] : ["requisition"],
       }));
+    } else {
+      const futureFollowUp = futureFollowUpEligibilityAt(candidate, task, current, workflowRules, feedbackState);
+      if (futureFollowUp) futureTransitions.push(futureFollowUp);
     }
 
     if (candidateReadyPending(candidate)) {
@@ -614,7 +634,10 @@ export function buildRecruiterActionCenter({ tracker = [], requisitions = [], si
     ...result,
     [filter]: filter === ACTION_CENTER_CATEGORIES.all ? uniqueItems.length : uniqueItems.filter((item) => item.category === filter).length,
   }), {});
-  const nextRefreshAt = uniqueItems.map((item) => parseDate(item.transitionAt)).filter((value) => value && value > current).sort((a, b) => a - b)[0];
+  const nextRefreshAt = [
+    ...uniqueItems.map((item) => parseDate(item.transitionAt)),
+    ...futureTransitions,
+  ].filter((value) => value && value > current).sort((a, b) => a - b)[0];
   return { items: uniqueItems, counts, calculatedAt: current.toISOString(), nextRefreshAt: nextRefreshAt ? nextRefreshAt.toISOString() : "", readOnly: true };
 }
 

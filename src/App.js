@@ -16126,7 +16126,11 @@ function rowifyCandidate(item = {}) {
             isMedium={isMedium}
             recruiterName={settings.general?.recruiterName || "Recruiter"}
             calendarEvents={calendarEvents}
-            onOpenCandidate={openActionCenterCandidateRecord}
+            onOpenCandidate={(candidateId) => {
+              setSelectedId(candidateId);
+              setTrackerPanelOpen(false);
+              setActivePage("workspace");
+            }}
             onOpenActionCenterCandidate={openActionCenterCandidateRecord}
             onOpenRequisition={() => setActivePage("positions")}
             onOpenActionCenterRequisition={(requisitionId) => openActionCenterSetupRecord("requisition", requisitionId)}

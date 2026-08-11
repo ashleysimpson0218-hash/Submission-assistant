@@ -267,11 +267,26 @@ test("surfaces a missing facility contact only for a facility in active scope", 
   expect(contacts[0]).toMatchObject({ sourceType: "facility", sourceId: "facility-no-contact", facilityId: "facility-no-contact", destination: { type: "facility", id: "facility-no-contact" } });
 });
 
-test.each(["Paused", "Cancelled", "Closed", "Filled", "Archived", "Inactive", "Unknown", ""])("does not create a facility-contact blocker for %s requisitions", (status) => {
+test.each(["Paused", "Cancelled", "Closed", "Filled", "Archived", "Inactive", "Unknown"])("does not create a facility-contact blocker for %s requisitions", (status) => {
   const noContact = { ...facility, id: "facility-inactive-contact", siteName: "Inactive Contact Facility", hiringManagerName: "", hiringManagerEmail: "" };
   const req = { ...requisition, id: `req-${status || "blank"}`, facilityId: noContact.id, siteName: noContact.siteName, status };
   const result = build({ tracker: [], requisitions: [req], sites: [noContact] });
   expect(result.items.some((entry) => entry.issueCode === "facility-recipient-missing")).toBe(false);
+});
+
+test("treats a status-less requisition as active to match the existing workspace contract", () => {
+  const statusLess = { ...requisition };
+  delete statusLess.status;
+  const result = build({ requisitions: [statusLess] });
+  expect(result.items.some((entry) => entry.category === ACTION_CENTER_CATEGORIES.followUp && entry.requisitionId === "req-1")).toBe(true);
+});
+
+test("includes a missing-contact blocker for a status-less active requisition", () => {
+  const noContact = { ...facility, id: "facility-statusless-contact", siteName: "Statusless Contact Facility", hiringManagerName: "", hiringManagerEmail: "" };
+  const statusLess = { ...requisition, id: "req-statusless-contact", facilityId: noContact.id, siteName: noContact.siteName };
+  delete statusLess.status;
+  const result = build({ tracker: [], requisitions: [statusLess], sites: [noContact] });
+  expect(result.items.some((entry) => entry.issueCode === "facility-recipient-missing" && entry.facilityId === noContact.id)).toBe(true);
 });
 
 test.each(["Closed", "Rejected", "Hired", "Ineligible", "Archived", "Do Not Contact", "Not Interested", "Unresponsive"])("excludes terminal or non-contactable status %s", (status) => {
@@ -422,7 +437,7 @@ test("classifies an active stable-ID requisition with no req number as a data-qu
   });
 });
 
-test.each(["Closed", "Paused", "Cancelled", "Filled", "Archived", "Inactive", "Unknown", ""])('does not turn an incomplete %s requisition into Action Center scope', (status) => {
+test.each(["Closed", "Paused", "Cancelled", "Filled", "Archived", "Inactive", "Unknown"])('does not turn an incomplete %s requisition into Action Center scope', (status) => {
   const incomplete = { ...requisition, status, reqNumber: "", uniqueIdNumber: "" };
   const result = build({ tracker: [], requisitions: [incomplete] });
   expect(result.items.some((entry) => entry.requisitionId === "req-1" || entry.sourceId === "req-1")).toBe(false);
@@ -502,6 +517,29 @@ test("treats date-only due values as local dates and remains deterministic for a
   const repeated = build({ tracker: [input], now: new Date("2026-08-08T13:00:00.000Z") });
   expect(morning.items.map((item) => item.id)).toEqual(repeated.items.map((item) => item.id));
   expect(morning.items.some((item) => item.category === ACTION_CENTER_CATEGORIES.followUp)).toBe(true);
+});
+
+test("schedules a refresh when a future follow-up due date becomes eligible", () => {
+  const dueAt = "2026-08-08T17:00:00.000Z";
+  const input = candidate({ nextActionDueDate: dueAt, lastActionAt: NOW.toISOString() });
+  const beforeDue = build({ tracker: [input] });
+  expect(beforeDue.items.some((item) => item.category === ACTION_CENTER_CATEGORIES.followUp)).toBe(false);
+  expect(beforeDue.nextRefreshAt).toBe(dueAt);
+
+  const atDue = build({ tracker: [input], now: new Date(dueAt) });
+  expect(atDue.items.some((item) => item.category === ACTION_CENTER_CATEGORIES.followUp)).toBe(true);
+});
+
+test("schedules a refresh when the inactivity threshold becomes eligible", () => {
+  const lastActionAt = "2026-08-06T17:00:00.000Z";
+  const transitionAt = "2026-08-08T17:00:00.000Z";
+  const input = candidate({ nextActionDueDate: "", lastActionAt });
+  const beforeThreshold = build({ tracker: [input] });
+  expect(beforeThreshold.items.some((item) => item.category === ACTION_CENTER_CATEGORIES.followUp)).toBe(false);
+  expect(beforeThreshold.nextRefreshAt).toBe(transitionAt);
+
+  const atThreshold = build({ tracker: [input], now: new Date(transitionAt) });
+  expect(atThreshold.items.some((item) => item.category === ACTION_CENTER_CATEGORIES.followUp)).toBe(true);
 });
 
 test("does not mutate candidates, requisitions, facilities, calendar events, or history", () => {
