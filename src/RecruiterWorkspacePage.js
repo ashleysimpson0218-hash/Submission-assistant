@@ -1,4 +1,10 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  ACTION_CENTER_CATEGORIES,
+  ACTION_CENTER_FILTERS,
+  buildRecruiterActionCenter,
+  filterRecruiterActionCenter,
+} from "./actionCenterSelectors";
 import { buildRecruiterWorkspaceModel } from "./recruiterWorkspaceSelectors";
 import { WORKSPACE_TASK_ACTIONS } from "./recruiterWorkspaceActions";
 import { HomeCalendarWidget } from "./HomeCalendarWidget";
@@ -49,7 +55,7 @@ function QueueRow({ task, theme, narrow, onOpenCandidate, onOpenRequisition, onO
       <span style={{ justifySelf: narrow ? "start" : "center", borderRadius: 999, padding: "4px 8px", color: colors.color, background: colors.background, fontSize: 11, fontWeight: 900 }}>{task.riskLevel}</span>
       <div><span style={{ display: "block", color: theme.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>Owner</span><strong style={{ fontSize: 12 }}>{task.ownerLabel}</strong></div>
       <div><span style={{ display: "block", color: theme.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>Timing</span><strong style={{ fontSize: 12 }}>{task.isOverdue ? "Overdue" : task.daysWaiting != null ? `${task.daysWaiting}d waiting` : "Current"}</strong><span style={{ display: "block", color: theme.muted, fontSize: 11 }}>{task.estimatedMinutes} min</span></div>
-      <button type="button" onClick={() => primaryAction(task.sourceId)} style={{ border: `1px solid ${theme.primary2}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "8px 10px", fontWeight: 900, cursor: "pointer" }}>{primaryLabel}</button>
+      <button type="button" onClick={() => primaryAction(task.sourceId, task.requisitionId, task)} style={{ border: `1px solid ${theme.primary2}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "8px 10px", fontWeight: 900, cursor: "pointer" }}>{primaryLabel}</button>
       {task.sourceType === "candidate" ? <button type="button" aria-label={`More actions for ${task.candidateName}`} onClick={() => onOpenActions(task)} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panelAlt, color: theme.text, width: 34, height: 34, fontWeight: 950, cursor: "pointer" }}>⋯</button> : <span />}
     </article>
   );
@@ -92,14 +98,89 @@ function EmptyQueue({ filter, waitingCount, focusTask, theme }) {
   return <div style={{ border: `1px dashed ${theme.borderSoft}`, borderRadius: 8, padding: 20, color: theme.muted, textAlign: "center" }}>{message}</div>;
 }
 
-export function RecruiterWorkspacePage({ tracker = [], requisitions = [], sites = [], history = [], calendarEvents = [], workflowRules = {}, theme, isNarrow = false, isMedium = false, recruiterName = "Recruiter", onOpenCandidate, onOpenRequisition, onOpenCalendar = () => {}, onOpenCalendarEvent = () => {}, onAddCalendarEvent = () => {}, onScheduleCalendar = () => {}, onOpenWeeklyCleanup, onOpenReports, onTaskAction = () => true, onWorkspaceEvent = () => true }) {
+function ActionCenterRow({ item, theme, narrow, onReview, onOpen }) {
+  const colors = riskColor(item.riskLevel, theme);
+  return (
+    <article style={{ display: "grid", gridTemplateColumns: narrow ? "1fr" : "minmax(210px, 1.1fr) minmax(260px, 1.7fr) 110px auto auto", gap: 10, alignItems: "center", border: `1px solid ${theme.borderSoft}`, borderLeft: `4px solid ${colors.color}`, borderRadius: 7, padding: 11, background: theme.panel }}>
+      <div>
+        <strong style={{ display: "block" }}>{item.title}</strong>
+        <span style={{ color: theme.muted, fontSize: 11 }}>{[item.context.requisition, item.context.facility].filter(Boolean).join(" | ") || item.sourceType}</span>
+      </div>
+      <div>
+        <span style={{ display: "block", color: theme.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>Why this needs attention</span>
+        <strong style={{ display: "block", fontSize: 12, lineHeight: 1.4 }}>{item.explanation}</strong>
+        <span style={{ display: "block", color: theme.primary2, fontSize: 11, fontWeight: 850, marginTop: 4 }}>Next: {item.recommendedAction}</span>
+      </div>
+      <span style={{ justifySelf: narrow ? "start" : "center", borderRadius: 999, padding: "4px 8px", color: colors.color, background: colors.background, fontSize: 11, fontWeight: 900 }}>{item.riskLevel}</span>
+      <button type="button" aria-label={`Review details for ${item.title}`} onClick={() => onReview(item.id)} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panelAlt, color: theme.text, padding: "8px 10px", fontWeight: 850, cursor: "pointer" }}>Review Details</button>
+      <button type="button" disabled={Boolean(item.destination.disabled)} title={item.destination.reason || ""} onClick={() => onOpen(item)} style={{ border: `1px solid ${theme.primary2}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "8px 10px", fontWeight: 900, cursor: item.destination.disabled ? "not-allowed" : "pointer", opacity: item.destination.disabled ? 0.55 : 1 }}>{item.destination.label}</button>
+    </article>
+  );
+}
+
+function ActionCenterDetail({ item, theme, onClose, onOpen }) {
+  const context = [
+    ["Candidate", item.context.candidate],
+    ["Candidate ID", item.context.candidateId],
+    ["Requisition", item.context.requisition],
+    ["Requisition ID", item.context.requisitionId],
+    ["Req Number", item.context.requisitionNumber],
+    ["Facility", item.context.facility],
+    ["Facility ID", item.context.facilityId],
+    ["Region", item.context.region],
+    ["Current owner", item.context.currentOwner],
+    ["Due", item.dueAt],
+  ].filter(([, value]) => value);
+  return (
+    <section aria-label={`Action details for ${item.title}`} style={{ border: `2px solid ${theme.primary2}`, borderRadius: 8, padding: 12, background: theme.blueBg || theme.panelAlt, display: "grid", gap: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start" }}>
+        <div><strong>{item.title}</strong><div style={{ color: theme.muted, fontSize: 11, marginTop: 3 }}>{item.explanation}</div></div>
+        <button type="button" onClick={onClose} aria-label="Close Action Center details" style={{ border: 0, background: "transparent", color: theme.text, cursor: "pointer", fontWeight: 950 }}>×</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 7 }}>
+        {context.map(([label, value]) => <div key={label} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: 8, background: theme.panel }}><span style={{ display: "block", color: theme.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>{label}</span><strong style={{ display: "block", fontSize: 12, marginTop: 2 }}>{value}</strong></div>)}
+      </div>
+      {item.missingData.length ? <div role="status" style={{ color: theme.red, fontSize: 12, fontWeight: 850 }}>Correction required: {item.missingData.join(", ")}.</div> : null}
+      <div style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: 9, background: theme.panel, color: theme.muted, fontSize: 11 }}>
+        <strong style={{ color: theme.green }}>Read-only preview.</strong> Opening or reviewing this item changes no candidate, requisition, facility, report, communication, or history record. {item.approvalRequired}
+      </div>
+      {item.destination.disabled ? <div role="status" style={{ color: theme.red, fontSize: 12, fontWeight: 850 }}>{item.destination.reason}</div> : null}
+      <div><button type="button" disabled={Boolean(item.destination.disabled)} title={item.destination.reason || ""} onClick={() => onOpen(item)} style={{ border: 0, borderRadius: 6, background: theme.primary2, color: "#fff", padding: "8px 11px", fontWeight: 900, cursor: item.destination.disabled ? "not-allowed" : "pointer", opacity: item.destination.disabled ? 0.55 : 1 }}>{item.destination.label}</button></div>
+    </section>
+  );
+}
+
+export function RecruiterWorkspacePage({ tracker = [], requisitions = [], actionCenterRequisitions = null, sites = [], history = [], calendarEvents = [], workflowRules = {}, theme, isNarrow = false, isMedium = false, recruiterName = "Recruiter", onOpenCandidate, onOpenActionCenterCandidate = onOpenCandidate, onOpenRequisition, onOpenActionCenterRequisition = onOpenRequisition, onOpenFacility = onOpenRequisition, onOpenActionCenterFacility = onOpenFacility, onOpenCalendar = () => {}, onOpenCalendarEvent = () => {}, onAddCalendarEvent = () => {}, onScheduleCalendar = () => {}, onOpenWeeklyCleanup, onOpenReports, onTaskAction = () => true, onWorkspaceEvent = () => true }) {
   const [activeFilter, setActiveFilter] = useState("Do Now");
   const [actionTaskId, setActionTaskId] = useState("");
   const [focusMode, setFocusMode] = useState(false);
   const [focusStartedAt, setFocusStartedAt] = useState("");
   const [readinessExpanded, setReadinessExpanded] = useState(false);
   const [wrapUpOpen, setWrapUpOpen] = useState(false);
+  const [actionCenterFilter, setActionCenterFilter] = useState(ACTION_CENTER_CATEGORIES.all);
+  const [actionCenterDetailId, setActionCenterDetailId] = useState("");
+  const [actionCenterNow, setActionCenterNow] = useState(() => new Date());
+  const completeActionCenterRequisitions = Array.isArray(actionCenterRequisitions) ? actionCenterRequisitions : requisitions;
   const model = useMemo(() => buildRecruiterWorkspaceModel({ tracker, requisitions, sites, history, calendarEvents, rules: workflowRules }), [tracker, requisitions, sites, history, calendarEvents, workflowRules]);
+  const actionCenter = useMemo(() => buildRecruiterActionCenter({ tracker, requisitions: completeActionCenterRequisitions, sites, history, calendarEvents, workflowRules, now: actionCenterNow }), [tracker, completeActionCenterRequisitions, sites, history, calendarEvents, workflowRules, actionCenterNow]);
+  useEffect(() => {
+    const transitionAt = Date.parse(actionCenter.nextRefreshAt);
+    if (!Number.isFinite(transitionAt)) return undefined;
+    const maximumDelay = 2147483647;
+    const delay = Math.min(maximumDelay, Math.max(0, transitionAt - Date.now()));
+    const timer = window.setTimeout(() => setActionCenterNow(new Date()), delay);
+    return () => window.clearTimeout(timer);
+  }, [actionCenter.nextRefreshAt, actionCenterNow]);
+  const actionCenterItems = useMemo(() => filterRecruiterActionCenter(actionCenter.items, actionCenterFilter), [actionCenter.items, actionCenterFilter]);
+  const actionCenterDetail = actionCenter.items.find((item) => item.id === actionCenterDetailId) || null;
+  const openActionCenterItem = (item) => {
+    if (item.destination.disabled) return;
+    if (item.destination.type === "candidate") onOpenActionCenterCandidate(item.destination.id, item.requisitionId, item);
+    else if (item.destination.type === "requisition") onOpenActionCenterRequisition(item.destination.id, item);
+    else if (item.destination.type === "facility") onOpenActionCenterFacility(item.destination.id, item);
+    else if (item.destination.type === "calendar") onOpenCalendarEvent(item.destination.id);
+    else onOpenWeeklyCleanup();
+  };
   const filteredTasks = useMemo(() => activeFilter === "Urgent"
     ? model.tasks.filter((task) => task.isOverdue || ["High", "Critical"].includes(task.riskLevel))
     : model.tasks.filter((task) => task.filters.includes(activeFilter)), [model.tasks, activeFilter]);
@@ -166,6 +247,16 @@ export function RecruiterWorkspacePage({ tracker = [], requisitions = [], sites 
           {model.focusTask ? <WorkspaceCard theme={theme} title={focusMode ? "Recruiting Focus Session" : "Recruiting Focus"} subtitle="The current highest-priority requisition based on openings, candidate coverage, and days without submissions.">
             <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "1.4fr repeat(3, minmax(90px, 0.7fr)) auto", gap: 10, alignItems: "center" }}><div><strong style={{ display: "block" }}>{model.focusTask.position}</strong><span style={{ color: theme.muted, fontSize: 12 }}>{model.focusTask.facilityName}</span><span style={{ display: "block", color: theme.red, fontSize: 11, marginTop: 4 }}>{model.focusTask.riskReason}</span><span style={{ display: "block", color: theme.muted, fontSize: 10, marginTop: 4 }}>Priority {model.focusTask.priorityScore}: {model.focusTask.priorityReasons.join(" · ")}</span></div><div><strong>{model.focusTask.openings}</strong><span style={{ display: "block", color: theme.muted, fontSize: 11 }}>Openings</span></div><div><strong>{model.focusTask.activeCandidateCount}</strong><span style={{ display: "block", color: theme.muted, fontSize: 11 }}>Active candidates</span></div><div><strong>{model.focusTask.daysWaiting ?? "—"}</strong><span style={{ display: "block", color: theme.muted, fontSize: 11 }}>Days without submission</span></div>{focusMode ? <strong style={{ color: theme.primary2, fontSize: 12 }}>Focus session active</strong> : <button type="button" onClick={startFocusSession} style={{ border: 0, borderRadius: 6, background: theme.primary2, color: "#fff", padding: "9px 12px", fontWeight: 900, cursor: "pointer" }}>Start Focus Session</button>}</div>
             {focusMode ? <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "repeat(4, minmax(0, 1fr))", gap: 8, marginTop: 12 }}>{[["Shift", model.focusTask.shift || "Not listed"], ["Employment", model.focusTask.employmentType || "Not listed"], ["Schedule", model.focusTask.schedule || "Not listed"], ["Credentials / Pay", [model.focusTask.requiredCredentials, model.focusTask.pay].filter(Boolean).join(" · ") || "Review requisition"]].map(([label, value]) => <div key={label} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: 9, background: theme.panelAlt }}><span style={{ color: theme.muted, fontSize: 10, fontWeight: 900 }}>{label}</span><strong style={{ display: "block", fontSize: 12, marginTop: 3 }}>{value}</strong></div>)}</div> : null}
+          </WorkspaceCard> : null}
+
+          {!focusMode ? <WorkspaceCard theme={theme} title="Recruiter Action Center" subtitle="Read-only priorities explain what needs attention, why it matters, and the exact record to review.">
+            <div role="tablist" aria-label="Action Center filters" style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 12 }}>
+              {ACTION_CENTER_FILTERS.map((filter) => <button key={filter} type="button" role="tab" aria-selected={actionCenterFilter === filter} onClick={() => { setActionCenterFilter(filter); setActionCenterDetailId(""); }} style={{ border: `1px solid ${actionCenterFilter === filter ? theme.primary2 : theme.borderSoft}`, borderRadius: 6, background: actionCenterFilter === filter ? theme.primary2 : theme.panelAlt, color: actionCenterFilter === filter ? "#fff" : theme.text, padding: "7px 10px", fontWeight: 850, cursor: "pointer" }}>{filter} <span aria-label={`${actionCenter.counts[filter]} items`}>{actionCenter.counts[filter]}</span></button>)}
+            </div>
+            <div role="tabpanel" aria-label={`${actionCenterFilter} Action Center items`} style={{ display: "grid", gap: 8 }}>
+              {actionCenterItems.length ? actionCenterItems.map((item) => <ActionCenterRow key={item.id} item={item} theme={theme} narrow={isNarrow} onReview={setActionCenterDetailId} onOpen={openActionCenterItem} />) : <div style={{ border: `1px dashed ${theme.borderSoft}`, borderRadius: 8, padding: 20, color: theme.muted, textAlign: "center" }}>No {actionCenterFilter === ACTION_CENTER_CATEGORIES.all ? "Action Center" : actionCenterFilter.toLowerCase()} items need attention right now.</div>}
+              {actionCenterDetail ? <ActionCenterDetail item={actionCenterDetail} theme={theme} onClose={() => setActionCenterDetailId("")} onOpen={openActionCenterItem} /> : null}
+            </div>
           </WorkspaceCard> : null}
 
           <WorkspaceCard theme={theme} title="My Work Queue" subtitle="Every item explains its source, owner, timing, and recommended next step.">

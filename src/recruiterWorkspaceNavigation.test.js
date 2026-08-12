@@ -20,3 +20,13 @@ test("candidate profile workspace remains a candidate route", () => {
   expect(appSource).toContain('const candidateRouteKeys = ["candidates", "hot", "hotLegacy", "hotMockup", "submission", "tracker", "workspace"]');
   expect(appSource).toContain('setActivePage("workspace")');
 });
+
+test("keeps legacy queue navigation separate from exact Action Center candidate navigation", () => {
+  const workspaceStart = appSource.indexOf("<RecruiterWorkspacePage");
+  const workspaceEnd = appSource.indexOf("/>", workspaceStart);
+  const workspaceProps = appSource.slice(workspaceStart, workspaceEnd);
+  expect(workspaceProps).toContain("onOpenCandidate={(candidateId) => {");
+  expect(workspaceProps).toContain("setSelectedId(candidateId)");
+  expect(workspaceProps).toContain("onOpenActionCenterCandidate={openActionCenterCandidateRecord}");
+  expect(workspaceProps).not.toContain("onOpenCandidate={openActionCenterCandidateRecord}");
+});

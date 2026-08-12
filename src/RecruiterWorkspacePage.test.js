@@ -1,5 +1,6 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { RecruiterWorkspacePage } from "./RecruiterWorkspacePage";
+import { FacilityPositionSetupPage, actionCenterNavigationState, activeActionCenterCandidateTargetForSelection, clearedActionCenterTargets, resolveActionCenterCandidateTarget, resolveActionCenterSetupTarget } from "./App";
 
 const theme = {
   panel: "#fff", panelAlt: "#f7f4ff", borderSoft: "#ddd", shadow: "none", text: "#17112f", muted: "#6b6680",
@@ -32,10 +33,29 @@ test("renders the recruiter command center and filters its shared queue", () => 
   expect(screen.getByRole("heading", { name: /Recruiter Workspace/i })).toBeInTheDocument();
   expect(screen.getByText(/Your command center for today’s recruiting priorities/i)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: /Waiting on Others/i }));
-  expect(screen.getByText("Synthetic Candidate")).toBeInTheDocument();
+  expect(screen.getAllByText("Synthetic Candidate").length).toBeGreaterThan(0);
   expect(screen.getAllByText("Hiring Manager").length).toBeGreaterThan(0);
   expect(screen.getByText(/The next recorded step is controlled by Hiring Manager/i)).toBeInTheDocument();
   expect(candidate).toEqual(source);
+});
+
+test("keeps the existing My Work Queue candidate opener independent from strict Action Center navigation", () => {
+  const onOpenCandidate = jest.fn();
+  const onOpenActionCenterCandidate = jest.fn();
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={[{ id: "candidate-no-exact-req", candidate: "Synthetic Unresolved Candidate", status: "Submitted", nextAction: "Follow up with candidate", candidateNotes: "Synthetic" }]}
+    requisitions={[]}
+    onOpenCandidate={onOpenCandidate}
+    onOpenActionCenterCandidate={onOpenActionCenterCandidate}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+  />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Open Candidate" }));
+  expect(onOpenCandidate).toHaveBeenCalledWith("candidate-no-exact-req", "", expect.objectContaining({ sourceId: "candidate-no-exact-req" }));
+  expect(onOpenActionCenterCandidate).not.toHaveBeenCalled();
 });
 
 test("keeps Hiring Manager ownership when an aged record uses the higher-priority risk explanation", () => {
@@ -54,7 +74,7 @@ test("keeps Hiring Manager ownership when an aged record uses the higher-priorit
   />);
 
   fireEvent.click(screen.getByRole("tab", { name: /Waiting on Others/i }));
-  expect(screen.getByText("Synthetic Aged Candidate")).toBeInTheDocument();
+  expect(screen.getAllByText("Synthetic Aged Candidate").length).toBeGreaterThan(0);
   expect(screen.getAllByText("Hiring Manager").length).toBeGreaterThan(0);
   expect(screen.getByText(/days without recorded activity|facility review has not produced a recorded next step/i)).toBeInTheDocument();
   expect(screen.queryByText(/The next recorded step is controlled by Hiring Manager/i)).not.toBeInTheDocument();
@@ -134,4 +154,412 @@ test("shows report-readiness issues and an end-of-day summary", () => {
   expect(screen.getByText("Urgent actions remaining")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Finish Day" }));
   expect(onWorkspaceEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "Recruiter Day Finished" }));
+});
+
+test("renders the read-only Action Center with the approved category filters and explanations", () => {
+  const candidate = {
+    id: "candidate-follow-up",
+    candidate: "Synthetic Follow-Up Candidate",
+    status: "Submitted",
+    nextAction: "Follow up with candidate",
+    nextActionDueDate: "2026-07-21",
+    lastActionAt: "2026-07-19T12:00:00.000Z",
+    candidateNotes: "Synthetic note",
+    currentOwner: "Recruiter",
+    ownerType: "Recruiter",
+    requisitionId: "req-follow-up",
+    position: "Registered Nurse",
+    site: "Synthetic Facility",
+    facilityId: "facility-follow-up",
+  };
+  const source = JSON.parse(JSON.stringify(candidate));
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={[candidate]}
+    requisitions={[{ id: "req-follow-up", reqNumber: "SYN-2001", positionTitle: "Registered Nurse", siteName: "Synthetic Facility", facilityId: "facility-follow-up", status: "Active" }]}
+    sites={[{ id: "facility-follow-up", siteName: "Synthetic Facility", regionName: "Synthetic Region", status: "Active", hiringManagerEmail: "manager@example.test" }]}
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+  />);
+
+  expect(screen.getByRole("heading", { name: "Recruiter Action Center" })).toBeInTheDocument();
+  const filters = screen.getByRole("tablist", { name: "Action Center filters" });
+  expect(within(filters).getByRole("tab", { name: /All/i })).toBeInTheDocument();
+  expect(within(filters).getByRole("tab", { name: /Follow-up Due/i })).toBeInTheDocument();
+  expect(within(filters).getByRole("tab", { name: /Manager Feedback/i })).toBeInTheDocument();
+  expect(within(filters).getByRole("tab", { name: /Candidate Ready/i })).toBeInTheDocument();
+  expect(within(filters).getByRole("tab", { name: /Data Blockers/i })).toBeInTheDocument();
+  fireEvent.click(within(filters).getByRole("tab", { name: /Follow-up Due/i }));
+  expect(screen.getByText(/Recruiter follow-up due for Synthetic Follow-Up Candidate/i)).toBeInTheDocument();
+  expect(screen.getByText(/Why this needs attention/i)).toBeInTheDocument();
+  expect(candidate).toEqual(source);
+});
+
+test("opens a read-only detail preview and navigates with the exact candidate and requisition identifiers", () => {
+  const onOpenCandidate = jest.fn();
+  const onTaskAction = jest.fn();
+  const onWorkspaceEvent = jest.fn();
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={[{
+      id: "candidate-exact",
+      candidate: "Synthetic Exact Candidate",
+      status: "Submitted",
+      nextAction: "Follow up with candidate",
+      nextActionDueDate: "2026-07-21",
+      lastActionAt: "2026-07-18T12:00:00.000Z",
+      candidateNotes: "Synthetic",
+      currentOwner: "Recruiter",
+      ownerType: "Recruiter",
+      requisitionId: "req-exact",
+      position: "LPN",
+      site: "Synthetic Facility",
+      facilityId: "facility-exact",
+    }]}
+    requisitions={[{ id: "req-exact", reqNumber: "SYN-2002", positionTitle: "LPN", siteName: "Synthetic Facility", facilityId: "facility-exact", status: "Active" }]}
+    sites={[{ id: "facility-exact", siteName: "Synthetic Facility", status: "Active", hiringManagerEmail: "manager@example.test" }]}
+    onOpenCandidate={onOpenCandidate}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+    onTaskAction={onTaskAction}
+    onWorkspaceEvent={onWorkspaceEvent}
+  />);
+
+  fireEvent.click(screen.getByRole("button", { name: /Review details for Recruiter follow-up due for Synthetic Exact Candidate/i }));
+  const details = screen.getByRole("region", { name: /Action details for Recruiter follow-up due for Synthetic Exact Candidate/i });
+  expect(within(details).getByText("candidate-exact")).toBeInTheDocument();
+  expect(within(details).getByText("req-exact")).toBeInTheDocument();
+  expect(within(details).getByText(/Read-only preview/i)).toBeInTheDocument();
+  expect(within(details).queryByRole("button", { name: /Send|Save|Complete|Resolve|Mark/i })).not.toBeInTheDocument();
+  fireEvent.click(within(details).getByRole("button", { name: "Open Candidate" }));
+  expect(onOpenCandidate).toHaveBeenCalledWith("candidate-exact", "req-exact", expect.objectContaining({ candidateId: "candidate-exact", requisitionId: "req-exact" }));
+  expect(onTaskAction).not.toHaveBeenCalled();
+  expect(onWorkspaceEvent).not.toHaveBeenCalled();
+});
+
+test("moves Manager Feedback from pending to overdue without remounting", () => {
+  const tracker = [{
+    id: "candidate-live-feedback",
+    candidate: "Synthetic Live Feedback Candidate",
+    status: "Interview Completed",
+    nextAction: "Request feedback",
+    actualInterviewAt: "2026-07-21T12:00:01.000Z",
+    candidateNotes: "Interview complete",
+    currentOwner: "Synthetic Manager",
+    ownerType: "Hiring Manager",
+    requisitionId: "req-live-feedback",
+    position: "RN",
+    site: "Synthetic Facility",
+    facilityId: "facility-live-feedback",
+  }];
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={tracker}
+    requisitions={[{ id: "req-live-feedback", reqNumber: "SYN-LIVE", positionTitle: "RN", siteName: "Synthetic Facility", facilityId: "facility-live-feedback", status: "Active" }]}
+    sites={[{ id: "facility-live-feedback", siteName: "Synthetic Facility", status: "Active", hiringManagerEmail: "manager@example.test" }]}
+    workflowRules={{ interviewFeedbackHours: 24 }}
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+  />);
+  expect(screen.getByText("Manager feedback pending for Synthetic Live Feedback Candidate")).toBeInTheDocument();
+  act(() => {
+    jest.advanceTimersByTime(1000);
+  });
+  expect(screen.getByText("Manager feedback overdue for Synthetic Live Feedback Candidate")).toBeInTheDocument();
+});
+
+test("routes missing facility contact review with the exact facility context", () => {
+  const onOpenFacility = jest.fn();
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={[]}
+    requisitions={[{ id: "req-contact", reqNumber: "SYN-2003", positionTitle: "CNA", siteName: "No Contact Facility", facilityId: "facility-contact", status: "Active" }]}
+    sites={[{ id: "facility-contact", siteName: "No Contact Facility", regionName: "Synthetic Region", status: "Active" }]}
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={jest.fn()}
+    onOpenFacility={onOpenFacility}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+  />);
+  const filters = screen.getByRole("tablist", { name: "Action Center filters" });
+  fireEvent.click(within(filters).getByRole("tab", { name: /Data Blockers/i }));
+  expect(screen.getByText("Facility contact is missing")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Open Facility" }));
+  expect(onOpenFacility).toHaveBeenCalledWith("facility-contact", expect.objectContaining({ issueCode: "facility-recipient-missing", facilityId: "facility-contact" }));
+});
+
+test("shows Candidate Ready work without exposing a send or status action", () => {
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={[{
+      id: "candidate-ready",
+      candidate: "Synthetic Ready Candidate",
+      status: "Ready for Facility Submission",
+      nextAction: "Send facility submission",
+      candidateNotes: "Reviewed",
+      requisitionId: "req-ready",
+      position: "RN",
+      site: "Synthetic Facility",
+      facilityId: "facility-ready",
+      reviewedSubmissionPackage: { rendered: {}, recipients: {}, snapshot: {} },
+      communicationActionStates: { facilitySubmission: "Ready to Send" },
+    }]}
+    requisitions={[{ id: "req-ready", reqNumber: "SYN-2004", positionTitle: "RN", siteName: "Synthetic Facility", facilityId: "facility-ready", status: "Active" }]}
+    sites={[{ id: "facility-ready", siteName: "Synthetic Facility", status: "Active", hiringManagerEmail: "manager@example.test" }]}
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+  />);
+  const filters = screen.getByRole("tablist", { name: "Action Center filters" });
+  fireEvent.click(within(filters).getByRole("tab", { name: /Candidate Ready/i }));
+  const panel = screen.getByRole("tabpanel", { name: /Candidate Ready Action Center items/i });
+  expect(within(panel).getByText(/Candidate Ready submission pending for Synthetic Ready Candidate/i)).toBeInTheDocument();
+  expect(within(panel).queryByRole("button", { name: /Send|Mark Sent|Complete/i })).not.toBeInTheDocument();
+});
+
+test("renders a clear Action Center empty state", () => {
+  render(<RecruiterWorkspacePage theme={theme} tracker={[]} requisitions={[]} sites={[]} onOpenCandidate={jest.fn()} onOpenRequisition={jest.fn()} onOpenWeeklyCleanup={jest.fn()} onOpenReports={jest.fn()} />);
+  const filters = screen.getByRole("tablist", { name: "Action Center filters" });
+  fireEvent.click(within(filters).getByRole("tab", { name: /Manager Feedback/i }));
+  expect(screen.getByText("No manager feedback items need attention right now.")).toBeInTheDocument();
+});
+
+test("builds exact application setup targets without falling back to another record", () => {
+  const requisitions = [{ id: "req-exact", reqNumber: "SYN-3001", positionTitle: "RN" }];
+  const sites = [{ id: "facility-exact", siteName: "Exact Facility", status: "Active" }];
+  expect(resolveActionCenterSetupTarget({ type: "requisition", id: "req-exact", requisitions, sites })).toMatchObject({
+    ok: true,
+    target: { recordType: "requisition", recordId: "req-exact", field: "reqNumber" },
+  });
+  expect(resolveActionCenterSetupTarget({ type: "facility", id: "facility-exact", requisitions, sites })).toMatchObject({
+    ok: true,
+    target: { recordType: "facility", recordId: "facility-exact", field: "siteName" },
+  });
+  expect(resolveActionCenterSetupTarget({ type: "requisition", id: "req-missing", requisitions, sites })).toMatchObject({ ok: false });
+  expect(resolveActionCenterSetupTarget({ type: "facility", id: "facility-missing", requisitions, sites })).toMatchObject({ ok: false });
+  expect(resolveActionCenterSetupTarget({ type: "requisition", id: "req-exact", requisitions: [...requisitions, ...requisitions], sites })).toMatchObject({ ok: false });
+  expect(resolveActionCenterSetupTarget({ type: "facility", id: "facility-exact", requisitions, sites: [...sites, ...sites] })).toMatchObject({ ok: false });
+});
+
+test("resolves an exact candidate and requisition pair without duplicate-ID fallback", () => {
+  const requisitions = [
+    { id: "req-one", reqNumber: "SYN-ONE", positionTitle: "RN" },
+    { id: "req-two", reqNumber: "SYN-TWO", positionTitle: "LPN" },
+  ];
+  const tracker = [
+    { id: "candidate-shared", requisitionId: "req-one", candidate: "Synthetic One" },
+    { id: "candidate-shared", reqId: "req-two", candidate: "Synthetic Two" },
+  ];
+  expect(resolveActionCenterCandidateTarget({ candidateId: "candidate-shared", requisitionId: "req-two", tracker, requisitions })).toMatchObject({
+    ok: true,
+    candidate: { candidate: "Synthetic Two" },
+    target: { candidateId: "candidate-shared", requisitionId: "req-two" },
+  });
+  expect(resolveActionCenterCandidateTarget({ candidateId: "candidate-shared", requisitionId: "", tracker, requisitions })).toMatchObject({ ok: false });
+  expect(resolveActionCenterCandidateTarget({ candidateId: "candidate-missing", requisitionId: "req-two", tracker, requisitions })).toMatchObject({ ok: false });
+  expect(resolveActionCenterCandidateTarget({ candidateId: "candidate-shared", requisitionId: "req-missing", tracker, requisitions })).toMatchObject({ ok: false });
+  expect(resolveActionCenterCandidateTarget({ candidateId: "candidate-shared", requisitionId: "req-one", tracker: [...tracker, { ...tracker[0] }], requisitions })).toMatchObject({ ok: false });
+});
+
+test("keeps Action Center navigation separate while both candidate paths preserve exact requisition context", () => {
+  const onOpenCandidate = jest.fn();
+  const onOpenActionCenterCandidate = jest.fn();
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={[{
+      id: "candidate-dual-navigation",
+      candidate: "Synthetic Dual Navigation",
+      status: "Submitted",
+      nextAction: "Follow up with candidate",
+      nextActionDueDate: "2026-07-20",
+      lastActionAt: "2026-07-18T12:00:00.000Z",
+      candidateNotes: "Synthetic note",
+      currentOwner: "Recruiter",
+      requisitionId: "req-dual-navigation",
+      reqNumber: "SYN-DUAL",
+      position: "Registered Nurse",
+      site: "Synthetic Facility",
+      facilityId: "facility-dual-navigation",
+    }]}
+    requisitions={[{
+      id: "req-dual-navigation",
+      reqNumber: "SYN-DUAL",
+      positionTitle: "Registered Nurse",
+      siteName: "Synthetic Facility",
+      facilityId: "facility-dual-navigation",
+      status: "Active",
+      openings: 1,
+    }]}
+    sites={[{
+      id: "facility-dual-navigation",
+      siteName: "Synthetic Facility",
+      status: "Active",
+      hiringManagerName: "Synthetic Manager",
+      hiringManagerEmail: "manager@example.test",
+    }]}
+    onOpenCandidate={onOpenCandidate}
+    onOpenActionCenterCandidate={onOpenActionCenterCandidate}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+  />);
+
+  const [actionCenterOpen, workQueueOpen] = screen.getAllByRole("button", { name: "Open Candidate" });
+  fireEvent.click(actionCenterOpen);
+  expect(onOpenActionCenterCandidate).toHaveBeenCalledWith(
+    "candidate-dual-navigation",
+    "req-dual-navigation",
+    expect.objectContaining({ candidateId: "candidate-dual-navigation", requisitionId: "req-dual-navigation" }),
+  );
+  expect(onOpenCandidate).not.toHaveBeenCalled();
+
+  fireEvent.click(workQueueOpen);
+  expect(onOpenCandidate).toHaveBeenCalledWith(
+    "candidate-dual-navigation",
+    "req-dual-navigation",
+    expect.objectContaining({ sourceId: "candidate-dual-navigation", requisitionId: "req-dual-navigation" }),
+  );
+  expect(onOpenActionCenterCandidate).toHaveBeenCalledTimes(1);
+});
+
+test("uses the complete Action Center requisition collection to expose a missing-number blocker", () => {
+  const onOpenActionCenterRequisition = jest.fn();
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={[]}
+    requisitions={[]}
+    actionCenterRequisitions={[{
+      id: "req-missing-number",
+      reqNumber: "",
+      uniqueIdNumber: "",
+      positionTitle: "Registered Nurse",
+      siteName: "Synthetic Facility",
+      facilityId: "facility-missing-number",
+      status: "Active",
+      openings: 1,
+    }]}
+    sites={[{
+      id: "facility-missing-number",
+      siteName: "Synthetic Facility",
+      status: "Active",
+      hiringManagerName: "Synthetic Manager",
+      hiringManagerEmail: "manager@example.test",
+    }]}
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={jest.fn()}
+    onOpenActionCenterRequisition={onOpenActionCenterRequisition}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+  />);
+
+  const filters = screen.getByRole("tablist", { name: "Action Center filters" });
+  fireEvent.click(within(filters).getByRole("tab", { name: /Data Blockers/i }));
+  expect(screen.getByText("Req Number or Unique ID is missing")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Open Requisition" }));
+  expect(onOpenActionCenterRequisition).toHaveBeenCalledWith(
+    "req-missing-number",
+    expect.objectContaining({ issueCode: "missing-requisition-number", requisitionId: "req-missing-number" }),
+  );
+});
+
+test("makes Action Center navigation supersede stale reporting correction state", () => {
+  const candidateTarget = { candidateId: "candidate-exact", requisitionId: "req-exact" };
+  const setupTarget = { recordType: "facility", recordId: "facility-exact" };
+  expect(actionCenterNavigationState({ candidateTarget })).toEqual({
+    reportCorrectionTarget: null,
+    actionCenterCandidateTarget: candidateTarget,
+    actionCenterSetupTarget: null,
+  });
+  expect(actionCenterNavigationState({ setupTarget })).toEqual({
+    reportCorrectionTarget: null,
+    actionCenterCandidateTarget: null,
+    actionCenterSetupTarget: setupTarget,
+  });
+});
+
+test("clears an old requisition target before ordinary navigation to the same candidate on another requisition", () => {
+  const staleTarget = { candidateId: "candidate-shared", requisitionId: "req-one" };
+  expect(actionCenterNavigationState({ candidateTarget: staleTarget }).actionCenterCandidateTarget).toEqual(staleTarget);
+  expect(clearedActionCenterTargets()).toEqual({
+    actionCenterCandidateTarget: null,
+    actionCenterSetupTarget: null,
+  });
+});
+
+test("expires an Action Center candidate target when an ordinary candidate selection changes", () => {
+  const candidateTarget = { candidateId: "candidate-one", requisitionId: "req-one" };
+  expect(activeActionCenterCandidateTargetForSelection({ candidateTarget, selectedId: "candidate-one" })).toBe(candidateTarget);
+  expect(activeActionCenterCandidateTargetForSelection({ candidateTarget, selectedId: "candidate-two" })).toBeNull();
+});
+
+test("disables an unavailable requisition target instead of opening a generic setup screen", () => {
+  const onOpenRequisition = jest.fn();
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={[]}
+    requisitions={[{ id: "", reqNumber: "SYN-NO-ID", positionTitle: "RN", siteName: "Synthetic Facility", facilityId: "facility-no-id", status: "Active" }]}
+    sites={[{ id: "facility-no-id", siteName: "Synthetic Facility", status: "Active", hiringManagerEmail: "manager@example.test" }]}
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={onOpenRequisition}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+  />);
+  const unavailable = screen.getByRole("button", { name: "Target unavailable" });
+  expect(unavailable).toBeDisabled();
+  fireEvent.click(unavailable);
+  expect(onOpenRequisition).not.toHaveBeenCalled();
+});
+
+test("signals that an exact Action Center setup target was opened so its navigation state can be consumed", () => {
+  const onNavigationTargetOpened = jest.fn();
+  render(<FacilityPositionSetupPage
+    settings={{
+      sites: [{
+        id: "facility-consumed",
+        siteName: "Synthetic Facility",
+        aliases: [],
+        regionId: "synthetic-region",
+        status: "Active",
+        additionalHiringManagers: [],
+        siteSpecificQuestions: [],
+      }],
+      requisitions: [{
+        id: "req-consumed",
+        reqNumber: "SYN-CONSUMED",
+        uniqueIdNumber: "SYN-UNIQUE-CONSUMED",
+        positionTitle: "Registered Nurse",
+        siteName: "Synthetic Facility",
+        facilityId: "facility-consumed",
+        status: "Active",
+      }],
+      reporting: { regions: [{ id: "synthetic-region", name: "Synthetic Region", active: true }], reportPresets: [] },
+      contacts: [],
+      options: { featureFlags: {}, shiftOptions: ["Day"], requisitionStatusOptions: ["Active", "Filled", "Closed"] },
+      compensationStructure: { rules: [], enabledDimensions: [] },
+      communicationSettings: {},
+    }}
+    setSettings={jest.fn()}
+    correctionTarget={{
+      action: "Review Requisition",
+      page: "positions",
+      tab: "positions",
+      recordType: "requisition",
+      recordId: "req-consumed",
+      field: "reqNumber",
+      label: "SYN-CONSUMED",
+    }}
+    onNavigationTargetOpened={onNavigationTargetOpened}
+  />);
+
+  act(() => {
+    jest.advanceTimersByTime(60);
+  });
+  expect(screen.getByRole("heading", { name: "Edit Requisition" })).toBeInTheDocument();
+  expect(onNavigationTargetOpened).toHaveBeenCalledTimes(1);
 });
