@@ -16121,6 +16121,7 @@ function rowifyCandidate(item = {}) {
             sites={settings.sites || []}
             history={history}
             workflowRules={settings.options?.workflowRules || {}}
+            communicationSettings={settings}
             theme={THEME}
             isNarrow={isNarrow}
             isMedium={isMedium}

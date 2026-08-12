@@ -5,6 +5,10 @@ import {
   buildRecruiterActionCenter,
   filterRecruiterActionCenter,
 } from "./actionCenterSelectors";
+import {
+  actionCenterItemSupportsCommunicationPreview,
+  buildActionCenterCommunicationPreview,
+} from "./actionCenterCommunicationPreviews";
 import { buildRecruiterWorkspaceModel } from "./recruiterWorkspaceSelectors";
 import { WORKSPACE_TASK_ACTIONS } from "./recruiterWorkspaceActions";
 import { HomeCalendarWidget } from "./HomeCalendarWidget";
@@ -118,7 +122,7 @@ function ActionCenterRow({ item, theme, narrow, onReview, onOpen }) {
   );
 }
 
-function ActionCenterDetail({ item, theme, onClose, onOpen }) {
+function ActionCenterDetail({ item, theme, onClose, onOpen, onPreviewCommunication }) {
   const context = [
     ["Candidate", item.context.candidate],
     ["Candidate ID", item.context.candidateId],
@@ -145,12 +149,59 @@ function ActionCenterDetail({ item, theme, onClose, onOpen }) {
         <strong style={{ color: theme.green }}>Read-only preview.</strong> Opening or reviewing this item changes no candidate, requisition, facility, report, communication, or history record. {item.approvalRequired}
       </div>
       {item.destination.disabled ? <div role="status" style={{ color: theme.red, fontSize: 12, fontWeight: 850 }}>{item.destination.reason}</div> : null}
-      <div><button type="button" disabled={Boolean(item.destination.disabled)} title={item.destination.reason || ""} onClick={() => onOpen(item)} style={{ border: 0, borderRadius: 6, background: theme.primary2, color: "#fff", padding: "8px 11px", fontWeight: 900, cursor: item.destination.disabled ? "not-allowed" : "pointer", opacity: item.destination.disabled ? 0.55 : 1 }}>{item.destination.label}</button></div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {actionCenterItemSupportsCommunicationPreview(item) ? <button type="button" onClick={() => onPreviewCommunication(item)} style={{ border: 0, borderRadius: 6, background: theme.primary2, color: "#fff", padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Preview Communication</button> : null}
+        <button type="button" disabled={Boolean(item.destination.disabled)} title={item.destination.reason || ""} onClick={() => onOpen(item)} style={{ border: `1px solid ${theme.primary2}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "8px 11px", fontWeight: 900, cursor: item.destination.disabled ? "not-allowed" : "pointer", opacity: item.destination.disabled ? 0.55 : 1 }}>{item.destination.label}</button>
+      </div>
     </section>
   );
 }
 
-export function RecruiterWorkspacePage({ tracker = [], requisitions = [], actionCenterRequisitions = null, sites = [], history = [], calendarEvents = [], workflowRules = {}, theme, isNarrow = false, isMedium = false, recruiterName = "Recruiter", onOpenCandidate, onOpenActionCenterCandidate = onOpenCandidate, onOpenRequisition, onOpenActionCenterRequisition = onOpenRequisition, onOpenFacility = onOpenRequisition, onOpenActionCenterFacility = onOpenFacility, onOpenCalendar = () => {}, onOpenCalendarEvent = () => {}, onAddCalendarEvent = () => {}, onScheduleCalendar = () => {}, onOpenWeeklyCleanup, onOpenReports, onTaskAction = () => true, onWorkspaceEvent = () => true }) {
+function ActionCenterCommunicationPreviewDialog({ preview, theme, onClose }) {
+  const context = [
+    ["Candidate", preview.context.candidate],
+    ["Candidate ID", preview.context.candidateId],
+    ["Requisition", preview.context.requisition],
+    ["Requisition ID", preview.context.requisitionId],
+    ["Req Number", preview.context.requisitionNumber],
+    ["Facility", preview.context.facility],
+    ["Facility ID", preview.context.facilityId],
+    ["Region", preview.context.region],
+  ].filter(([, value]) => value);
+  return (
+    <div role="dialog" aria-modal="true" aria-label={preview.title} onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 140, background: "rgba(16, 10, 43, 0.62)", display: "grid", placeItems: "center", padding: 16 }}>
+      <div onClick={(event) => event.stopPropagation()} style={{ width: "min(980px, 100%)", maxHeight: "92vh", overflow: "auto", border: `1px solid ${theme.borderSoft}`, borderRadius: 10, background: theme.panel, color: theme.text, boxShadow: theme.shadow, display: "grid" }}>
+        <header style={{ position: "sticky", top: 0, zIndex: 1, borderBottom: `1px solid ${theme.borderSoft}`, padding: 14, background: theme.panel, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+          <div><div style={{ color: theme.primary2, fontSize: 11, fontWeight: 950, textTransform: "uppercase" }}>Read-only communication preview</div><h2 style={{ margin: "4px 0", fontSize: 19 }}>{preview.title}</h2><div style={{ color: theme.muted, fontSize: 12 }}>Nothing can be copied, opened, sent, saved, or marked complete from this preview.</div></div>
+          <button type="button" onClick={onClose} aria-label={`Close ${preview.title}`} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panelAlt, color: theme.text, padding: "7px 10px", fontWeight: 900, cursor: "pointer" }}>Close</button>
+        </header>
+        <div style={{ padding: 14, display: "grid", gap: 12 }}>
+          <section aria-label="Resolved communication context" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 7 }}>
+            {context.map(([label, value]) => <div key={label} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: 8, background: theme.panelAlt }}><span style={{ display: "block", color: theme.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>{label}</span><strong style={{ display: "block", marginTop: 2, fontSize: 12, overflowWrap: "anywhere" }}>{value}</strong></div>)}
+          </section>
+          <section style={{ border: `1px solid ${preview.blockers.length ? theme.red : theme.green}`, borderRadius: 7, padding: 10, background: preview.blockers.length ? theme.redBg : theme.greenBg }}>
+            <strong style={{ color: preview.blockers.length ? theme.red : theme.green }}>{preview.blockers.length ? "Preview blocked" : "Context resolved"}</strong>
+            <div style={{ marginTop: 4, color: theme.text, fontSize: 12 }}>{preview.explanation || "The exact Action Center context has been resolved for review."}</div>
+            {preview.blockers.length ? <div role="status" style={{ display: "grid", gap: 5, marginTop: 8 }}>{preview.blockers.map((blocker) => <div key={`${blocker.code}-${blocker.message}`} style={{ fontSize: 12 }}><strong>{blocker.code}:</strong> {blocker.message}</div>)}</div> : null}
+          </section>
+          {preview.documents.map((entry) => <section key={entry.key} aria-label={entry.title} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 8, overflow: "hidden", background: theme.panel }}>
+            <div style={{ padding: 10, background: theme.panelAlt, borderBottom: `1px solid ${theme.borderSoft}`, display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}><strong>{entry.title}</strong><span style={{ color: theme.muted, fontSize: 11 }}>{entry.channel}{entry.templateKey ? ` | ${entry.templateKey}${entry.templateVariant ? ` | ${entry.templateVariant}` : ""}` : ""}</span></div>
+            <div style={{ padding: 11, display: "grid", gap: 7, fontSize: 12 }}>
+              <div><strong>Recipient:</strong> <span style={{ color: theme.muted }}>{entry.recipientLabel}</span></div>
+              {entry.to.length ? <div><strong>To:</strong> <span style={{ color: theme.muted }}>{entry.to.join("; ")}</span></div> : null}
+              {entry.cc.length ? <div><strong>CC:</strong> <span style={{ color: theme.muted }}>{entry.cc.join("; ")}</span></div> : null}
+              {entry.subject ? <div><strong>Subject:</strong> <span style={{ color: theme.muted }}>{entry.subject}</span></div> : null}
+              <pre style={{ margin: 0, whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "Inter, Arial, sans-serif", fontSize: 12.5, lineHeight: 1.55, border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panelAlt, padding: 11 }}>{entry.body || "No preview content available."}</pre>
+            </div>
+          </section>)}
+          <div style={{ color: theme.muted, fontSize: 11 }}>Snapshot: <strong style={{ color: theme.text }}>{preview.snapshotHash}</strong>. Close this preview to return without changing any record.</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function RecruiterWorkspacePage({ tracker = [], requisitions = [], actionCenterRequisitions = null, sites = [], history = [], calendarEvents = [], workflowRules = {}, communicationSettings = {}, theme, isNarrow = false, isMedium = false, recruiterName = "Recruiter", onOpenCandidate, onOpenActionCenterCandidate = onOpenCandidate, onOpenRequisition, onOpenActionCenterRequisition = onOpenRequisition, onOpenFacility = onOpenRequisition, onOpenActionCenterFacility = onOpenFacility, onOpenCalendar = () => {}, onOpenCalendarEvent = () => {}, onAddCalendarEvent = () => {}, onScheduleCalendar = () => {}, onOpenWeeklyCleanup, onOpenReports, onTaskAction = () => true, onWorkspaceEvent = () => true }) {
   const [activeFilter, setActiveFilter] = useState("Do Now");
   const [actionTaskId, setActionTaskId] = useState("");
   const [focusMode, setFocusMode] = useState(false);
@@ -159,6 +210,7 @@ export function RecruiterWorkspacePage({ tracker = [], requisitions = [], action
   const [wrapUpOpen, setWrapUpOpen] = useState(false);
   const [actionCenterFilter, setActionCenterFilter] = useState(ACTION_CENTER_CATEGORIES.all);
   const [actionCenterDetailId, setActionCenterDetailId] = useState("");
+  const [actionCenterCommunicationPreviewId, setActionCenterCommunicationPreviewId] = useState("");
   const [actionCenterNow, setActionCenterNow] = useState(() => new Date());
   const completeActionCenterRequisitions = Array.isArray(actionCenterRequisitions) ? actionCenterRequisitions : requisitions;
   const model = useMemo(() => buildRecruiterWorkspaceModel({ tracker, requisitions, sites, history, calendarEvents, rules: workflowRules }), [tracker, requisitions, sites, history, calendarEvents, workflowRules]);
@@ -173,6 +225,14 @@ export function RecruiterWorkspacePage({ tracker = [], requisitions = [], action
   }, [actionCenter.nextRefreshAt, actionCenterNow]);
   const actionCenterItems = useMemo(() => filterRecruiterActionCenter(actionCenter.items, actionCenterFilter), [actionCenter.items, actionCenterFilter]);
   const actionCenterDetail = actionCenter.items.find((item) => item.id === actionCenterDetailId) || null;
+  const actionCenterCommunicationItem = actionCenter.items.find((item) => item.id === actionCenterCommunicationPreviewId) || null;
+  const actionCenterCommunicationPreview = useMemo(() => actionCenterCommunicationItem ? buildActionCenterCommunicationPreview({
+    item: actionCenterCommunicationItem,
+    tracker,
+    requisitions: completeActionCenterRequisitions,
+    sites,
+    settings: communicationSettings,
+  }) : null, [actionCenterCommunicationItem, tracker, completeActionCenterRequisitions, sites, communicationSettings]);
   const openActionCenterItem = (item) => {
     if (item.destination.disabled) return;
     if (item.destination.type === "candidate") onOpenActionCenterCandidate(item.destination.id, item.requisitionId, item);
@@ -255,8 +315,9 @@ export function RecruiterWorkspacePage({ tracker = [], requisitions = [], action
             </div>
             <div role="tabpanel" aria-label={`${actionCenterFilter} Action Center items`} style={{ display: "grid", gap: 8 }}>
               {actionCenterItems.length ? actionCenterItems.map((item) => <ActionCenterRow key={item.id} item={item} theme={theme} narrow={isNarrow} onReview={setActionCenterDetailId} onOpen={openActionCenterItem} />) : <div style={{ border: `1px dashed ${theme.borderSoft}`, borderRadius: 8, padding: 20, color: theme.muted, textAlign: "center" }}>No {actionCenterFilter === ACTION_CENTER_CATEGORIES.all ? "Action Center" : actionCenterFilter.toLowerCase()} items need attention right now.</div>}
-              {actionCenterDetail ? <ActionCenterDetail item={actionCenterDetail} theme={theme} onClose={() => setActionCenterDetailId("")} onOpen={openActionCenterItem} /> : null}
+              {actionCenterDetail ? <ActionCenterDetail item={actionCenterDetail} theme={theme} onClose={() => setActionCenterDetailId("")} onOpen={openActionCenterItem} onPreviewCommunication={(item) => setActionCenterCommunicationPreviewId(item.id)} /> : null}
             </div>
+            {actionCenterCommunicationPreview ? <ActionCenterCommunicationPreviewDialog preview={actionCenterCommunicationPreview} theme={theme} onClose={() => setActionCenterCommunicationPreviewId("")} /> : null}
           </WorkspaceCard> : null}
 
           <WorkspaceCard theme={theme} title="My Work Queue" subtitle="Every item explains its source, owner, timing, and recommended next step.">
