@@ -6,6 +6,7 @@ import {
 } from "./communicationGeneration";
 import { ACTION_CENTER_CATEGORIES } from "./actionCenterSelectors";
 import { getLocalCalendarDateKey } from "./calendarDate";
+import { ACTION_STATES, normalizeReviewedCommunicationRecord } from "./submissionCommunicationActions";
 import { buildFacilityIndex, resolveCanonicalFacility, resolveRequisition } from "./weeklyCleanupReporting";
 
 const PREVIEWABLE_CATEGORIES = new Set([
@@ -15,6 +16,52 @@ const PREVIEWABLE_CATEGORIES = new Set([
 ]);
 
 const text = (value) => String(value ?? "").trim();
+const lower = (value) => text(value).toLowerCase();
+
+const NON_FINAL_FEEDBACK_VALUES = new Set([
+  "",
+  "active",
+  "awaiting decision",
+  "awaiting feedback",
+  "decision pending",
+  "feedback pending",
+  "interview completed",
+  "needs feedback",
+  "no decision",
+  "pending",
+  "still active",
+  "undecided",
+]);
+
+const FINAL_FEEDBACK_OUTCOMES = new Set([
+  "archived",
+  "candidate withdrew",
+  "closed",
+  "do not rehire / do not hire",
+  "duplicate",
+  "future consideration",
+  "hired",
+  "ineligible",
+  "no response",
+  "no show",
+  "not interested",
+  "not moving forward",
+  "not selected",
+  "not selected by leadership",
+  "offer",
+  "offer accepted",
+  "offer declined",
+  "offer rescinded",
+  "offered",
+  "placed",
+  "position closed",
+  "position no longer available",
+  "rejected",
+  "unresponsive",
+  "verbal offer",
+  "withdrew",
+  "withdrawn",
+]);
 
 function clone(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -126,6 +173,61 @@ function interviewDateFor(candidate = {}) {
   return getLocalCalendarDateKey(value);
 }
 
+function parsedLocalDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : new Date(value.getTime());
+  const source = text(value);
+  const dateOnly = source.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const parsed = dateOnly
+    ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+    : new Date(source);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function confirmedCompletedInterview(candidate = {}, now = new Date()) {
+  const completionStatus = [candidate.status, candidate.interviewCompletionStatus, candidate.bookingStatus, candidate.bookingRecord?.bookingStatus]
+    .some((value) => ["completed", "interview completed"].includes(lower(value)));
+  const source = candidate.actualInterviewAt || candidate.interviewCompletedAt || (completionStatus ? candidate.interviewDate : "");
+  const completedAt = parsedLocalDate(source);
+  const current = parsedLocalDate(now);
+  return completedAt && current && completedAt.getTime() <= current.getTime() ? completedAt : null;
+}
+
+function managerFeedbackAlreadyResolved(candidate = {}) {
+  const recordedAt = text(candidate.hiringDecisionReceivedAt || candidate.managerFeedbackReceivedAt || candidate.facilityFeedbackReceivedAt);
+  const substantiveFeedback = !NON_FINAL_FEEDBACK_VALUES.has(lower(candidate.interviewFeedback));
+  const finalOutcome = [candidate.interviewOutcome, candidate.finalCandidateOutcome, candidate.hiringDecisionOutcome, candidate.archiveOutcome]
+    .some((value) => FINAL_FEEDBACK_OUTCOMES.has(lower(value)));
+  return Boolean(recordedAt || substantiveFeedback || finalOutcome || FINAL_FEEDBACK_OUTCOMES.has(lower(candidate.status)));
+}
+
+function candidateReadyPackageBlockers(candidate = {}, requisition = {}, facility = {}) {
+  const packageData = candidate.reviewedSubmissionPackage;
+  if (!packageData || typeof packageData !== "object") {
+    return [{ code: "REVIEWED_PACKAGE_MISSING", message: "The reviewed Candidate Ready communication package is no longer available." }];
+  }
+  const result = [];
+  const snapshot = packageData.snapshot || {};
+  const packageRequisitionId = text(snapshot.requisition?.requisitionId || snapshot.requisition?.id);
+  const packageFacilityId = text(snapshot.facility?.facilityId || snapshot.facility?.id || snapshot.requisition?.facilityId);
+  const resolvedRequisitionId = text(requisition.id || requisition.requisitionId);
+  const resolvedFacilityId = text(facility.id || facility.facilityId);
+  const packageCandidateId = text(snapshot.intake?.candidateId || snapshot.intake?.trackerId || snapshot.candidate?.candidateId || snapshot.candidate?.id);
+
+  if (!text(packageData.snapshotHash)) result.push({ code: "REVIEWED_PACKAGE_HASH_MISSING", message: "The saved Candidate Ready package has no stable snapshot hash." });
+  if (!packageRequisitionId) result.push({ code: "REVIEWED_PACKAGE_REQUISITION_MISSING", message: "The saved Candidate Ready package has no stable requisition identity." });
+  else if (packageRequisitionId !== resolvedRequisitionId) result.push({ code: "REVIEWED_PACKAGE_REQUISITION_MISMATCH", message: "The saved Candidate Ready package belongs to a different requisition." });
+  if (!packageFacilityId) result.push({ code: "REVIEWED_PACKAGE_FACILITY_MISSING", message: "The saved Candidate Ready package has no stable facility identity." });
+  else if (packageFacilityId !== resolvedFacilityId) result.push({ code: "REVIEWED_PACKAGE_FACILITY_MISMATCH", message: "The saved Candidate Ready package belongs to a different facility." });
+  if (packageCandidateId && packageCandidateId !== text(candidate.id)) result.push({ code: "REVIEWED_PACKAGE_CANDIDATE_MISMATCH", message: "The saved Candidate Ready package belongs to a different candidate." });
+
+  const normalized = normalizeReviewedCommunicationRecord(candidate);
+  if (normalized.communicationActionStates?.facilitySubmission === ACTION_STATES.facilitySent || text(candidate.facilitySubmissionSentAt)) {
+    result.push({ code: "REVIEWED_PACKAGE_ALREADY_SENT", message: "The saved Candidate Ready facility submission has already been recorded as sent." });
+  }
+  return result;
+}
+
 function document({ key, title, channel = "Email", recipientLabel, to = [], cc = [], subject = "", body = "", templateKey = "", templateVariant = "" }) {
   return { key, title, channel, recipientLabel, to: uniqueEmails(to), cc: uniqueEmails(cc), subject: text(subject), body: text(body), templateKey, templateVariant };
 }
@@ -173,7 +275,7 @@ export function actionCenterItemSupportsCommunicationPreview(item = {}) {
   return PREVIEWABLE_CATEGORIES.has(item.category) && item.sourceType === "candidate";
 }
 
-export function buildActionCenterCommunicationPreview({ item = {}, tracker = [], requisitions = [], sites = [], settings = {} } = {}) {
+export function buildActionCenterCommunicationPreview({ item = {}, tracker = [], requisitions = [], sites = [], settings = {}, now = new Date() } = {}) {
   const context = resolveExactContext(item, tracker, requisitions, sites);
   const blockers = [...context.blockers];
   const candidate = context.candidate;
@@ -185,9 +287,16 @@ export function buildActionCenterCommunicationPreview({ item = {}, tracker = [],
   let unresolvedTokens = [];
   let restrictedTokens = [];
   if (!blockers.length && item.category === ACTION_CENTER_CATEGORIES.candidateReady) {
-    documents = savedCandidateReadyDocuments(candidate);
-    if (!documents.length) blockers.push({ code: "REVIEWED_PACKAGE_MISSING", message: "The reviewed Candidate Ready communication package is no longer available." });
+    blockers.push(...candidateReadyPackageBlockers(candidate, requisition, facility));
+    if (!blockers.length) documents = savedCandidateReadyDocuments(candidate);
+    if (!blockers.length && !documents.length) blockers.push({ code: "REVIEWED_PACKAGE_MISSING", message: "The reviewed Candidate Ready communication package is no longer available." });
   } else if (!blockers.length) {
+    if (item.category === ACTION_CENTER_CATEGORIES.managerFeedback) {
+      if (!confirmedCompletedInterview(candidate, now)) blockers.push({ code: "INTERVIEW_COMPLETION_REQUIRED", message: "Manager Feedback communication remains unavailable until the interview is confirmed complete." });
+      if (managerFeedbackAlreadyResolved(candidate)) blockers.push({ code: "MANAGER_FEEDBACK_ALREADY_RESOLVED", message: "Manager feedback or a final candidate outcome has already been recorded." });
+    }
+  }
+  if (!blockers.length && item.category !== ACTION_CENTER_CATEGORIES.candidateReady) {
     const snapshot = createCommunicationSnapshot({ requisition, facility, intake: candidateIntake(candidate), settings });
     snapshot.sourceCandidate = clone(candidate);
     const rendered = renderedDocument({ category: item.category, snapshot, settings, facility });

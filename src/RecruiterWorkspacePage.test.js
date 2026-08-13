@@ -416,6 +416,11 @@ test("previews the exact saved Candidate Ready package without operational contr
       position: "CNA",
       reviewedSubmissionPackage: {
         snapshotHash: "saved-ready-hash",
+        snapshot: {
+          requisition: { requisitionId: "req-preview-ready", facilityId: "facility-preview-ready" },
+          facility: { facilityId: "facility-preview-ready" },
+          intake: { candidateId: "candidate-preview-ready" },
+        },
         recipients: { facility: { to: ["manager@example.test"], cc: [] }, candidate: { to: ["candidate@example.test"] } },
         rendered: {
           facilityEmail: { subject: "Saved facility subject", body: "Saved facility body" },

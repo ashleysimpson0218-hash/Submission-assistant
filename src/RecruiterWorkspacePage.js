@@ -232,7 +232,8 @@ export function RecruiterWorkspacePage({ tracker = [], requisitions = [], action
     requisitions: completeActionCenterRequisitions,
     sites,
     settings: communicationSettings,
-  }) : null, [actionCenterCommunicationItem, tracker, completeActionCenterRequisitions, sites, communicationSettings]);
+    now: actionCenterNow,
+  }) : null, [actionCenterCommunicationItem, tracker, completeActionCenterRequisitions, sites, communicationSettings, actionCenterNow]);
   const openActionCenterItem = (item) => {
     if (item.destination.disabled) return;
     if (item.destination.type === "candidate") onOpenActionCenterCandidate(item.destination.id, item.requisitionId, item);

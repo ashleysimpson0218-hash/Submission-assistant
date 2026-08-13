@@ -50,6 +50,25 @@ const settings = {
   },
 };
 
+function reviewedPackage(overrides = {}) {
+  return {
+    snapshotHash: "approved-snapshot-hash",
+    snapshot: {
+      requisition: { requisitionId: "req-preview", facilityId: "facility-preview" },
+      facility: { facilityId: "facility-preview" },
+      intake: { candidateId: "candidate-preview" },
+    },
+    recipients: { facility: { to: ["manager@example.test"], cc: [] }, candidate: { to: ["candidate@example.test"] } },
+    rendered: {
+      facilityEmail: { templateKey: "hiringManager", variantKey: "External", subject: "Exact saved facility subject", body: "Exact saved facility body" },
+      candidateEmail: { templateKey: "candidateConfirmation", subject: "Exact saved candidate subject", body: "Exact saved candidate body" },
+      candidateText: { templateKey: "candidateText", body: "Exact saved candidate text" },
+      atsUpdate: { templateKey: "atsUpdate", subject: "Exact saved ATS subject", body: "Exact saved ATS body" },
+    },
+    ...overrides,
+  };
+}
+
 function item(category) {
   return {
     id: `action-center-v1:${category}:candidate:candidate-preview:requisition:req-preview`,
@@ -118,16 +137,7 @@ test("builds a manager feedback preview with the exact facility recipients and i
 test("shows the exact saved Candidate Ready package without regenerating it", () => {
   const readyCandidate = {
     ...candidate,
-    reviewedSubmissionPackage: {
-      snapshotHash: "approved-snapshot-hash",
-      recipients: { facility: { to: ["manager@example.test"], cc: [] }, candidate: { to: ["candidate@example.test"] } },
-      rendered: {
-        facilityEmail: { templateKey: "hiringManager", variantKey: "External", subject: "Exact saved facility subject", body: "Exact saved facility body" },
-        candidateEmail: { templateKey: "candidateConfirmation", subject: "Exact saved candidate subject", body: "Exact saved candidate body" },
-        candidateText: { templateKey: "candidateText", body: "Exact saved candidate text" },
-        atsUpdate: { templateKey: "atsUpdate", subject: "Exact saved ATS subject", body: "Exact saved ATS body" },
-      },
-    },
+    reviewedSubmissionPackage: reviewedPackage(),
   };
   const preview = buildActionCenterCommunicationPreview({
     item: item(ACTION_CENTER_CATEGORIES.candidateReady),
@@ -140,6 +150,37 @@ test("shows the exact saved Candidate Ready package without regenerating it", ()
   expect(preview).toMatchObject({ title: "Candidate Ready Preview", snapshotHash: "approved-snapshot-hash", canReview: true, blockers: [] });
   expect(preview.documents.map((entry) => entry.key)).toEqual(["facility-submission", "candidate-confirmation", "candidate-text", "ats-update"]);
   expect(preview.documents[0].body).toBe("Exact saved facility body");
+});
+
+test("blocks Candidate Ready packages with missing or mismatched saved identity and packages already sent", () => {
+  const base = { item: item(ACTION_CENTER_CATEGORIES.candidateReady), requisitions: [requisition], sites: [facility], settings };
+  const build = (record) => buildActionCenterCommunicationPreview({ ...base, tracker: [{ ...candidate, reviewedSubmissionPackage: record, communicationActionStates: { facilitySubmission: "Ready to Send" } }] });
+
+  expect(build(reviewedPackage({ snapshot: { requisition: {}, facility: {} } })).blockers).toEqual(expect.arrayContaining([
+    expect.objectContaining({ code: "REVIEWED_PACKAGE_REQUISITION_MISSING" }),
+    expect.objectContaining({ code: "REVIEWED_PACKAGE_FACILITY_MISSING" }),
+  ]));
+  expect(build(reviewedPackage({ snapshot: { requisition: { requisitionId: "req-other" }, facility: { facilityId: "facility-preview" } } })).blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "REVIEWED_PACKAGE_REQUISITION_MISMATCH" })]));
+  expect(build(reviewedPackage({ snapshot: { requisition: { requisitionId: "req-preview" }, facility: { facilityId: "facility-other" } } })).blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "REVIEWED_PACKAGE_FACILITY_MISMATCH" })]));
+  expect(build(reviewedPackage({ snapshot: { requisition: { requisitionId: "req-preview" }, facility: { facilityId: "facility-preview" }, intake: { candidateId: "candidate-other" } } })).blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "REVIEWED_PACKAGE_CANDIDATE_MISMATCH" })]));
+
+  const sent = buildActionCenterCommunicationPreview({
+    ...base,
+    tracker: [{ ...candidate, reviewedSubmissionPackage: reviewedPackage(), communicationActionStates: { facilitySubmission: "Sent" }, facilitySubmissionSentAt: "2026-08-10T12:00:00.000Z" }],
+  });
+  expect(sent.blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "REVIEWED_PACKAGE_ALREADY_SENT" })]));
+  expect(sent.documents).toEqual([]);
+});
+
+test("requires confirmed completed interviews and suppresses resolved Manager Feedback previews", () => {
+  const base = { item: item(ACTION_CENTER_CATEGORIES.managerFeedback), requisitions: [requisition], sites: [facility], settings, now: new Date("2026-08-10T12:00:00.000Z") };
+  const build = (record) => buildActionCenterCommunicationPreview({ ...base, tracker: [{ ...candidate, ...record }] });
+
+  expect(build({ actualInterviewAt: "", status: "Interview Scheduled", interviewDate: "2026-08-11T12:00:00.000Z" }).blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "INTERVIEW_COMPLETION_REQUIRED" })]));
+  expect(build({ actualInterviewAt: "2026-08-11T12:00:00.000Z" }).blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "INTERVIEW_COMPLETION_REQUIRED" })]));
+  expect(build({ actualInterviewAt: "2026-08-09T12:00:00.000Z", interviewFeedback: "Strong interview" }).blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "MANAGER_FEEDBACK_ALREADY_RESOLVED" })]));
+  expect(build({ actualInterviewAt: "2026-08-09T12:00:00.000Z", finalCandidateOutcome: "Offer accepted" }).blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "MANAGER_FEEDBACK_ALREADY_RESOLVED" })]));
+  expect(build({ actualInterviewAt: "2026-08-09T12:00:00.000Z", interviewFeedback: "Feedback pending" })).toMatchObject({ blockers: [], canReview: true });
 });
 
 test("fails closed for stale, inactive, ambiguous, or incomplete communication context", () => {
