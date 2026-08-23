@@ -48,8 +48,12 @@ describe("WelcomeFlow workspace bootstrap safety", () => {
       );
     });
     expect(sql).toContain("revoke all privileges on table public.welcomeflow_workspace_state from public, anon, authenticated");
+    expect(sql).toContain("defaults.defaclrole = 'postgres'::regrole");
     expect(sql).toContain("defaults.defaclobjtype in ('r', 's', 'f')");
     expect(sql).toContain("raise exception 'unsafe public/anon/authenticated default privileges remain in schema public'");
+    expect(sql.indexOf("commit;")).toBeGreaterThan(
+      sql.indexOf("raise exception 'unsafe public/anon/authenticated default privileges remain in schema public'")
+    );
   });
 
   test("keeps RLS enabled and revokes every anonymous write-capable table privilege", () => {

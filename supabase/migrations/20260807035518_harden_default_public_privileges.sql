@@ -26,9 +26,11 @@ begin
 end
 $$;
 
-commit;
-
--- Fail closed if the recovered defaults or object-level privileges remain.
+-- Fail closed if the recovered application-owned defaults or object-level
+-- privileges remain. Supabase also maintains platform defaults owned by
+-- supabase_admin. Tenant migrations run as postgres and neither own nor may
+-- alter those platform ACLs, so only the postgres defaults created by the
+-- recovered application baseline belong to this migration's safety boundary.
 do $$
 declare
   privilege_name text;
@@ -40,6 +42,7 @@ begin
     join pg_namespace namespace
       on namespace.oid = defaults.defaclnamespace
     where namespace.nspname = 'public'
+      and defaults.defaclrole = 'postgres'::regrole
       and defaults.defaclobjtype in ('r', 'S', 'f')
       and (
         privilege.grantee = 0
@@ -81,3 +84,5 @@ begin
   end if;
 end
 $$;
+
+commit;
