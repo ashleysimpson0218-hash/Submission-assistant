@@ -2,7 +2,9 @@ import { ACTION_CENTER_CATEGORIES, buildActionCenterItemId } from "./actionCente
 import {
   actionCenterItemSupportsCommunicationPreview,
   buildActionCenterCommunicationPreview,
+  validateCandidateReadyFacilitySubmissionPackage,
 } from "./actionCenterCommunicationPreviews";
+import { CANDIDATE_READY_PACKAGE_SCHEMA_VERSION } from "./candidateReadyConfirmation";
 
 const requisition = {
   id: "req-preview",
@@ -52,6 +54,7 @@ const settings = {
 
 function reviewedPackage(overrides = {}) {
   return {
+    schemaVersion: CANDIDATE_READY_PACKAGE_SCHEMA_VERSION,
     snapshotHash: "approved-snapshot-hash",
     snapshot: {
       requisition: { requisitionId: "req-preview", facilityId: "facility-preview" },
@@ -60,11 +63,16 @@ function reviewedPackage(overrides = {}) {
     },
     recipients: { facility: { to: ["manager@example.test"], cc: [] }, candidate: { to: ["candidate@example.test"] } },
     rendered: {
-      facilityEmail: { templateKey: "hiringManager", variantKey: "External", subject: "Exact saved facility subject", body: "Exact saved facility body" },
+      facilityEmail: { templateKey: "hiringManager", variantKey: "External", subject: "Exact saved facility subject", body: "Exact saved facility body", releaseCondition: "candidateReadyConfirmed" },
       candidateEmail: { templateKey: "candidateConfirmation", subject: "Exact saved candidate subject", body: "Exact saved candidate body" },
       candidateText: { templateKey: "candidateText", body: "Exact saved candidate text" },
       atsUpdate: { templateKey: "atsUpdate", subject: "Exact saved ATS subject", body: "Exact saved ATS body" },
     },
+    templateReferences: {
+      facilitySubmission: { templateKey: "hiringManager", variantKey: "External", id: "facility-external", version: 1, status: "Active", baseHash: "base-facility" },
+    },
+    releaseConditions: { facilitySubmission: "candidateReadyConfirmed" },
+    actionStates: { facilitySubmission: "Ready to Send" },
     ...overrides,
   };
 }
@@ -192,6 +200,52 @@ test("shows the exact saved Candidate Ready package without regenerating it", ()
   expect(preview).toMatchObject({ title: "Candidate Ready Preview", snapshotHash: "approved-snapshot-hash", canReview: true, blockers: [] });
   expect(preview.documents.map((entry) => entry.key)).toEqual(["facility-submission", "candidate-confirmation", "candidate-text", "ats-update"]);
   expect(preview.documents[0].body).toBe("Exact saved facility body");
+});
+
+test("validates the explicit saved Candidate Ready facility-submission contract without mutation", () => {
+  const expectedContext = { candidate, requisition, facility };
+  const valid = reviewedPackage();
+  const source = JSON.parse(JSON.stringify(valid));
+  expect(validateCandidateReadyFacilitySubmissionPackage(valid, expectedContext)).toEqual({ valid: true, reasonCode: "", errors: [] });
+  expect(valid).toEqual(source);
+
+  const missingSchema = reviewedPackage();
+  delete missingSchema.schemaVersion;
+  expect(validateCandidateReadyFacilitySubmissionPackage(missingSchema, expectedContext)).toMatchObject({ valid: false, reasonCode: "REVIEWED_PACKAGE_SCHEMA_MISSING" });
+
+  const cases = [
+    ["unsupported schema", { schemaVersion: 99 }, "REVIEWED_PACKAGE_SCHEMA_UNSUPPORTED"],
+    ["wrong declared purpose", { purpose: "ats-note-only" }, "REVIEWED_PACKAGE_PURPOSE_INVALID"],
+    ["missing facility email", { rendered: { atsUpdate: { subject: "ATS", body: "ATS only" } } }, "REVIEWED_PACKAGE_FACILITY_EMAIL_MISSING"],
+    ["arbitrary documents", { rendered: {}, documents: [{ title: "ATS note", body: "Nonempty but unrelated" }] }, "REVIEWED_PACKAGE_FACILITY_EMAIL_MISSING"],
+    ["empty facility email", { rendered: { facilityEmail: { templateKey: "hiringManager", releaseCondition: "candidateReadyConfirmed", subject: "", body: "" } } }, "REVIEWED_PACKAGE_FACILITY_EMAIL_INCOMPLETE"],
+    ["ATS email in facility slot", { rendered: { facilityEmail: { templateKey: "atsUpdate", releaseCondition: "facilitySubmissionSent", subject: "ATS", body: "ATS only" } } }, "REVIEWED_PACKAGE_FACILITY_EMAIL_PURPOSE_INVALID"],
+    ["missing recipients", { recipients: { candidate: { to: ["candidate@example.test"] } } }, "REVIEWED_PACKAGE_FACILITY_RECIPIENT_MISSING"],
+    ["wrong action state", { actionStates: { facilitySubmission: "Draft Opened" } }, "REVIEWED_PACKAGE_ACTION_STATE_INVALID"],
+    ["missing template metadata", { templateReferences: {} }, "REVIEWED_PACKAGE_TEMPLATE_METADATA_MISSING"],
+    ["wrong template purpose", { templateReferences: { facilitySubmission: { templateKey: "atsUpdate", id: "ats", version: 1 } } }, "REVIEWED_PACKAGE_TEMPLATE_PURPOSE_INVALID"],
+    ["missing release metadata", { releaseConditions: {} }, "REVIEWED_PACKAGE_RELEASE_METADATA_INVALID"],
+    ["missing candidate", { snapshot: { ...valid.snapshot, intake: {} } }, "REVIEWED_PACKAGE_CANDIDATE_MISSING"],
+    ["wrong candidate", { snapshot: { ...valid.snapshot, intake: { candidateId: "candidate-other" } } }, "REVIEWED_PACKAGE_CANDIDATE_MISMATCH"],
+    ["wrong requisition", { snapshot: { ...valid.snapshot, requisition: { requisitionId: "req-other", facilityId: "facility-preview" } } }, "REVIEWED_PACKAGE_REQUISITION_MISMATCH"],
+    ["wrong facility", { snapshot: { ...valid.snapshot, facility: { facilityId: "facility-other" } } }, "REVIEWED_PACKAGE_FACILITY_MISMATCH"],
+  ];
+  cases.forEach(([, overrides, code]) => {
+    const packageData = reviewedPackage(overrides);
+    const result = validateCandidateReadyFacilitySubmissionPackage(packageData, expectedContext);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toEqual(expect.arrayContaining([expect.objectContaining({ code })]));
+  });
+});
+
+test("allows supplemental ATS content only alongside the required saved facility package", () => {
+  const packageData = reviewedPackage({
+    rendered: {
+      ...reviewedPackage().rendered,
+      atsUpdate: { templateKey: "atsUpdate", subject: "Supplemental ATS note", body: "Supplemental saved ATS body" },
+    },
+  });
+  expect(validateCandidateReadyFacilitySubmissionPackage(packageData, { candidate, requisition, facility })).toMatchObject({ valid: true, errors: [] });
 });
 
 test("blocks Candidate Ready packages with missing or mismatched saved identity and packages already sent", () => {

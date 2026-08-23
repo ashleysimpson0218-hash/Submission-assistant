@@ -415,6 +415,7 @@ test("previews the exact saved Candidate Ready package without operational contr
       site: "Synthetic Ready Facility",
       position: "CNA",
       reviewedSubmissionPackage: {
+        schemaVersion: 1,
         snapshotHash: "saved-ready-hash",
         snapshot: {
           requisition: { requisitionId: "req-preview-ready", facilityId: "facility-preview-ready" },
@@ -423,11 +424,14 @@ test("previews the exact saved Candidate Ready package without operational contr
         },
         recipients: { facility: { to: ["manager@example.test"], cc: [] }, candidate: { to: ["candidate@example.test"] } },
         rendered: {
-          facilityEmail: { subject: "Saved facility subject", body: "Saved facility body" },
+          facilityEmail: { templateKey: "hiringManager", subject: "Saved facility subject", body: "Saved facility body", releaseCondition: "candidateReadyConfirmed" },
           candidateEmail: { subject: "Saved candidate subject", body: "Saved candidate body" },
           candidateText: { body: "Saved candidate text" },
           atsUpdate: { subject: "Saved ATS subject", body: "Saved ATS body" },
         },
+        templateReferences: { facilitySubmission: { templateKey: "hiringManager", id: "facility-external", version: 1 } },
+        releaseConditions: { facilitySubmission: "candidateReadyConfirmed" },
+        actionStates: { facilitySubmission: "Ready to Send" },
       },
       communicationActionStates: { facilitySubmission: "Ready to Send" },
     }]}

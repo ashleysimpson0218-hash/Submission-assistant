@@ -10,6 +10,7 @@ import {
   hasSubstantiveManagerFeedback,
 } from "./actionCenterSelectors";
 import { getLocalCalendarDateKey } from "./calendarDate";
+import { SUPPORTED_CANDIDATE_READY_PACKAGE_SCHEMA_VERSIONS } from "./candidateReadyConfirmation";
 import { ACTION_STATES, normalizeReviewedCommunicationRecord } from "./submissionCommunicationActions";
 import { buildFacilityIndex, resolveCanonicalFacility, resolveRequisition } from "./weeklyCleanupReporting";
 
@@ -214,31 +215,71 @@ function managerFeedbackAlreadyResolved(candidate = {}) {
   return Boolean(recordedAt || substantiveFeedback || finalOutcome || FINAL_FEEDBACK_OUTCOMES.has(lower(candidate.status)));
 }
 
-function candidateReadyPackageBlockers(candidate = {}, requisition = {}, facility = {}) {
-  const packageData = candidate.reviewedSubmissionPackage;
+function packageValidationError(code, message) {
+  return { code, message };
+}
+
+export function validateCandidateReadyFacilitySubmissionPackage(savedPackage, expectedContext = {}) {
+  const candidate = expectedContext.candidate || {};
+  const requisition = expectedContext.requisition || {};
+  const facility = expectedContext.facility || {};
+  const packageData = savedPackage;
   if (!packageData || typeof packageData !== "object") {
-    return [{ code: "REVIEWED_PACKAGE_MISSING", message: "The reviewed Candidate Ready communication package is no longer available." }];
+    const errors = [packageValidationError("REVIEWED_PACKAGE_MISSING", "The reviewed Candidate Ready communication package is no longer available.")];
+    return { valid: false, reasonCode: errors[0].code, errors };
   }
-  const result = [];
+  const errors = [];
   const snapshot = packageData.snapshot || {};
   const packageRequisitionId = text(snapshot.requisition?.requisitionId || snapshot.requisition?.id);
   const packageFacilityId = text(snapshot.facility?.facilityId || snapshot.facility?.id || snapshot.requisition?.facilityId);
   const resolvedRequisitionId = text(requisition.id || requisition.requisitionId);
   const resolvedFacilityId = text(facility.id || facility.facilityId);
   const packageCandidateId = text(snapshot.intake?.candidateId || snapshot.intake?.trackerId || snapshot.candidate?.candidateId || snapshot.candidate?.id);
+  const hasSchemaVersion = Object.prototype.hasOwnProperty.call(packageData, "schemaVersion");
+  const facilityEmail = packageData.rendered?.facilityEmail;
+  const facilityRecipients = packageData.recipients?.facility;
+  const facilityTemplate = packageData.templateReferences?.facilitySubmission;
+  const facilityReleaseCondition = text(packageData.releaseConditions?.facilitySubmission);
+  const facilityActionState = text(packageData.actionStates?.facilitySubmission);
+  const declaredPurpose = text(packageData.purpose || packageData.packagePurpose || packageData.communicationPurpose);
 
-  if (!text(packageData.snapshotHash)) result.push({ code: "REVIEWED_PACKAGE_HASH_MISSING", message: "The saved Candidate Ready package has no stable snapshot hash." });
-  if (!packageRequisitionId) result.push({ code: "REVIEWED_PACKAGE_REQUISITION_MISSING", message: "The saved Candidate Ready package has no stable requisition identity." });
-  else if (packageRequisitionId !== resolvedRequisitionId) result.push({ code: "REVIEWED_PACKAGE_REQUISITION_MISMATCH", message: "The saved Candidate Ready package belongs to a different requisition." });
-  if (!packageFacilityId) result.push({ code: "REVIEWED_PACKAGE_FACILITY_MISSING", message: "The saved Candidate Ready package has no stable facility identity." });
-  else if (packageFacilityId !== resolvedFacilityId) result.push({ code: "REVIEWED_PACKAGE_FACILITY_MISMATCH", message: "The saved Candidate Ready package belongs to a different facility." });
-  if (packageCandidateId && packageCandidateId !== text(candidate.id)) result.push({ code: "REVIEWED_PACKAGE_CANDIDATE_MISMATCH", message: "The saved Candidate Ready package belongs to a different candidate." });
+  if (!hasSchemaVersion) errors.push(packageValidationError("REVIEWED_PACKAGE_SCHEMA_MISSING", "The saved Candidate Ready package has no explicit schema version."));
+  else if (!SUPPORTED_CANDIDATE_READY_PACKAGE_SCHEMA_VERSIONS.includes(packageData.schemaVersion)) errors.push(packageValidationError("REVIEWED_PACKAGE_SCHEMA_UNSUPPORTED", "The saved Candidate Ready package uses an unsupported schema version."));
+  if (declaredPurpose && declaredPurpose !== "candidate-ready-facility-submission") errors.push(packageValidationError("REVIEWED_PACKAGE_PURPOSE_INVALID", "The saved object is not a Candidate Ready facility-submission package."));
+
+  if (!text(packageData.snapshotHash)) errors.push(packageValidationError("REVIEWED_PACKAGE_HASH_MISSING", "The saved Candidate Ready package has no stable snapshot hash."));
+  if (!packageRequisitionId) errors.push(packageValidationError("REVIEWED_PACKAGE_REQUISITION_MISSING", "The saved Candidate Ready package has no stable requisition identity."));
+  else if (packageRequisitionId !== resolvedRequisitionId) errors.push(packageValidationError("REVIEWED_PACKAGE_REQUISITION_MISMATCH", "The saved Candidate Ready package belongs to a different requisition."));
+  if (!packageFacilityId) errors.push(packageValidationError("REVIEWED_PACKAGE_FACILITY_MISSING", "The saved Candidate Ready package has no stable facility identity."));
+  else if (packageFacilityId !== resolvedFacilityId) errors.push(packageValidationError("REVIEWED_PACKAGE_FACILITY_MISMATCH", "The saved Candidate Ready package belongs to a different facility."));
+  if (!packageCandidateId) errors.push(packageValidationError("REVIEWED_PACKAGE_CANDIDATE_MISSING", "The saved Candidate Ready package has no stable candidate identity."));
+  else if (packageCandidateId !== text(candidate.id)) errors.push(packageValidationError("REVIEWED_PACKAGE_CANDIDATE_MISMATCH", "The saved Candidate Ready package belongs to a different candidate."));
+
+  if (!facilityEmail || typeof facilityEmail !== "object") errors.push(packageValidationError("REVIEWED_PACKAGE_FACILITY_EMAIL_MISSING", "The saved Candidate Ready package has no facility-submission email."));
+  else if (!text(facilityEmail.subject) || !text(facilityEmail.body)) errors.push(packageValidationError("REVIEWED_PACKAGE_FACILITY_EMAIL_INCOMPLETE", "The saved facility-submission email must include its original subject and body."));
+  else if (text(facilityEmail.templateKey) !== "hiringManager" || text(facilityEmail.releaseCondition) !== "candidateReadyConfirmed") errors.push(packageValidationError("REVIEWED_PACKAGE_FACILITY_EMAIL_PURPOSE_INVALID", "The saved email is not the supported Candidate Ready facility-submission artifact."));
+  if (!facilityRecipients || typeof facilityRecipients !== "object" || !uniqueEmails(facilityRecipients.to).length) errors.push(packageValidationError("REVIEWED_PACKAGE_FACILITY_RECIPIENT_MISSING", "The saved Candidate Ready package has no valid facility recipient context."));
+  if (!facilityTemplate || typeof facilityTemplate !== "object"
+    || !text(facilityTemplate.templateKey)
+    || !text(facilityTemplate.id)
+    || !Object.prototype.hasOwnProperty.call(facilityTemplate, "version")
+    || !Number.isFinite(Number(facilityTemplate.version))
+    || Number(facilityTemplate.version) < 0) {
+    errors.push(packageValidationError("REVIEWED_PACKAGE_TEMPLATE_METADATA_MISSING", "The saved Candidate Ready package has no valid facility-submission template metadata."));
+  }
+  if (facilityTemplate && typeof facilityTemplate === "object" && text(facilityTemplate.templateKey) !== "hiringManager") errors.push(packageValidationError("REVIEWED_PACKAGE_TEMPLATE_PURPOSE_INVALID", "The saved template reference is not a facility-submission template."));
+  if (facilityReleaseCondition !== "candidateReadyConfirmed") errors.push(packageValidationError("REVIEWED_PACKAGE_RELEASE_METADATA_INVALID", "The saved Candidate Ready package has invalid facility-submission release metadata."));
+  if (facilityActionState !== ACTION_STATES.facilityReady) errors.push(packageValidationError("REVIEWED_PACKAGE_ACTION_STATE_INVALID", "The saved Candidate Ready package is not in the reviewable facility-submission state."));
 
   const normalized = normalizeReviewedCommunicationRecord(candidate);
   if (normalized.communicationActionStates?.facilitySubmission === ACTION_STATES.facilitySent || text(candidate.facilitySubmissionSentAt)) {
-    result.push({ code: "REVIEWED_PACKAGE_ALREADY_SENT", message: "The saved Candidate Ready facility submission has already been recorded as sent." });
+    errors.push(packageValidationError("REVIEWED_PACKAGE_ALREADY_SENT", "The saved Candidate Ready facility submission has already been recorded as sent."));
   }
-  return result;
+  return { valid: errors.length === 0, reasonCode: errors[0]?.code || "", errors };
+}
+
+function candidateReadyPackageBlockers(candidate = {}, requisition = {}, facility = {}) {
+  return validateCandidateReadyFacilitySubmissionPackage(candidate.reviewedSubmissionPackage, { candidate, requisition, facility }).errors;
 }
 
 function document({ key, title, channel = "Email", recipientLabel, to = [], cc = [], subject = "", body = "", templateKey = "", templateVariant = "" }) {

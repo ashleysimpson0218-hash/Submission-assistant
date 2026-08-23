@@ -1,6 +1,11 @@
 import { assertCommunicationRuntime } from "./requisitionCommunicationDetails";
 import { COMMUNICATION_MODES, normalizeCommunicationWorkflow } from "./communicationWorkflow";
 
+export const CANDIDATE_READY_PACKAGE_SCHEMA_VERSION = 1;
+export const SUPPORTED_CANDIDATE_READY_PACKAGE_SCHEMA_VERSIONS = Object.freeze([
+  CANDIDATE_READY_PACKAGE_SCHEMA_VERSION,
+]);
+
 export const REVIEW_ACKNOWLEDGMENT = "I reviewed the candidate, candidate type, requisition, employment details, facility recipients, and all communication content.";
 export const TEST_ACTION_ACKNOWLEDGMENT = "I understand this will mark the candidate Ready for Facility Submission in WelcomeFlow Test. It will not send or copy any communication.";
 export const STALE_REVIEW_MESSAGE = "The candidate, requisition, recipient, template, or communication content changed after review. Refresh and review the package again.";
@@ -153,7 +158,7 @@ export function findCandidateForConfirmation(records = [], identity = {}) {
 
 export function buildConfirmedSubmissionPackage(reviewedPreview = {}, { confirmedAt, confirmedBy = "Test Owner Confirmation", runtime = {} } = {}) {
   return {
-    schemaVersion: 1,
+    schemaVersion: CANDIDATE_READY_PACKAGE_SCHEMA_VERSION,
     snapshotHash: clean(reviewedPreview.snapshotHash),
     snapshot: safeSnapshot(reviewedPreview.snapshot || {}),
     recipients: clone(reviewedPreview.recipients || {}),
