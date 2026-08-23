@@ -14,6 +14,8 @@ import { WORKSPACE_TASK_ACTIONS } from "./recruiterWorkspaceActions";
 import { HomeCalendarWidget } from "./HomeCalendarWidget";
 
 const FILTERS = ["Do Now", "Candidate Rescue", "Waiting on Others", "Offers", "Onboarding", "Recruiting Needed", "Stuck"];
+const EMPTY_LIST = Object.freeze([]);
+const EMPTY_RULES = Object.freeze({});
 
 function riskColor(level, theme) {
   if (level === "Critical" || level === "High") return { color: theme.red, background: theme.redBg };
@@ -201,7 +203,7 @@ function ActionCenterCommunicationPreviewDialog({ preview, theme, onClose }) {
   );
 }
 
-export function RecruiterWorkspacePage({ tracker = [], requisitions = [], actionCenterRequisitions = null, sites = [], history = [], calendarEvents = [], workflowRules = {}, communicationSettings = {}, theme, isNarrow = false, isMedium = false, recruiterName = "Recruiter", onOpenCandidate, onOpenActionCenterCandidate = onOpenCandidate, onOpenRequisition, onOpenActionCenterRequisition = onOpenRequisition, onOpenFacility = onOpenRequisition, onOpenActionCenterFacility = onOpenFacility, onOpenCalendar = () => {}, onOpenCalendarEvent = () => {}, onAddCalendarEvent = () => {}, onScheduleCalendar = () => {}, onOpenWeeklyCleanup, onOpenReports, onTaskAction = () => true, onWorkspaceEvent = () => true }) {
+export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EMPTY_LIST, actionCenterRequisitions = null, sites = EMPTY_LIST, history = EMPTY_LIST, calendarEvents = EMPTY_LIST, workflowRules = EMPTY_RULES, communicationSettings = EMPTY_RULES, theme, isNarrow = false, isMedium = false, recruiterName = "Recruiter", onOpenCandidate, onOpenActionCenterCandidate = onOpenCandidate, onOpenRequisition, onOpenActionCenterRequisition = onOpenRequisition, onOpenFacility = null, onOpenActionCenterFacility = onOpenFacility, onOpenCalendar = () => {}, onOpenCalendarEvent = () => {}, onAddCalendarEvent = () => {}, onScheduleCalendar = () => {}, onOpenWeeklyCleanup, onOpenReports, onTaskAction = () => true, onWorkspaceEvent = () => true }) {
   const [activeFilter, setActiveFilter] = useState("Do Now");
   const [actionTaskId, setActionTaskId] = useState("");
   const [focusMode, setFocusMode] = useState(false);
@@ -216,6 +218,9 @@ export function RecruiterWorkspacePage({ tracker = [], requisitions = [], action
   const model = useMemo(() => buildRecruiterWorkspaceModel({ tracker, requisitions, sites, history, calendarEvents, rules: workflowRules }), [tracker, requisitions, sites, history, calendarEvents, workflowRules]);
   const actionCenter = useMemo(() => buildRecruiterActionCenter({ tracker, requisitions: completeActionCenterRequisitions, sites, history, calendarEvents, workflowRules, now: actionCenterNow }), [tracker, completeActionCenterRequisitions, sites, history, calendarEvents, workflowRules, actionCenterNow]);
   useEffect(() => {
+    setActionCenterNow(new Date());
+  }, [tracker, completeActionCenterRequisitions, sites, history, calendarEvents, workflowRules]);
+  useEffect(() => {
     const transitionAt = Date.parse(actionCenter.nextRefreshAt);
     if (!Number.isFinite(transitionAt)) return undefined;
     const maximumDelay = 2147483647;
@@ -223,9 +228,31 @@ export function RecruiterWorkspacePage({ tracker = [], requisitions = [], action
     const timer = window.setTimeout(() => setActionCenterNow(new Date()), delay);
     return () => window.clearTimeout(timer);
   }, [actionCenter.nextRefreshAt, actionCenterNow]);
-  const actionCenterItems = useMemo(() => filterRecruiterActionCenter(actionCenter.items, actionCenterFilter), [actionCenter.items, actionCenterFilter]);
-  const actionCenterDetail = actionCenter.items.find((item) => item.id === actionCenterDetailId) || null;
-  const actionCenterCommunicationItem = actionCenter.items.find((item) => item.id === actionCenterCommunicationPreviewId) || null;
+  const navigableActionCenterItems = useMemo(() => actionCenter.items.map((item) => {
+    if (item.destination.disabled) return item;
+    const handlerAvailable = item.destination.type === "candidate"
+      ? typeof onOpenActionCenterCandidate === "function"
+      : item.destination.type === "requisition"
+        ? typeof onOpenActionCenterRequisition === "function"
+        : item.destination.type === "facility"
+          ? typeof onOpenActionCenterFacility === "function"
+          : item.destination.type === "calendar"
+            ? typeof onOpenCalendarEvent === "function"
+            : typeof onOpenWeeklyCleanup === "function";
+    if (handlerAvailable) return item;
+    return {
+      ...item,
+      destination: {
+        ...item.destination,
+        disabled: true,
+        label: "Target unavailable",
+        reason: `No ${item.destination.type} navigation is available for this Action Center item.`,
+      },
+    };
+  }), [actionCenter.items, onOpenActionCenterCandidate, onOpenActionCenterRequisition, onOpenActionCenterFacility, onOpenCalendarEvent, onOpenWeeklyCleanup]);
+  const actionCenterItems = useMemo(() => filterRecruiterActionCenter(navigableActionCenterItems, actionCenterFilter), [navigableActionCenterItems, actionCenterFilter]);
+  const actionCenterDetail = navigableActionCenterItems.find((item) => item.id === actionCenterDetailId) || null;
+  const actionCenterCommunicationItem = navigableActionCenterItems.find((item) => item.id === actionCenterCommunicationPreviewId) || null;
   const actionCenterCommunicationPreview = useMemo(() => actionCenterCommunicationItem ? buildActionCenterCommunicationPreview({
     item: actionCenterCommunicationItem,
     tracker,
@@ -236,11 +263,11 @@ export function RecruiterWorkspacePage({ tracker = [], requisitions = [], action
   }) : null, [actionCenterCommunicationItem, tracker, completeActionCenterRequisitions, sites, communicationSettings, actionCenterNow]);
   const openActionCenterItem = (item) => {
     if (item.destination.disabled) return;
-    if (item.destination.type === "candidate") onOpenActionCenterCandidate(item.destination.id, item.requisitionId, item);
-    else if (item.destination.type === "requisition") onOpenActionCenterRequisition(item.destination.id, item);
-    else if (item.destination.type === "facility") onOpenActionCenterFacility(item.destination.id, item);
-    else if (item.destination.type === "calendar") onOpenCalendarEvent(item.destination.id);
-    else onOpenWeeklyCleanup();
+    if (item.destination.type === "candidate" && typeof onOpenActionCenterCandidate === "function") onOpenActionCenterCandidate(item.destination.id, item.requisitionId, item);
+    else if (item.destination.type === "requisition" && typeof onOpenActionCenterRequisition === "function") onOpenActionCenterRequisition(item.destination.id, item);
+    else if (item.destination.type === "facility" && typeof onOpenActionCenterFacility === "function") onOpenActionCenterFacility(item.destination.id, item);
+    else if (item.destination.type === "calendar" && typeof onOpenCalendarEvent === "function") onOpenCalendarEvent(item.destination.id);
+    else if (item.destination.type === "reporting" && typeof onOpenWeeklyCleanup === "function") onOpenWeeklyCleanup();
   };
   const filteredTasks = useMemo(() => activeFilter === "Urgent"
     ? model.tasks.filter((task) => task.isOverdue || ["High", "Critical"].includes(task.riskLevel))
@@ -384,9 +411,9 @@ export function RecruiterWorkspacePage({ tracker = [], requisitions = [], action
           {[["Actions completed today", model.wrapUp.actionsCompleted], ["Urgent actions remaining", model.wrapUp.remainingUrgent], ["Waiting on others", model.wrapUp.waitingOnOthers], ["Tomorrow’s follow-ups", model.wrapUp.followUpsTomorrow], ["Recruiting minutes completed", model.wrapUp.recruitingMinutesCompleted], ["Candidate risks remaining", model.wrapUp.candidateRisksRemaining], ["Weekly report readiness", model.wrapUp.reportReadiness == null ? "—" : `${model.wrapUp.reportReadiness}%`], ["Events missing outcomes", model.wrapUp.eventsMissingOutcomes], ["Tasks missing owner or due date", model.wrapUp.tasksWithoutOwnerOrDueDate]].map(([label, value]) => <div key={label} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 7, padding: 10, background: theme.panelAlt }}><strong style={{ display: "block", color: theme.primary2, fontSize: 20 }}>{value}</strong><span style={{ color: theme.muted, fontSize: 11 }}>{label}</span></div>)}
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
-          <button type="button" onClick={() => { setQueueFilter("Urgent"); setWrapUpOpen(false); }} style={{ border: 0, borderRadius: 6, padding: "9px 12px", background: theme.primary2, color: "#fff", fontWeight: 900, cursor: "pointer" }}>Plan Tomorrow</button>
-          <button type="button" onClick={() => { setQueueFilter("Do Now"); setWrapUpOpen(false); }} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: "9px 12px", background: theme.panel, color: theme.text, fontWeight: 850, cursor: "pointer" }}>Reassign Task</button>
-          <button type="button" onClick={() => { setQueueFilter("Waiting on Others"); setWrapUpOpen(false); }} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: "9px 12px", background: theme.panel, color: theme.text, fontWeight: 850, cursor: "pointer" }}>Schedule Follow-Up</button>
+          <button type="button" onClick={() => { setQueueFilter("Urgent"); setWrapUpOpen(false); }} style={{ border: 0, borderRadius: 6, padding: "9px 12px", background: theme.primary2, color: "#fff", fontWeight: 900, cursor: "pointer" }}>Review Urgent Work</button>
+          <button type="button" onClick={() => { setQueueFilter("Do Now"); setWrapUpOpen(false); }} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: "9px 12px", background: theme.panel, color: theme.text, fontWeight: 850, cursor: "pointer" }}>Review Do Now</button>
+          <button type="button" onClick={() => { setQueueFilter("Waiting on Others"); setWrapUpOpen(false); }} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: "9px 12px", background: theme.panel, color: theme.text, fontWeight: 850, cursor: "pointer" }}>Review Waiting Items</button>
           <button type="button" onClick={() => { onOpenCalendar(); setWrapUpOpen(false); }} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: "9px 12px", background: theme.panel, color: theme.text, fontWeight: 850, cursor: "pointer" }}>Add Event Outcome</button>
           <button type="button" onClick={() => { onWorkspaceEvent({ type: "Recruiter Day Finished", subject: "Daily workspace review", body: `${model.wrapUp.remainingUrgent} urgent actions remain; ${model.wrapUp.waitingOnOthers} items are waiting on others.`, meta: { source: "Recruiter Workspace", reportReadiness: model.wrapUp.reportReadiness } }); setWrapUpOpen(false); }} style={{ border: `1px solid ${theme.green}`, borderRadius: 6, padding: "9px 12px", background: theme.greenBg, color: theme.green, fontWeight: 900, cursor: "pointer" }}>Finish Day</button>
         </div>

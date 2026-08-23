@@ -5,6 +5,7 @@ import {
   validateCandidateReadyFacilitySubmissionPackage,
 } from "./actionCenterCommunicationPreviews";
 import { CANDIDATE_READY_PACKAGE_SCHEMA_VERSION } from "./candidateReadyConfirmation";
+import { CANDIDATE_READY_FACILITY_SUBMISSION_PURPOSE } from "./candidateReadyPackageValidation";
 
 const requisition = {
   id: "req-preview",
@@ -55,6 +56,7 @@ const settings = {
 function reviewedPackage(overrides = {}) {
   return {
     schemaVersion: CANDIDATE_READY_PACKAGE_SCHEMA_VERSION,
+    purpose: CANDIDATE_READY_FACILITY_SUBMISSION_PURPOSE,
     snapshotHash: "approved-snapshot-hash",
     snapshot: {
       requisition: { requisitionId: "req-preview", facilityId: "facility-preview" },
@@ -73,6 +75,8 @@ function reviewedPackage(overrides = {}) {
     },
     releaseConditions: { facilitySubmission: "candidateReadyConfirmed" },
     actionStates: { facilitySubmission: "Ready to Send" },
+    unresolvedTokens: [],
+    restrictedTokens: [],
     ...overrides,
   };
 }
@@ -110,6 +114,7 @@ test("requires the canonical Action Center identity before resolving preview con
     context: { candidateId: "", requisitionId: "", facilityId: "" },
   });
   expect(buildActionCenterCommunicationPreview({ ...base, item: { ...validItem, requisitionId: "req-other" } }).blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "ACTION_CENTER_ID_MISMATCH" })]));
+  expect(buildActionCenterCommunicationPreview({ ...base, item: { ...validItem, facilityId: "facility-other" } }).blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "ACTION_CENTER_ID_MISMATCH" })]));
   expect(buildActionCenterCommunicationPreview({ ...base, item: { ...validItem, category: ACTION_CENTER_CATEGORIES.managerFeedback } }).blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "ACTION_CENTER_ID_MISMATCH" })]));
   expect(buildActionCenterCommunicationPreview({ ...base, item: { ...validItem, issueCode: "wrong-issue" } }).blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "ACTION_CENTER_ID_MISMATCH" })]));
   expect(buildActionCenterCommunicationPreview({ ...base, item: { ...validItem, id: "not-an-action-id" } }).blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "ACTION_CENTER_ID_MALFORMED" })]));
@@ -213,6 +218,10 @@ test("validates the explicit saved Candidate Ready facility-submission contract 
   delete missingSchema.schemaVersion;
   expect(validateCandidateReadyFacilitySubmissionPackage(missingSchema, expectedContext)).toMatchObject({ valid: false, reasonCode: "REVIEWED_PACKAGE_SCHEMA_MISSING" });
 
+  const missingPurpose = reviewedPackage();
+  delete missingPurpose.purpose;
+  expect(validateCandidateReadyFacilitySubmissionPackage(missingPurpose, expectedContext)).toMatchObject({ valid: false, reasonCode: "REVIEWED_PACKAGE_PURPOSE_INVALID" });
+
   const cases = [
     ["unsupported schema", { schemaVersion: 99 }, "REVIEWED_PACKAGE_SCHEMA_UNSUPPORTED"],
     ["wrong declared purpose", { purpose: "ats-note-only" }, "REVIEWED_PACKAGE_PURPOSE_INVALID"],
@@ -235,6 +244,44 @@ test("validates the explicit saved Candidate Ready facility-submission contract 
     const result = validateCandidateReadyFacilitySubmissionPackage(packageData, expectedContext);
     expect(result.valid).toBe(false);
     expect(result.errors).toEqual(expect.arrayContaining([expect.objectContaining({ code })]));
+  });
+});
+
+test.each([
+  ["valid string recipient", "manager@example.test", true],
+  ["null recipient", null, false],
+  ["object recipient", {}, false],
+  ["valid recipient array", ["manager@example.test"], true],
+])("handles %s without throwing", (_label, to, valid) => {
+  const packageData = reviewedPackage({ recipients: { facility: { to, cc: [] } } });
+  expect(() => validateCandidateReadyFacilitySubmissionPackage(packageData, { candidate, requisition, facility })).not.toThrow();
+  const result = validateCandidateReadyFacilitySubmissionPackage(packageData, { candidate, requisition, facility });
+  expect(result.valid).toBe(valid);
+  expect(result.errors.some((error) => error.code === "REVIEWED_PACKAGE_FACILITY_RECIPIENT_MISSING")).toBe(!valid);
+});
+
+test.each(["", null, true, -1, 1.5, "1.5"])("rejects malformed facility template version %p", (version) => {
+  const packageData = reviewedPackage({
+    templateReferences: {
+      facilitySubmission: { templateKey: "hiringManager", id: "facility-external", version },
+    },
+  });
+  expect(validateCandidateReadyFacilitySubmissionPackage(packageData, { candidate, requisition, facility })).toMatchObject({
+    valid: false,
+    errors: expect.arrayContaining([expect.objectContaining({ code: "REVIEWED_PACKAGE_TEMPLATE_METADATA_MISSING" })]),
+  });
+});
+
+test.each([
+  ["candidate", { intake: { candidateId: "candidate-preview", trackerId: "candidate-other" } }, "REVIEWED_PACKAGE_CANDIDATE_MISMATCH"],
+  ["requisition", { requisition: { requisitionId: "req-preview", id: "req-other", facilityId: "facility-preview" } }, "REVIEWED_PACKAGE_REQUISITION_MISMATCH"],
+  ["facility", { requisition: { requisitionId: "req-preview", facilityId: "facility-preview" }, facility: { facilityId: "facility-preview", id: "facility-other" } }, "REVIEWED_PACKAGE_FACILITY_MISMATCH"],
+])("rejects contradictory %s identities", (_label, snapshotChange, code) => {
+  const valid = reviewedPackage();
+  const packageData = reviewedPackage({ snapshot: { ...valid.snapshot, ...snapshotChange } });
+  expect(validateCandidateReadyFacilitySubmissionPackage(packageData, { candidate, requisition, facility })).toMatchObject({
+    valid: false,
+    errors: expect.arrayContaining([expect.objectContaining({ code })]),
   });
 });
 

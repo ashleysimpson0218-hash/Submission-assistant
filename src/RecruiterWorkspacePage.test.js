@@ -7,6 +7,31 @@ const theme = {
   primary2: "#6d28d9", red: "#dc2626", redBg: "#fee2e2", amber: "#d97706", amberBg: "#fef3c7", green: "#15803d", greenBg: "#dcfce7",
 };
 
+function reviewedCandidateReadyPackage({ candidateId, requisitionId, facilityId } = {}) {
+  return {
+    schemaVersion: 1,
+    purpose: "candidate-ready-facility-submission",
+    snapshotHash: `saved-${candidateId}-${requisitionId}`,
+    snapshot: {
+      requisition: { requisitionId, facilityId },
+      facility: { facilityId },
+      intake: { candidateId },
+    },
+    recipients: { facility: { to: ["manager@example.test"], cc: [] }, candidate: { to: ["candidate@example.test"] } },
+    rendered: {
+      facilityEmail: { templateKey: "hiringManager", subject: "Saved facility subject", body: "Saved facility body", releaseCondition: "candidateReadyConfirmed" },
+      candidateEmail: { subject: "Saved candidate subject", body: "Saved candidate body" },
+      candidateText: { body: "Saved candidate text" },
+      atsUpdate: { subject: "Saved ATS subject", body: "Saved ATS body" },
+    },
+    templateReferences: { facilitySubmission: { templateKey: "hiringManager", id: "facility-external", version: 1 } },
+    releaseConditions: { facilitySubmission: "candidateReadyConfirmed" },
+    actionStates: { facilitySubmission: "Ready to Send" },
+    unresolvedTokens: [],
+    restrictedTokens: [],
+  };
+}
+
 beforeEach(() => {
   jest.useFakeTimers();
   jest.setSystemTime(new Date("2026-07-22T12:00:00.000Z"));
@@ -150,7 +175,11 @@ test("shows report-readiness issues and an end-of-day summary", () => {
   expect(screen.getByRole("region", { name: "Weekly report readiness issues" })).toBeInTheDocument();
   expect(screen.getAllByText("Candidate notes are missing").length).toBeGreaterThan(0);
   fireEvent.click(screen.getByRole("button", { name: "Wrap Up My Day" }));
-  expect(screen.getByRole("dialog", { name: "Wrap Up My Day" })).toBeInTheDocument();
+  const wrapUp = screen.getByRole("dialog", { name: "Wrap Up My Day" });
+  expect(wrapUp).toBeInTheDocument();
+  expect(within(wrapUp).getByRole("button", { name: "Review Urgent Work" })).toBeInTheDocument();
+  expect(within(wrapUp).getByRole("button", { name: "Review Do Now" })).toBeInTheDocument();
+  expect(within(wrapUp).getByRole("button", { name: "Review Waiting Items" })).toBeInTheDocument();
   expect(screen.getByText("Urgent actions remaining")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Finish Day" }));
   expect(onWorkspaceEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "Recruiter Day Finished" }));
@@ -293,6 +322,58 @@ test("routes missing facility contact review with the exact facility context", (
   expect(onOpenFacility).toHaveBeenCalledWith("facility-contact", expect.objectContaining({ issueCode: "facility-recipient-missing", facilityId: "facility-contact" }));
 });
 
+test("fails closed when a facility destination has no facility handler", () => {
+  const onOpenRequisition = jest.fn();
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={[]}
+    requisitions={[{ id: "req-contact", positionTitle: "CNA", facilityId: "facility-contact", status: "Active" }]}
+    sites={[{ id: "facility-contact", siteName: "No Contact Facility", status: "Active" }]}
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={onOpenRequisition}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+  />);
+  const filters = screen.getByRole("tablist", { name: "Action Center filters" });
+  fireEvent.click(within(filters).getByRole("tab", { name: /Data Blockers/i }));
+  const unavailable = screen.getByRole("button", { name: "Target unavailable" });
+  expect(unavailable).toBeDisabled();
+  fireEvent.click(unavailable);
+  expect(onOpenRequisition).not.toHaveBeenCalled();
+});
+
+test("refreshes the Action Center clock when source data changes", () => {
+  const baseCandidate = {
+    id: "candidate-clock",
+    candidate: "Synthetic Clock Candidate",
+    status: "Interview Completed",
+    nextAction: "Request feedback",
+    actualInterviewAt: "2026-07-22T11:00:00.000Z",
+    currentOwner: "Synthetic Manager",
+    ownerType: "Hiring Manager",
+    requisitionId: "req-clock",
+    facilityId: "facility-clock",
+    site: "Synthetic Clock Facility",
+    position: "RN",
+  };
+  const common = {
+    theme,
+    requisitions: [{ id: "req-clock", positionTitle: "RN", facilityId: "facility-clock", status: "Active" }],
+    sites: [{ id: "facility-clock", siteName: "Synthetic Clock Facility", status: "Active", hiringManagerEmail: "manager@example.test" }],
+    workflowRules: { interviewFeedbackHours: 2 },
+    onOpenCandidate: jest.fn(),
+    onOpenRequisition: jest.fn(),
+    onOpenWeeklyCleanup: jest.fn(),
+    onOpenReports: jest.fn(),
+  };
+  const view = render(<RecruiterWorkspacePage {...common} tracker={[baseCandidate]} />);
+  expect(screen.getByText("Manager feedback pending for Synthetic Clock Candidate")).toBeInTheDocument();
+
+  act(() => jest.setSystemTime(new Date("2026-07-22T14:00:00.000Z")));
+  view.rerender(<RecruiterWorkspacePage {...common} tracker={[{ ...baseCandidate, candidateNotes: "Source data refreshed" }]} />);
+  expect(screen.getByText("Manager feedback overdue for Synthetic Clock Candidate")).toBeInTheDocument();
+});
+
 test("shows Candidate Ready work without exposing a send or status action", () => {
   render(<RecruiterWorkspacePage
     theme={theme}
@@ -306,7 +387,7 @@ test("shows Candidate Ready work without exposing a send or status action", () =
       position: "RN",
       site: "Synthetic Facility",
       facilityId: "facility-ready",
-      reviewedSubmissionPackage: { rendered: {}, recipients: {}, snapshot: {} },
+      reviewedSubmissionPackage: reviewedCandidateReadyPackage({ candidateId: "candidate-ready", requisitionId: "req-ready", facilityId: "facility-ready" }),
       communicationActionStates: { facilitySubmission: "Ready to Send" },
     }]}
     requisitions={[{ id: "req-ready", reqNumber: "SYN-2004", positionTitle: "RN", siteName: "Synthetic Facility", facilityId: "facility-ready", status: "Active" }]}
@@ -415,23 +496,8 @@ test("previews the exact saved Candidate Ready package without operational contr
       site: "Synthetic Ready Facility",
       position: "CNA",
       reviewedSubmissionPackage: {
-        schemaVersion: 1,
+        ...reviewedCandidateReadyPackage({ candidateId: "candidate-preview-ready", requisitionId: "req-preview-ready", facilityId: "facility-preview-ready" }),
         snapshotHash: "saved-ready-hash",
-        snapshot: {
-          requisition: { requisitionId: "req-preview-ready", facilityId: "facility-preview-ready" },
-          facility: { facilityId: "facility-preview-ready" },
-          intake: { candidateId: "candidate-preview-ready" },
-        },
-        recipients: { facility: { to: ["manager@example.test"], cc: [] }, candidate: { to: ["candidate@example.test"] } },
-        rendered: {
-          facilityEmail: { templateKey: "hiringManager", subject: "Saved facility subject", body: "Saved facility body", releaseCondition: "candidateReadyConfirmed" },
-          candidateEmail: { subject: "Saved candidate subject", body: "Saved candidate body" },
-          candidateText: { body: "Saved candidate text" },
-          atsUpdate: { subject: "Saved ATS subject", body: "Saved ATS body" },
-        },
-        templateReferences: { facilitySubmission: { templateKey: "hiringManager", id: "facility-external", version: 1 } },
-        releaseConditions: { facilitySubmission: "candidateReadyConfirmed" },
-        actionStates: { facilitySubmission: "Ready to Send" },
       },
       communicationActionStates: { facilitySubmission: "Ready to Send" },
     }]}
