@@ -1,4 +1,4 @@
-import { ACTION_CENTER_CATEGORIES } from "./actionCenterSelectors";
+import { ACTION_CENTER_CATEGORIES, buildActionCenterItemId } from "./actionCenterSelectors";
 import {
   actionCenterItemSupportsCommunicationPreview,
   buildActionCenterCommunicationPreview,
@@ -69,9 +69,8 @@ function reviewedPackage(overrides = {}) {
   };
 }
 
-function item(category) {
-  return {
-    id: `action-center-v1:${category}:candidate:candidate-preview:requisition:req-preview`,
+function item(category, overrides = {}) {
+  const result = {
     category,
     sourceType: "candidate",
     sourceId: "candidate-preview",
@@ -80,8 +79,51 @@ function item(category) {
     facilityId: "facility-preview",
     explanation: "Synthetic explanation",
     context: {},
+    ...overrides,
+  };
+  return {
+    ...result,
+    id: Object.prototype.hasOwnProperty.call(overrides, "id")
+      ? overrides.id
+      : buildActionCenterItemId(result),
   };
 }
+
+test("requires the canonical Action Center identity before resolving preview context", () => {
+  const base = { tracker: [candidate], requisitions: [requisition], sites: [facility], settings };
+  const validItem = item(ACTION_CENTER_CATEGORIES.followUp);
+  const source = JSON.parse(JSON.stringify(validItem));
+
+  expect(buildActionCenterCommunicationPreview({ ...base, item: validItem })).toMatchObject({ blockers: [], canReview: true });
+  expect(buildActionCenterCommunicationPreview({ ...base, item: { ...validItem, candidateId: "candidate-other" } })).toMatchObject({
+    blockers: expect.arrayContaining([expect.objectContaining({ code: "ACTION_CENTER_ID_MISMATCH" })]),
+    canReview: false,
+    documents: [],
+    context: { candidateId: "", requisitionId: "", facilityId: "" },
+  });
+  expect(buildActionCenterCommunicationPreview({ ...base, item: { ...validItem, requisitionId: "req-other" } }).blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "ACTION_CENTER_ID_MISMATCH" })]));
+  expect(buildActionCenterCommunicationPreview({ ...base, item: { ...validItem, category: ACTION_CENTER_CATEGORIES.managerFeedback } }).blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "ACTION_CENTER_ID_MISMATCH" })]));
+  expect(buildActionCenterCommunicationPreview({ ...base, item: { ...validItem, issueCode: "wrong-issue" } }).blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "ACTION_CENTER_ID_MISMATCH" })]));
+  expect(buildActionCenterCommunicationPreview({ ...base, item: { ...validItem, id: "not-an-action-id" } }).blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "ACTION_CENTER_ID_MALFORMED" })]));
+  expect(buildActionCenterCommunicationPreview({ ...base, item: { ...validItem, id: "" } }).blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "ACTION_CENTER_ID_MISSING" })]));
+  expect(validItem).toEqual(source);
+});
+
+test("keeps encoded candidate and requisition identities exact across multiple requisitions", () => {
+  const firstRequisition = { ...requisition, id: "req/one?active", requisitionId: "req/one?active" };
+  const secondRequisition = { ...requisition, id: "req two#active", requisitionId: "req two#active" };
+  const firstCandidate = { ...candidate, id: "candidate/with spaces", requisitionId: firstRequisition.id };
+  const secondCandidate = { ...candidate, id: "candidate/with spaces", requisitionId: secondRequisition.id };
+  const firstItem = item(ACTION_CENTER_CATEGORIES.followUp, { candidateId: firstCandidate.id, sourceId: firstCandidate.id, requisitionId: firstRequisition.id });
+  const secondItem = item(ACTION_CENTER_CATEGORIES.followUp, { candidateId: secondCandidate.id, sourceId: secondCandidate.id, requisitionId: secondRequisition.id });
+
+  expect(firstItem.id).toContain("candidate%2Fwith%20spaces");
+  expect(firstItem.id).toContain("req%2Fone%3Factive");
+  expect(secondItem.id).toContain("req%20two%23active");
+  expect(firstItem.id).not.toBe(secondItem.id);
+  expect(buildActionCenterCommunicationPreview({ item: firstItem, tracker: [firstCandidate, secondCandidate], requisitions: [firstRequisition, secondRequisition], sites: [facility], settings })).toMatchObject({ blockers: [], canReview: true, context: { requisitionId: firstRequisition.id } });
+  expect(buildActionCenterCommunicationPreview({ item: secondItem, tracker: [firstCandidate, secondCandidate], requisitions: [firstRequisition, secondRequisition], sites: [facility], settings })).toMatchObject({ blockers: [], canReview: true, context: { requisitionId: secondRequisition.id } });
+});
 
 test("builds a side-effect-free candidate follow-up preview from exact canonical context", () => {
   const source = JSON.parse(JSON.stringify({ candidate, requisition, facility, settings }));
@@ -181,6 +223,11 @@ test("requires confirmed completed interviews and suppresses resolved Manager Fe
   expect(build({ actualInterviewAt: "2026-08-09T12:00:00.000Z", interviewFeedback: "Strong interview" }).blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "MANAGER_FEEDBACK_ALREADY_RESOLVED" })]));
   expect(build({ actualInterviewAt: "2026-08-09T12:00:00.000Z", finalCandidateOutcome: "Offer accepted" }).blockers).toEqual(expect.arrayContaining([expect.objectContaining({ code: "MANAGER_FEEDBACK_ALREADY_RESOLVED" })]));
   expect(build({ actualInterviewAt: "2026-08-09T12:00:00.000Z", interviewFeedback: "Feedback pending" })).toMatchObject({ blockers: [], canReview: true });
+  expect(build({ actualInterviewAt: "2026-08-10T11:00:00.000Z", interviewFeedback: "Manager reviewing" })).toMatchObject({ blockers: [], canReview: true });
+  expect(build({ actualInterviewAt: "2026-08-01T12:00:00.000Z", interviewFeedback: "Manager reviewing" })).toMatchObject({ blockers: [], canReview: true });
+  expect(build({ actualInterviewAt: "2026-08-09T12:00:00.000Z", interviewFeedback: "Still Active" })).toMatchObject({ blockers: [], canReview: true });
+  expect(build({ actualInterviewAt: "2026-08-09T12:00:00.000Z", interviewFeedback: "Pending" })).toMatchObject({ blockers: [], canReview: true });
+  expect(build({ actualInterviewAt: "2026-08-09T12:00:00.000Z", interviewFeedback: "" })).toMatchObject({ blockers: [], canReview: true });
 });
 
 test("fails closed for stale, inactive, ambiguous, or incomplete communication context", () => {

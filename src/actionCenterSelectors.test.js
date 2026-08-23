@@ -1,8 +1,20 @@
 import {
   ACTION_CENTER_CATEGORIES,
+  buildActionCenterItemId,
   buildRecruiterActionCenter,
   filterRecruiterActionCenter,
 } from "./actionCenterSelectors";
+
+test("builds canonical Action Center identities with encoded stable segments", () => {
+  expect(buildActionCenterItemId({
+    category: ACTION_CENTER_CATEGORIES.dataBlocker,
+    sourceType: "candidate",
+    sourceId: "candidate/one",
+    candidateId: "candidate/one",
+    requisitionId: "req two?#",
+    issueCode: "missing notes/owner",
+  })).toBe("action-center-v1:Data Blockers:candidate:candidate%2Fone:requisition:req%20two%3F%23:missing%20notes%2Fowner");
+});
 
 const NOW = new Date("2026-08-08T16:00:00.000Z");
 const facility = {
@@ -201,6 +213,24 @@ test("shows completed-interview feedback as pending before the configured thresh
   expect(item).toMatchObject({ title: "Manager feedback pending for Synthetic Candidate", riskLevel: "Medium", priorityScore: 52 });
   expect(item.explanation).toMatch(/feedback is pending/i);
   expect(item.explanation).not.toMatch(/overdue/i);
+});
+
+test("keeps the canonical Manager reviewing placeholder in the feedback queue", () => {
+  const result = build({
+    tracker: [candidate({
+      id: "candidate-manager-reviewing",
+      status: "Interview Completed",
+      nextAction: "Request feedback",
+      ownerType: "Hiring Manager",
+      actualInterviewAt: "2026-08-08T04:30:00.000Z",
+      interviewFeedback: "Manager reviewing",
+    })],
+    workflowRules: { interviewFeedbackHours: 24 },
+  });
+  expect(result.items.find((entry) => entry.category === ACTION_CENTER_CATEGORIES.managerFeedback)).toMatchObject({
+    candidateId: "candidate-manager-reviewing",
+    title: "Manager feedback pending for Synthetic Candidate",
+  });
 });
 
 test.each([

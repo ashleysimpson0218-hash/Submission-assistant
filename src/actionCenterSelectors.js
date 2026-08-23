@@ -196,6 +196,24 @@ function contextFor(candidate = {}, requisition = {}, facility = {}) {
   };
 }
 
+export function buildActionCenterItemId({
+  category,
+  sourceType,
+  sourceId,
+  candidateId = "",
+  requisitionId = "",
+  facilityId = "",
+  calendarEventId = "",
+  issueCode = "",
+} = {}) {
+  const target = text(sourceId || candidateId || requisitionId || facilityId || calendarEventId || "unresolved");
+  const segment = (value) => encodeURIComponent(text(value) || "unresolved");
+  const identity = sourceType === "candidate"
+    ? `action-center-v1:${category}:candidate:${segment(candidateId || target)}:requisition:${segment(requisitionId)}`
+    : `action-center-v1:${category}:${sourceType}:${segment(target)}`;
+  return `${identity}${issueCode ? `:${segment(issueCode)}` : ""}`;
+}
+
 function stableActionItem({
   category,
   sourceType,
@@ -217,12 +235,8 @@ function stableActionItem({
   transitionAt = "",
 }) {
   const target = text(sourceId || candidateId || requisitionId || facilityId || calendarEventId || "unresolved");
-  const segment = (value) => encodeURIComponent(text(value) || "unresolved");
-  const identity = sourceType === "candidate"
-    ? `action-center-v1:${category}:candidate:${segment(candidateId || target)}:requisition:${segment(requisitionId)}`
-    : `action-center-v1:${category}:${sourceType}:${segment(target)}`;
   return {
-    id: `${identity}${issueCode ? `:${segment(issueCode)}` : ""}`,
+    id: buildActionCenterItemId({ category, sourceType, sourceId, candidateId, requisitionId, facilityId, calendarEventId, issueCode }),
     category,
     sourceType,
     sourceId: target,
@@ -255,6 +269,7 @@ const NON_FINAL_OUTCOMES = new Set([
   "decision pending",
   "feedback pending",
   "interview completed",
+  "manager reviewing",
   "needs feedback",
   "no decision",
   "pending",
@@ -268,7 +283,7 @@ const MANAGER_DECISION_STATUSES = new Set([
   "verbal offer",
 ]);
 
-function substantiveFeedback(value) {
+export function hasSubstantiveManagerFeedback(value) {
   const normalized = lower(value);
   return Boolean(normalized && !NON_FINAL_OUTCOMES.has(normalized));
 }
@@ -277,7 +292,7 @@ function managerFeedbackReceived(candidate = {}) {
   return Boolean(text(candidate.hiringDecisionReceivedAt
     || candidate.managerFeedbackReceivedAt
     || candidate.facilityFeedbackReceivedAt))
-    || substantiveFeedback(candidate.interviewFeedback)
+    || hasSubstantiveManagerFeedback(candidate.interviewFeedback)
     || hasCanonicalFinalOutcome(candidate)
     || candidateIsTerminal(candidate)
     || MANAGER_DECISION_STATUSES.has(lower(candidate.status));

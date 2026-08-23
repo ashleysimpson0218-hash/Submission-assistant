@@ -4,7 +4,11 @@ import {
   renderCommunicationTemplate,
   resolveFacilitySubmissionRecipients,
 } from "./communicationGeneration";
-import { ACTION_CENTER_CATEGORIES } from "./actionCenterSelectors";
+import {
+  ACTION_CENTER_CATEGORIES,
+  buildActionCenterItemId,
+  hasSubstantiveManagerFeedback,
+} from "./actionCenterSelectors";
 import { getLocalCalendarDateKey } from "./calendarDate";
 import { ACTION_STATES, normalizeReviewedCommunicationRecord } from "./submissionCommunicationActions";
 import { buildFacilityIndex, resolveCanonicalFacility, resolveRequisition } from "./weeklyCleanupReporting";
@@ -17,21 +21,6 @@ const PREVIEWABLE_CATEGORIES = new Set([
 
 const text = (value) => String(value ?? "").trim();
 const lower = (value) => text(value).toLowerCase();
-
-const NON_FINAL_FEEDBACK_VALUES = new Set([
-  "",
-  "active",
-  "awaiting decision",
-  "awaiting feedback",
-  "decision pending",
-  "feedback pending",
-  "interview completed",
-  "needs feedback",
-  "no decision",
-  "pending",
-  "still active",
-  "undecided",
-]);
 
 const FINAL_FEEDBACK_OUTCOMES = new Set([
   "archived",
@@ -79,6 +68,30 @@ function uniqueEmails(values = []) {
     seen.add(key);
     return true;
   });
+}
+
+function actionCenterIdentityBlockers(item = {}) {
+  const itemId = text(item.id);
+  if (!itemId) {
+    return [{ code: "ACTION_CENTER_ID_MISSING", message: "The Action Center item has no stable identity." }];
+  }
+  if (!itemId.startsWith("action-center-v1:")) {
+    return [{ code: "ACTION_CENTER_ID_MALFORMED", message: "The Action Center item identity is malformed." }];
+  }
+  const expectedId = buildActionCenterItemId({
+    category: item.category,
+    sourceType: item.sourceType,
+    sourceId: item.sourceId,
+    candidateId: item.candidateId,
+    requisitionId: item.requisitionId,
+    facilityId: item.facilityId,
+    calendarEventId: item.calendarEventId,
+    issueCode: item.issueCode,
+  });
+  if (itemId !== expectedId) {
+    return [{ code: "ACTION_CENTER_ID_MISMATCH", message: "The Action Center item identity does not match its exact record context." }];
+  }
+  return [];
 }
 
 function activeRequisition(requisition = {}) {
@@ -195,7 +208,7 @@ function confirmedCompletedInterview(candidate = {}, now = new Date()) {
 
 function managerFeedbackAlreadyResolved(candidate = {}) {
   const recordedAt = text(candidate.hiringDecisionReceivedAt || candidate.managerFeedbackReceivedAt || candidate.facilityFeedbackReceivedAt);
-  const substantiveFeedback = !NON_FINAL_FEEDBACK_VALUES.has(lower(candidate.interviewFeedback));
+  const substantiveFeedback = hasSubstantiveManagerFeedback(candidate.interviewFeedback);
   const finalOutcome = [candidate.interviewOutcome, candidate.finalCandidateOutcome, candidate.hiringDecisionOutcome, candidate.archiveOutcome]
     .some((value) => FINAL_FEEDBACK_OUTCOMES.has(lower(value)));
   return Boolean(recordedAt || substantiveFeedback || finalOutcome || FINAL_FEEDBACK_OUTCOMES.has(lower(candidate.status)));
@@ -276,8 +289,12 @@ export function actionCenterItemSupportsCommunicationPreview(item = {}) {
 }
 
 export function buildActionCenterCommunicationPreview({ item = {}, tracker = [], requisitions = [], sites = [], settings = {}, now = new Date() } = {}) {
-  const context = resolveExactContext(item, tracker, requisitions, sites);
-  const blockers = [...context.blockers];
+  const identityBlockers = actionCenterIdentityBlockers(item);
+  const trustedItem = identityBlockers.length ? {} : item;
+  const context = identityBlockers.length
+    ? { candidate: null, requisition: null, facility: null, blockers: [] }
+    : resolveExactContext(item, tracker, requisitions, sites);
+  const blockers = [...identityBlockers, ...context.blockers];
   const candidate = context.candidate;
   const requisition = context.requisition;
   const facility = context.facility;
@@ -311,14 +328,14 @@ export function buildActionCenterCommunicationPreview({ item = {}, tracker = [],
   }
 
   const previewContext = {
-    candidate: text(candidate?.candidate || candidate?.candidateName || candidate?.formSnapshot?.fullName || item.context?.candidate),
-    candidateId: text(candidate?.id || item.candidateId),
-    requisition: text(requisition?.positionTitle || requisition?.position || item.context?.requisition),
-    requisitionId: text(requisition?.id || requisition?.requisitionId || item.requisitionId),
-    requisitionNumber: text(requisition?.reqNumber || item.context?.requisitionNumber),
-    facility: text(facility?.siteName || facility?.facilityName || item.context?.facility),
-    facilityId: text(facility?.id || facility?.facilityId || item.facilityId),
-    region: text(facility?.regionName || facility?.region || item.context?.region),
+    candidate: text(candidate?.candidate || candidate?.candidateName || candidate?.formSnapshot?.fullName || trustedItem.context?.candidate),
+    candidateId: text(candidate?.id || trustedItem.candidateId),
+    requisition: text(requisition?.positionTitle || requisition?.position || trustedItem.context?.requisition),
+    requisitionId: text(requisition?.id || requisition?.requisitionId || trustedItem.requisitionId),
+    requisitionNumber: text(requisition?.reqNumber || trustedItem.context?.requisitionNumber),
+    facility: text(facility?.siteName || facility?.facilityName || trustedItem.context?.facility),
+    facilityId: text(facility?.id || facility?.facilityId || trustedItem.facilityId),
+    region: text(facility?.regionName || facility?.region || trustedItem.context?.region),
   };
   const fingerprintSource = { actionId: item.id, category: item.category, context: previewContext, documents, blockers };
   return {
