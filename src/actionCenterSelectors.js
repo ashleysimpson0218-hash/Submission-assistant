@@ -1,6 +1,6 @@
 import { resolveExactRequisition, resolveFacilitySubmissionRecipients } from "./communicationGeneration";
+import { validateCandidateReadyFacilitySubmissionPackage } from "./candidateReadyPackageValidation";
 import { buildRecruiterWorkspaceModel } from "./recruiterWorkspaceSelectors";
-import { ACTION_STATES, normalizeReviewedCommunicationRecord } from "./submissionCommunicationActions";
 import { buildFacilityIndex, resolveCanonicalFacility, resolveRequisition } from "./weeklyCleanupReporting";
 
 export const ACTION_CENTER_CATEGORIES = Object.freeze({
@@ -63,6 +63,7 @@ const CANONICAL_FINAL_OUTCOMES = new Set([
 const ACTIONABLE_READINESS_CODES = new Set([
   "calendar-outcome-missing",
   "facility-ambiguous",
+  "facility-disagreement",
   "facility-unmapped",
   "missing-activity-date",
   "missing-candidate-notes",
@@ -196,6 +197,24 @@ function contextFor(candidate = {}, requisition = {}, facility = {}) {
   };
 }
 
+export function buildActionCenterItemId({
+  category,
+  sourceType,
+  sourceId,
+  candidateId = "",
+  requisitionId = "",
+  facilityId = "",
+  calendarEventId = "",
+  issueCode = "",
+} = {}) {
+  const target = text(sourceId || candidateId || requisitionId || facilityId || calendarEventId || "unresolved");
+  const segment = (value) => encodeURIComponent(text(value) || "unresolved");
+  const identity = sourceType === "candidate"
+    ? `action-center-v1:${segment(category)}:candidate:${segment(candidateId || target)}:requisition:${segment(requisitionId)}:facility:${segment(facilityId)}`
+    : `action-center-v1:${segment(category)}:${sourceType}:${segment(target)}`;
+  return `${identity}${issueCode ? `:${segment(issueCode)}` : ""}`;
+}
+
 function stableActionItem({
   category,
   sourceType,
@@ -217,12 +236,8 @@ function stableActionItem({
   transitionAt = "",
 }) {
   const target = text(sourceId || candidateId || requisitionId || facilityId || calendarEventId || "unresolved");
-  const segment = (value) => encodeURIComponent(text(value) || "unresolved");
-  const identity = sourceType === "candidate"
-    ? `action-center-v1:${category}:candidate:${segment(candidateId || target)}:requisition:${segment(requisitionId)}`
-    : `action-center-v1:${category}:${sourceType}:${segment(target)}`;
   return {
-    id: `${identity}${issueCode ? `:${segment(issueCode)}` : ""}`,
+    id: buildActionCenterItemId({ category, sourceType, sourceId, candidateId, requisitionId, facilityId, calendarEventId, issueCode }),
     category,
     sourceType,
     sourceId: target,
@@ -255,6 +270,7 @@ const NON_FINAL_OUTCOMES = new Set([
   "decision pending",
   "feedback pending",
   "interview completed",
+  "manager reviewing",
   "needs feedback",
   "no decision",
   "pending",
@@ -268,7 +284,7 @@ const MANAGER_DECISION_STATUSES = new Set([
   "verbal offer",
 ]);
 
-function substantiveFeedback(value) {
+export function hasSubstantiveManagerFeedback(value) {
   const normalized = lower(value);
   return Boolean(normalized && !NON_FINAL_OUTCOMES.has(normalized));
 }
@@ -277,7 +293,7 @@ function managerFeedbackReceived(candidate = {}) {
   return Boolean(text(candidate.hiringDecisionReceivedAt
     || candidate.managerFeedbackReceivedAt
     || candidate.facilityFeedbackReceivedAt))
-    || substantiveFeedback(candidate.interviewFeedback)
+    || hasSubstantiveManagerFeedback(candidate.interviewFeedback)
     || hasCanonicalFinalOutcome(candidate)
     || candidateIsTerminal(candidate)
     || MANAGER_DECISION_STATUSES.has(lower(candidate.status));
@@ -320,16 +336,17 @@ function managerFeedbackState(candidate, task, now, workflowRules) {
   };
 }
 
-function candidateReadyPending(candidate = {}) {
-  if (!candidate.reviewedSubmissionPackage) return false;
-  const normalized = normalizeReviewedCommunicationRecord(candidate);
-  return normalized.communicationActionStates?.facilitySubmission !== ACTION_STATES.facilitySent
-    && !candidate.facilitySubmissionSentAt;
+function candidateReadyPending(candidate = {}, requisition = {}, facility = {}) {
+  return validateCandidateReadyFacilitySubmissionPackage(candidate.reviewedSubmissionPackage, {
+    candidate,
+    requisition,
+    facility,
+  }).valid;
 }
 
-function followUpDue(candidate, task, now, workflowRules, feedbackState = null) {
+function followUpDue(candidate, task, now, workflowRules, feedbackState = null, readyPackagePending = false) {
   const ownerType = text(task?.ownerType || candidate.ownerType || candidate.currentOwner);
-  if (ownerType !== "Recruiter" || feedbackState || candidateReadyPending(candidate)) return false;
+  if (ownerType !== "Recruiter" || feedbackState || readyPackagePending) return false;
   const due = parseDate(task?.dueAt || candidate.nextActionDueDate);
   const lastActivity = candidateLastActivity(candidate);
   const inactiveHours = hoursBetween(lastActivity, now);
@@ -338,9 +355,9 @@ function followUpDue(candidate, task, now, workflowRules, feedbackState = null) 
   return Boolean((due && due <= now) || (explicit && (inactiveHours == null || inactiveHours >= threshold)));
 }
 
-function futureFollowUpEligibilityAt(candidate, task, now, workflowRules, feedbackState = null) {
+function futureFollowUpEligibilityAt(candidate, task, now, workflowRules, feedbackState = null, readyPackagePending = false) {
   const ownerType = text(task?.ownerType || candidate.ownerType || candidate.currentOwner);
-  if (ownerType !== "Recruiter" || feedbackState || candidateReadyPending(candidate)) return null;
+  if (ownerType !== "Recruiter" || feedbackState || readyPackagePending) return null;
   const candidates = [];
   const due = parseDate(task?.dueAt || candidate.nextActionDueDate);
   if (due && due > now) candidates.push(due);
@@ -441,8 +458,8 @@ function itemForReadinessIssue(issue, sources, exactCandidate = null) {
     explanation: `${issue.label}. This prevents the affected workflow from being treated as complete.`,
     recommendedAction: `Review ${issue.fixLocation || "the affected source record"}`,
     destination,
-    priorityScore: ["facility-ambiguous", "facility-unmapped", "missing-requisition-id"].includes(issue.code) ? 88 : 58,
-    riskLevel: ["facility-ambiguous", "facility-unmapped", "missing-requisition-id"].includes(issue.code) ? "High" : "Medium",
+    priorityScore: ["facility-ambiguous", "facility-disagreement", "facility-unmapped", "missing-requisition-id"].includes(issue.code) ? 88 : 58,
+    riskLevel: ["facility-ambiguous", "facility-disagreement", "facility-unmapped", "missing-requisition-id"].includes(issue.code) ? "High" : "Medium",
     context,
     missingData: [issue.code],
     issueCode: issue.code,
@@ -526,7 +543,11 @@ export function buildRecruiterActionCenter({ tracker = [], requisitions = [], si
     const requisition = requisitionResolution.requisition;
     const facilityResolution = canonicalFacilityForSource({ candidate, requisition, sites: safeSites, facilityIndex });
     if (facilityResolution.status !== "resolved") {
-      const issueCode = facilityResolution.status === "ambiguous" ? "facility-ambiguous" : "facility-unmapped";
+      const issueCode = facilityResolution.status === "disagreement"
+        ? "facility-disagreement"
+        : facilityResolution.status === "ambiguous"
+          ? "facility-ambiguous"
+          : "facility-unmapped";
       const context = contextFor(candidate, requisition, {});
       items.push(stableActionItem({
         category: ACTION_CENTER_CATEGORIES.dataBlocker,
@@ -550,6 +571,7 @@ export function buildRecruiterActionCenter({ tracker = [], requisitions = [], si
     const context = contextFor(candidate, requisition, facility);
     const task = taskByCandidateRequisition.get(taskKey(candidateId, context.requisitionId));
     const feedbackState = managerFeedbackState(candidate, task, current, workflowRules);
+    const readyPackagePending = candidateReadyPending(candidate, requisition, facility);
     if (feedbackState) {
       const elapsedHours = Math.max(0, Math.floor(feedbackState.elapsed || 0));
       const remainingHours = feedbackState.elapsed == null ? null : Math.max(0, Math.ceil(feedbackState.threshold - feedbackState.elapsed));
@@ -577,7 +599,7 @@ export function buildRecruiterActionCenter({ tracker = [], requisitions = [], si
         missingData: context.requisitionId && context.facilityId ? [] : [!context.requisitionId ? "requisition" : "", !context.facilityId ? "facility" : ""].filter(Boolean),
         transitionAt: feedbackState.transitionAt,
       }));
-    } else if (followUpDue(candidate, task, current, workflowRules, feedbackState)) {
+    } else if (followUpDue(candidate, task, current, workflowRules, feedbackState, readyPackagePending)) {
       items.push(stableActionItem({
         category: ACTION_CENTER_CATEGORIES.followUp,
         sourceType: "candidate",
@@ -596,11 +618,11 @@ export function buildRecruiterActionCenter({ tracker = [], requisitions = [], si
         missingData: context.requisitionId ? [] : ["requisition"],
       }));
     } else {
-      const futureFollowUp = futureFollowUpEligibilityAt(candidate, task, current, workflowRules, feedbackState);
+      const futureFollowUp = futureFollowUpEligibilityAt(candidate, task, current, workflowRules, feedbackState, readyPackagePending);
       if (futureFollowUp) futureTransitions.push(futureFollowUp);
     }
 
-    if (candidateReadyPending(candidate)) {
+    if (readyPackagePending) {
       items.push(stableActionItem({
         category: ACTION_CENTER_CATEGORIES.candidateReady,
         sourceType: "candidate",

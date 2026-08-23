@@ -137,6 +137,7 @@ test("exact reviewed package is stored without restricted employee data", () => 
   const reviewed = preview({ snapshot: { ...preview().snapshot, internalEmployee: { employeeId: "restricted", currentPosition: "RN" } } });
   const stored = buildConfirmedSubmissionPackage(reviewed, { confirmedAt: "2026-07-18T20:00:00.000Z", runtime });
   expect(stored.schemaVersion).toBe(1);
+  expect(stored.purpose).toBe("candidate-ready-facility-submission");
   expect(stored.snapshotHash).toBe(reviewed.snapshotHash);
   expect(stored.recipients).toEqual(reviewed.recipients);
   expect(stored.rendered).toEqual(reviewed.rendered);
@@ -161,6 +162,7 @@ test("confirmation creates one canonical ready tracker and one history entry wit
     status: "Ready for Facility Submission",
     nextAction: "Send facility submission",
     waitingOn: "Recruiter",
+    facilityId: "site-1",
     submissionDate: "",
     facilitySubmissionSentAt: "",
     candidateConfirmationSentAt: "",
@@ -169,6 +171,8 @@ test("confirmation creates one canonical ready tracker and one history entry wit
   });
   expect(result.candidate.output).toBeUndefined();
   expect(result.candidate.formSnapshot.rateCalculationSnapshot).toEqual({ finalRate: "42" });
+  expect(result.candidate.formSnapshot.facilityId).toBe("site-1");
+  expect(result.candidate.reviewedSubmissionPackage.snapshot.intake.candidateId).toBe(result.candidate.id);
   expect(result.candidate.reviewedSubmissionPackage.rendered).toEqual(preview().rendered);
 });
 

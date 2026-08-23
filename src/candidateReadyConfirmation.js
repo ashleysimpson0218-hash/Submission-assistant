@@ -1,5 +1,15 @@
 import { assertCommunicationRuntime } from "./requisitionCommunicationDetails";
 import { COMMUNICATION_MODES, normalizeCommunicationWorkflow } from "./communicationWorkflow";
+import {
+  CANDIDATE_READY_FACILITY_SUBMISSION_PURPOSE,
+  CANDIDATE_READY_PACKAGE_SCHEMA_VERSION,
+  SUPPORTED_CANDIDATE_READY_PACKAGE_SCHEMA_VERSIONS,
+} from "./candidateReadyPackageValidation";
+
+export {
+  CANDIDATE_READY_PACKAGE_SCHEMA_VERSION,
+  SUPPORTED_CANDIDATE_READY_PACKAGE_SCHEMA_VERSIONS,
+};
 
 export const REVIEW_ACKNOWLEDGMENT = "I reviewed the candidate, candidate type, requisition, employment details, facility recipients, and all communication content.";
 export const TEST_ACTION_ACKNOWLEDGMENT = "I understand this will mark the candidate Ready for Facility Submission in WelcomeFlow Test. It will not send or copy any communication.";
@@ -132,6 +142,7 @@ function recordIdentity(record = {}) {
     email: normalizeEmail(record.candidateEmail || snapshot.emailAddress),
     phone: normalizePhone(record.candidatePhone || snapshot.phoneNumber),
     requisitionId: clean(record.requisitionId || snapshot.selectedRequisitionId),
+    facilityId: clean(record.facilityId || snapshot.facilityId),
   };
 }
 
@@ -151,11 +162,17 @@ export function findCandidateForConfirmation(records = [], identity = {}) {
   return { ok: true, record: null, matchedBy: "new", error: "" };
 }
 
-export function buildConfirmedSubmissionPackage(reviewedPreview = {}, { confirmedAt, confirmedBy = "Test Owner Confirmation", runtime = {} } = {}) {
+export function buildConfirmedSubmissionPackage(reviewedPreview = {}, { confirmedAt, confirmedBy = "Test Owner Confirmation", runtime = {}, candidateId = "" } = {}) {
+  const snapshot = safeSnapshot(reviewedPreview.snapshot || {});
+  snapshot.intake = {
+    ...(snapshot.intake || {}),
+    candidateId: clean(candidateId || snapshot.intake?.candidateId),
+  };
   return {
-    schemaVersion: 1,
+    schemaVersion: CANDIDATE_READY_PACKAGE_SCHEMA_VERSION,
+    purpose: CANDIDATE_READY_FACILITY_SUBMISSION_PURPOSE,
     snapshotHash: clean(reviewedPreview.snapshotHash),
-    snapshot: safeSnapshot(reviewedPreview.snapshot || {}),
+    snapshot,
     recipients: clone(reviewedPreview.recipients || {}),
     rendered: clone(reviewedPreview.rendered || {}),
     unresolvedTokens: clone(reviewedPreview.unresolvedTokens || []),
@@ -221,11 +238,11 @@ export function applyCandidateReadyConfirmation({ records = [], history = [], re
   if (match.record && confirmationIsIdempotent(match.record, identity, reviewedPreview.snapshotHash)) {
     return { ok: true, idempotent: true, candidate: match.record, records, history, reviewedSubmissionPackage: match.record.reviewedSubmissionPackage };
   }
-  const reviewedSubmissionPackage = buildConfirmedSubmissionPackage(reviewedPreview, { confirmedAt: now, runtime });
-  const requisition = reviewedSubmissionPackage.snapshot.requisition || {};
-  const intake = reviewedSubmissionPackage.snapshot.intake || {};
   const existing = match.record || {};
   const id = existing.id || `ready-${clean(reviewedPreview.snapshotHash).replace(/[^a-z0-9-]/gi, "").slice(-18)}`;
+  const reviewedSubmissionPackage = buildConfirmedSubmissionPackage(reviewedPreview, { confirmedAt: now, runtime, candidateId: id });
+  const requisition = reviewedSubmissionPackage.snapshot.requisition || {};
+  const intake = reviewedSubmissionPackage.snapshot.intake || {};
   const candidate = {
     ...existing,
     id,
@@ -238,6 +255,7 @@ export function applyCandidateReadyConfirmation({ records = [], history = [], re
     candidateSource: intake.candidateSource || existing.candidateSource || "",
     position: requisition.position || existing.position || "",
     site: requisition.facility || existing.site || "",
+    facilityId: requisition.facilityId || existing.facilityId || "",
     requisitionId: requisition.requisitionId || existing.requisitionId || "",
     reqNumber: requisition.reqNumber || existing.reqNumber || "",
     uniqueIdNumber: requisition.uniqueIdNumber || existing.uniqueIdNumber || "",
@@ -266,6 +284,7 @@ export function applyCandidateReadyConfirmation({ records = [], history = [], re
       uniqueIdNumber: requisition.uniqueIdNumber,
       position: requisition.position,
       siteName: requisition.facility,
+      facilityId: requisition.facilityId || existing.formSnapshot?.facilityId || "",
     },
     audit: Array.isArray(existing.audit) ? existing.audit : [],
     reviewedSubmissionPackage,

@@ -1,8 +1,40 @@
 import {
   ACTION_CENTER_CATEGORIES,
+  buildActionCenterItemId,
   buildRecruiterActionCenter,
   filterRecruiterActionCenter,
 } from "./actionCenterSelectors";
+import { CANDIDATE_READY_FACILITY_SUBMISSION_PURPOSE, CANDIDATE_READY_PACKAGE_SCHEMA_VERSION } from "./candidateReadyPackageValidation";
+
+test("builds canonical Action Center identities with encoded stable segments", () => {
+  expect(buildActionCenterItemId({
+    category: ACTION_CENTER_CATEGORIES.dataBlocker,
+    sourceType: "candidate",
+    sourceId: "candidate/one",
+    candidateId: "candidate/one",
+    requisitionId: "req two?#",
+    facilityId: "facility/one",
+    issueCode: "missing notes/owner",
+  })).toBe("action-center-v1:Data%20Blockers:candidate:candidate%2Fone:requisition:req%20two%3F%23:facility:facility%2Fone:missing%20notes%2Fowner");
+});
+
+test("candidate Action Center identity includes exact facility context", () => {
+  const first = buildActionCenterItemId({
+    category: ACTION_CENTER_CATEGORIES.candidateReady,
+    sourceType: "candidate",
+    candidateId: "candidate-1",
+    requisitionId: "req-1",
+    facilityId: "facility-1",
+  });
+  const second = buildActionCenterItemId({
+    category: ACTION_CENTER_CATEGORIES.candidateReady,
+    sourceType: "candidate",
+    candidateId: "candidate-1",
+    requisitionId: "req-1",
+    facilityId: "facility-2",
+  });
+  expect(first).not.toBe(second);
+});
 
 const NOW = new Date("2026-08-08T16:00:00.000Z");
 const facility = {
@@ -43,6 +75,33 @@ function candidate(overrides = {}) {
   };
 }
 
+function reviewedCandidateReadyPackage({ candidateId = "candidate-1", requisitionId = "req-1", facilityId = "facility-1" } = {}) {
+  return {
+    schemaVersion: CANDIDATE_READY_PACKAGE_SCHEMA_VERSION,
+    purpose: CANDIDATE_READY_FACILITY_SUBMISSION_PURPOSE,
+    snapshotHash: `snapshot-${candidateId}-${requisitionId}`,
+    snapshot: {
+      requisition: { requisitionId, facilityId },
+      facility: { facilityId },
+      intake: { candidateId },
+    },
+    recipients: { facility: { to: ["manager@example.test"], cc: [] } },
+    rendered: {
+      facilityEmail: {
+        templateKey: "hiringManager",
+        subject: "Saved facility submission",
+        body: "Exact saved facility submission body",
+        releaseCondition: "candidateReadyConfirmed",
+      },
+    },
+    templateReferences: { facilitySubmission: { templateKey: "hiringManager", id: "facility-external", version: 1 } },
+    releaseConditions: { facilitySubmission: "candidateReadyConfirmed" },
+    actionStates: { facilitySubmission: "Ready to Send" },
+    unresolvedTokens: [],
+    restrictedTokens: [],
+  };
+}
+
 function build(overrides = {}) {
   return buildRecruiterActionCenter({
     tracker: [candidate()],
@@ -59,7 +118,7 @@ test("derives a recruiter follow-up with stable source context and a read-only c
   const result = build();
   const item = result.items.find((entry) => entry.category === ACTION_CENTER_CATEGORIES.followUp);
   expect(item).toMatchObject({
-    id: "action-center-v1:Follow-up Due:candidate:candidate-1:requisition:req-1",
+    id: "action-center-v1:Follow-up%20Due:candidate:candidate-1:requisition:req-1:facility:facility-1",
     sourceId: "candidate-1",
     candidateId: "candidate-1",
     requisitionId: "req-1",
@@ -203,6 +262,24 @@ test("shows completed-interview feedback as pending before the configured thresh
   expect(item.explanation).not.toMatch(/overdue/i);
 });
 
+test("keeps the canonical Manager reviewing placeholder in the feedback queue", () => {
+  const result = build({
+    tracker: [candidate({
+      id: "candidate-manager-reviewing",
+      status: "Interview Completed",
+      nextAction: "Request feedback",
+      ownerType: "Hiring Manager",
+      actualInterviewAt: "2026-08-08T04:30:00.000Z",
+      interviewFeedback: "Manager reviewing",
+    })],
+    workflowRules: { interviewFeedbackHours: 24 },
+  });
+  expect(result.items.find((entry) => entry.category === ACTION_CENTER_CATEGORIES.managerFeedback)).toMatchObject({
+    candidateId: "candidate-manager-reviewing",
+    title: "Manager feedback pending for Synthetic Candidate",
+  });
+});
+
 test.each([
   ["2026-08-07T16:00:01.000Z", "pending"],
   ["2026-08-07T16:00:00.000Z", "overdue"],
@@ -222,13 +299,26 @@ test("derives a Candidate Ready submission only when the reviewed package remain
     id: "candidate-ready",
     status: "Ready for Facility Submission",
     nextAction: "Send facility submission",
-    reviewedSubmissionPackage: { rendered: {}, recipients: {}, snapshot: {} },
+    reviewedSubmissionPackage: reviewedCandidateReadyPackage({ candidateId: "candidate-ready" }),
     communicationActionStates: { facilitySubmission: "Ready to Send" },
   });
   const sent = { ...pending, id: "candidate-sent", facilitySubmissionSentAt: "2026-08-08T14:00:00.000Z", communicationActionStates: { facilitySubmission: "Sent" } };
   const result = build({ tracker: [pending, sent] });
   expect(result.items.filter((entry) => entry.category === ACTION_CENTER_CATEGORIES.candidateReady)).toHaveLength(1);
   expect(result.items.find((entry) => entry.category === ACTION_CENTER_CATEGORIES.candidateReady)).toMatchObject({ sourceId: "candidate-ready", destination: { id: "candidate-ready" } });
+});
+
+test("does not label a malformed reviewed object as Candidate Ready", () => {
+  const result = build({
+    tracker: [candidate({
+      id: "candidate-invalid-ready",
+      status: "Ready for Facility Submission",
+      nextAction: "Send facility submission",
+      reviewedSubmissionPackage: { rendered: {}, recipients: {}, snapshot: {} },
+      communicationActionStates: { facilitySubmission: "Ready to Send" },
+    })],
+  });
+  expect(result.items.some((entry) => entry.category === ACTION_CENTER_CATEGORIES.candidateReady)).toBe(false);
 });
 
 test("allows legitimate Manager Feedback and Candidate Ready actions to coexist", () => {
@@ -239,7 +329,7 @@ test("allows legitimate Manager Feedback and Candidate Ready actions to coexist"
       nextAction: "Request feedback",
       ownerType: "Hiring Manager",
       actualInterviewAt: "2026-08-08T12:00:00.000Z",
-      reviewedSubmissionPackage: { rendered: {}, recipients: {}, snapshot: {} },
+      reviewedSubmissionPackage: reviewedCandidateReadyPackage({ candidateId: "candidate-multi-category" }),
       communicationActionStates: { facilitySubmission: "Ready to Send" },
     })],
   });
@@ -357,8 +447,8 @@ test("keeps the same candidate independently identifiable across two active requ
   const followUps = result.items.filter((entry) => entry.category === ACTION_CENTER_CATEGORIES.followUp);
   expect(followUps).toHaveLength(2);
   expect(followUps.map((entry) => entry.id)).toEqual([
-    "action-center-v1:Follow-up Due:candidate:candidate-1:requisition:req-1",
-    "action-center-v1:Follow-up Due:candidate:candidate-1:requisition:req-2",
+    "action-center-v1:Follow-up%20Due:candidate:candidate-1:requisition:req-1:facility:facility-1",
+    "action-center-v1:Follow-up%20Due:candidate:candidate-1:requisition:req-2:facility:facility-1",
   ]);
 });
 
@@ -398,8 +488,8 @@ test("preserves the same blocker code for duplicate candidate IDs on two exact r
   const blockers = result.items.filter((entry) => entry.issueCode === "missing-candidate-notes" && entry.candidateId === "duplicate-candidate");
   expect(blockers).toHaveLength(2);
   expect(blockers.map((entry) => entry.id)).toEqual([
-    "action-center-v1:Data Blockers:candidate:duplicate-candidate:requisition:req-1:missing-candidate-notes",
-    "action-center-v1:Data Blockers:candidate:duplicate-candidate:requisition:req-2:missing-candidate-notes",
+    "action-center-v1:Data%20Blockers:candidate:duplicate-candidate:requisition:req-1:facility:facility-1:missing-candidate-notes",
+    "action-center-v1:Data%20Blockers:candidate:duplicate-candidate:requisition:req-2:facility:facility-2:missing-candidate-notes",
   ]);
   expect(blockers.map((entry) => entry.context)).toEqual(expect.arrayContaining([
     expect.objectContaining({ requisitionId: "req-1", facilityId: "facility-1", region: "Synthetic Region" }),
@@ -499,7 +589,10 @@ test("blocks operational work when candidate and requisition facilities disagree
   const otherFacility = { ...facility, id: "facility-2", siteName: "Other Facility", regionName: "Other Region" };
   const result = build({ tracker: [candidate({ facilityId: "facility-2", site: "Other Facility" })], sites: [facility, otherFacility] });
   expect(result.items.some((entry) => entry.category === ACTION_CENTER_CATEGORIES.followUp)).toBe(false);
-  expect(result.items.some((entry) => entry.title === "Candidate and requisition facility context disagree")).toBe(true);
+  expect(result.items.find((entry) => entry.title === "Candidate and requisition facility context disagree")).toMatchObject({
+    issueCode: "facility-disagreement",
+    missingData: ["facility-disagreement"],
+  });
 });
 
 test("deduplicates stable action identities and reports filter counts consistently", () => {
