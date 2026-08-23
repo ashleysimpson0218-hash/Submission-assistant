@@ -2,14 +2,56 @@ import fs from "fs";
 import path from "path";
 
 const bootstrapPath = path.resolve(__dirname, "..", "supabase-welcomeflow-state.sql");
-const containmentPath = path.resolve(__dirname, "..", "supabase", "migrations", "20260717014305_contain_real_candidate_data.sql");
-const rateLimitPath = path.resolve(__dirname, "..", "supabase", "migrations", "20260731033000_add_shared_api_rate_limits.sql");
+const migrationRoot = path.resolve(__dirname, "..", "supabase", "migrations");
+const remoteBaselinePath = path.resolve(migrationRoot, "20260807035516_remote_schema.sql");
+const containmentPath = path.resolve(migrationRoot, "20260807035517_contain_real_candidate_data.sql");
+const defaultPrivilegeHardeningPath = path.resolve(migrationRoot, "20260807035518_harden_default_public_privileges.sql");
+const rateLimitPath = path.resolve(migrationRoot, "20260807035519_add_shared_api_rate_limits.sql");
 
 function normalizedSql(filePath) {
   return fs.readFileSync(filePath, "utf8").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 describe("WelcomeFlow workspace bootstrap safety", () => {
+  test("replays the recovered remote baseline before every local-only migration", () => {
+    const migrations = fs.readdirSync(migrationRoot).sort();
+    const reconciledMigrations = [
+      "20260807035516_remote_schema.sql",
+      "20260807035517_contain_real_candidate_data.sql",
+      "20260807035518_harden_default_public_privileges.sql",
+      "20260807035519_add_shared_api_rate_limits.sql",
+      "20260807035520_reserve_screening_slots.sql",
+    ];
+
+    expect(migrations).toEqual(expect.arrayContaining(reconciledMigrations));
+    reconciledMigrations.slice(1).forEach((migration) => {
+      expect(migrations.indexOf(reconciledMigrations[0])).toBeLessThan(
+        migrations.indexOf(migration)
+      );
+    });
+    expect(migrations).not.toEqual(expect.arrayContaining([
+      "20260717014305_contain_real_candidate_data.sql",
+      "20260731033000_add_shared_api_rate_limits.sql",
+      "20260802090000_reserve_screening_slots.sql",
+    ]));
+
+    const baseline = normalizedSql(remoteBaselinePath);
+    expect(baseline).toContain("create table if not exists \"public\".\"welcomeflow_workspace_state\"");
+    expect(baseline).toContain("alter table \"public\".\"welcomeflow_workspace_state\" enable row level security");
+  });
+
+  test("revokes recovered anonymous defaults before later objects are created", () => {
+    const sql = normalizedSql(defaultPrivilegeHardeningPath);
+    ["tables", "sequences", "functions"].forEach((objectType) => {
+      expect(sql).toContain(
+        `alter default privileges for role postgres in schema public revoke all on ${objectType} from public, anon, authenticated`
+      );
+    });
+    expect(sql).toContain("revoke all privileges on table public.welcomeflow_workspace_state from public, anon, authenticated");
+    expect(sql).toContain("defaults.defaclobjtype in ('r', 's', 'f')");
+    expect(sql).toContain("raise exception 'unsafe public/anon/authenticated default privileges remain in schema public'");
+  });
+
   test("keeps RLS enabled and revokes every anonymous write-capable table privilege", () => {
     const sql = normalizedSql(bootstrapPath);
     expect(sql).toContain("alter table public.welcomeflow_workspace_state enable row level security");
