@@ -336,7 +336,7 @@ describe("booking API secure public scheduling", () => {
   });
 
   test("the reservation migration makes recruiter slots unique and rechecks scope under a row lock", () => {
-    const sql = fs.readFileSync(path.resolve(__dirname, "..", "supabase", "migrations", "20260802090000_reserve_screening_slots.sql"), "utf8").toLowerCase();
+    const sql = fs.readFileSync(path.resolve(__dirname, "..", "supabase", "migrations", "20260807035520_reserve_screening_slots.sql"), "utf8").toLowerCase();
     expect(sql).toContain("primary key (workspace_id, recruiter_key, requested_date, requested_time)");
     expect(sql).toContain("welcomeflow_screening_reservation_lead_unique");
     expect(sql).toContain("welcomeflow_screening_reservation_token_unique");
