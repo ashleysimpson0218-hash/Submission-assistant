@@ -9,6 +9,11 @@ import {
   actionCenterItemSupportsCommunicationPreview,
   buildActionCenterCommunicationPreview,
 } from "./actionCenterCommunicationPreviews";
+import {
+  ACTION_CENTER_COMMUNICATION_ACTIONS,
+  prepareActionCenterCommunicationAction,
+  revalidateActionCenterCommunicationAction,
+} from "./actionCenterCommunicationActions";
 import { buildRecruiterWorkspaceModel } from "./recruiterWorkspaceSelectors";
 import { WORKSPACE_TASK_ACTIONS } from "./recruiterWorkspaceActions";
 import { HomeCalendarWidget } from "./HomeCalendarWidget";
@@ -159,7 +164,37 @@ function ActionCenterDetail({ item, theme, onClose, onOpen, onPreviewCommunicati
   );
 }
 
-function ActionCenterCommunicationPreviewDialog({ preview, theme, onClose }) {
+function ActionCenterCommunicationActionConfirmation({ review, processing, theme, onCancel, onConfirm }) {
+  if (!review) return null;
+  const actionLabel = review.actionType === ACTION_CENTER_COMMUNICATION_ACTIONS.copySubject
+    ? "Copy Approved Subject"
+    : review.actionType === ACTION_CENTER_COMMUNICATION_ACTIONS.copyBody
+      ? "Copy Approved Body"
+      : "Open Prefilled Email Draft";
+  return (
+    <section role="alertdialog" aria-modal="true" aria-label={`Confirm ${actionLabel}`} onClick={(event) => event.stopPropagation()} style={{ position: "fixed", inset: 0, zIndex: 160, background: "rgba(16, 10, 43, 0.7)", display: "grid", placeItems: "center", padding: 16 }}>
+      <div style={{ width: "min(620px, 100%)", border: `2px solid ${theme.primary2}`, borderRadius: 10, background: theme.panel, color: theme.text, padding: 16, boxShadow: theme.shadow, display: "grid", gap: 12 }}>
+        <div><div style={{ color: theme.primary2, fontSize: 11, fontWeight: 950, textTransform: "uppercase" }}>Recruiter confirmation required</div><h3 style={{ margin: "4px 0" }}>{actionLabel}</h3><p style={{ margin: 0, color: theme.muted, fontSize: 12 }}>{review.effectDescription}</p></div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 7 }}>
+          {[
+            ["Candidate", review.context.candidate, review.context.candidateId],
+            ["Requisition", review.context.requisition, review.context.requisitionId],
+            ["Facility", review.context.facility, review.context.facilityId],
+            ["Recipient", review.to.join("; "), ""],
+          ].filter(([, value]) => value).map(([label, value, identifier]) => <div key={label} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: 8, background: theme.panelAlt }}><span style={{ display: "block", color: theme.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>{label}</span><strong style={{ display: "block", marginTop: 2, fontSize: 12, overflowWrap: "anywhere" }}>{value}</strong>{identifier ? <span style={{ display: "block", marginTop: 2, color: theme.muted, fontSize: 10, overflowWrap: "anywhere" }}>{identifier}</span> : null}</div>)}
+        </div>
+        <div style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: 10, background: theme.panelAlt, fontSize: 12 }}><strong>Subject:</strong> {review.subject}</div>
+        <div style={{ color: theme.muted, fontSize: 11 }}>WelcomeFlow will revalidate the exact candidate, requisition, facility, recipients, and approved content when you confirm. It will not send an email or change any record.</div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+          <button type="button" disabled={processing} onClick={onCancel} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panel, color: theme.text, padding: "8px 11px", fontWeight: 850, cursor: processing ? "not-allowed" : "pointer" }}>Cancel</button>
+          <button type="button" disabled={processing} onClick={onConfirm} style={{ border: 0, borderRadius: 6, background: theme.primary2, color: "#fff", padding: "8px 11px", fontWeight: 900, cursor: processing ? "not-allowed" : "pointer" }}>{processing ? "Revalidating…" : `Confirm ${actionLabel}`}</button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ActionCenterCommunicationPreviewDialog({ preview, theme, onClose, controlledActionsAuthorized, prefilledEmailDraftAuthorized, actionReview, actionResult, actionProcessing, onRequestAction, onCancelAction, onConfirmAction }) {
   const context = [
     ["Candidate", preview.context.candidate],
     ["Candidate ID", preview.context.candidateId],
@@ -174,7 +209,7 @@ function ActionCenterCommunicationPreviewDialog({ preview, theme, onClose }) {
     <div role="dialog" aria-modal="true" aria-label={preview.title} onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 140, background: "rgba(16, 10, 43, 0.62)", display: "grid", placeItems: "center", padding: 16 }}>
       <div onClick={(event) => event.stopPropagation()} style={{ width: "min(980px, 100%)", maxHeight: "92vh", overflow: "auto", border: `1px solid ${theme.borderSoft}`, borderRadius: 10, background: theme.panel, color: theme.text, boxShadow: theme.shadow, display: "grid" }}>
         <header style={{ position: "sticky", top: 0, zIndex: 1, borderBottom: `1px solid ${theme.borderSoft}`, padding: 14, background: theme.panel, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-          <div><div style={{ color: theme.primary2, fontSize: 11, fontWeight: 950, textTransform: "uppercase" }}>Read-only communication preview</div><h2 style={{ margin: "4px 0", fontSize: 19 }}>{preview.title}</h2><div style={{ color: theme.muted, fontSize: 12 }}>Nothing can be copied, opened, sent, saved, or marked complete from this preview.</div></div>
+          <div><div style={{ color: theme.primary2, fontSize: 11, fontWeight: 950, textTransform: "uppercase" }}>{controlledActionsAuthorized ? "Controlled communication preview" : "Read-only communication preview"}</div><h2 style={{ margin: "4px 0", fontSize: 19 }}>{preview.title}</h2><div style={{ color: theme.muted, fontSize: 12 }}>{controlledActionsAuthorized ? "Nothing is sent automatically. Every copy or draft action requires confirmation and changes no WelcomeFlow record." : "Nothing can be copied, opened, sent, saved, or marked complete from this preview."}</div></div>
           <button type="button" onClick={onClose} aria-label={`Close ${preview.title}`} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panelAlt, color: theme.text, padding: "7px 10px", fontWeight: 900, cursor: "pointer" }}>Close</button>
         </header>
         <div style={{ padding: 14, display: "grid", gap: 12 }}>
@@ -194,16 +229,23 @@ function ActionCenterCommunicationPreviewDialog({ preview, theme, onClose }) {
               {entry.cc.length ? <div><strong>CC:</strong> <span style={{ color: theme.muted }}>{entry.cc.join("; ")}</span></div> : null}
               {entry.subject ? <div><strong>Subject:</strong> <span style={{ color: theme.muted }}>{entry.subject}</span></div> : null}
               <pre style={{ margin: 0, whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "Inter, Arial, sans-serif", fontSize: 12.5, lineHeight: 1.55, border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panelAlt, padding: 11 }}>{entry.body || "No preview content available."}</pre>
+              {controlledActionsAuthorized && preview.canReview && entry.channel === "Email" ? <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button type="button" onClick={() => onRequestAction(ACTION_CENTER_COMMUNICATION_ACTIONS.copySubject, entry.key)} disabled={!entry.subject} style={{ border: `1px solid ${theme.primary2}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "7px 10px", fontWeight: 850, cursor: entry.subject ? "pointer" : "not-allowed" }}>Copy Approved Subject</button>
+                <button type="button" onClick={() => onRequestAction(ACTION_CENTER_COMMUNICATION_ACTIONS.copyBody, entry.key)} disabled={!entry.body} style={{ border: `1px solid ${theme.primary2}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "7px 10px", fontWeight: 850, cursor: entry.body ? "pointer" : "not-allowed" }}>Copy Approved Body</button>
+                {prefilledEmailDraftAuthorized ? <button type="button" onClick={() => onRequestAction(ACTION_CENTER_COMMUNICATION_ACTIONS.openEmailDraft, entry.key)} style={{ border: 0, borderRadius: 6, background: theme.primary2, color: "#fff", padding: "7px 10px", fontWeight: 900, cursor: "pointer" }}>Open Prefilled Email Draft</button> : <span style={{ alignSelf: "center", color: theme.muted, fontSize: 11 }}>Prefilled email drafts are not authorized in this runtime.</span>}
+              </div> : null}
             </div>
           </section>)}
+          {actionResult ? <div role="status" style={{ border: `1px solid ${actionResult.status === "failure" ? theme.red : actionResult.status === "cancelled" ? theme.amber : theme.green}`, borderRadius: 6, padding: 9, background: actionResult.status === "failure" ? theme.redBg : actionResult.status === "cancelled" ? theme.amberBg : theme.greenBg, color: theme.text, fontSize: 12, fontWeight: 850 }}>{actionResult.message}</div> : null}
           <div style={{ color: theme.muted, fontSize: 11 }}>Snapshot: <strong style={{ color: theme.text }}>{preview.snapshotHash}</strong>. Close this preview to return without changing any record.</div>
         </div>
       </div>
+      <ActionCenterCommunicationActionConfirmation review={actionReview} processing={actionProcessing} theme={theme} onCancel={onCancelAction} onConfirm={onConfirmAction} />
     </div>
   );
 }
 
-export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EMPTY_LIST, actionCenterRequisitions = null, sites = EMPTY_LIST, history = EMPTY_LIST, calendarEvents = EMPTY_LIST, workflowRules = EMPTY_RULES, communicationSettings = EMPTY_RULES, theme, isNarrow = false, isMedium = false, recruiterName = "Recruiter", onOpenCandidate, onOpenActionCenterCandidate = onOpenCandidate, onOpenRequisition, onOpenActionCenterRequisition = onOpenRequisition, onOpenFacility = null, onOpenActionCenterFacility = onOpenFacility, onOpenCalendar = () => {}, onOpenCalendarEvent = () => {}, onAddCalendarEvent = () => {}, onScheduleCalendar = () => {}, onOpenWeeklyCleanup, onOpenReports, onTaskAction = () => true, onWorkspaceEvent = () => true }) {
+export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EMPTY_LIST, actionCenterRequisitions = null, sites = EMPTY_LIST, history = EMPTY_LIST, calendarEvents = EMPTY_LIST, workflowRules = EMPTY_RULES, communicationSettings = EMPTY_RULES, controlledCommunicationActionsAuthorized = false, prefilledEmailDraftAuthorized = false, onCopyApprovedCommunication = null, onOpenPrefilledEmailDraft = null, theme, isNarrow = false, isMedium = false, recruiterName = "Recruiter", onOpenCandidate, onOpenActionCenterCandidate = onOpenCandidate, onOpenRequisition, onOpenActionCenterRequisition = onOpenRequisition, onOpenFacility = null, onOpenActionCenterFacility = onOpenFacility, onOpenCalendar = () => {}, onOpenCalendarEvent = () => {}, onAddCalendarEvent = () => {}, onScheduleCalendar = () => {}, onOpenWeeklyCleanup, onOpenReports, onTaskAction = () => true, onWorkspaceEvent = () => true }) {
   const [activeFilter, setActiveFilter] = useState("Do Now");
   const [actionTaskId, setActionTaskId] = useState("");
   const [focusMode, setFocusMode] = useState(false);
@@ -213,6 +255,9 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
   const [actionCenterFilter, setActionCenterFilter] = useState(ACTION_CENTER_CATEGORIES.all);
   const [actionCenterDetailId, setActionCenterDetailId] = useState("");
   const [actionCenterCommunicationPreviewId, setActionCenterCommunicationPreviewId] = useState("");
+  const [actionCenterCommunicationActionReview, setActionCenterCommunicationActionReview] = useState(null);
+  const [actionCenterCommunicationActionResult, setActionCenterCommunicationActionResult] = useState(null);
+  const [actionCenterCommunicationActionProcessing, setActionCenterCommunicationActionProcessing] = useState(false);
   const [actionCenterNow, setActionCenterNow] = useState(() => new Date());
   const completeActionCenterRequisitions = Array.isArray(actionCenterRequisitions) ? actionCenterRequisitions : requisitions;
   const model = useMemo(() => buildRecruiterWorkspaceModel({ tracker, requisitions, sites, history, calendarEvents, rules: workflowRules }), [tracker, requisitions, sites, history, calendarEvents, workflowRules]);
@@ -261,6 +306,88 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
     settings: communicationSettings,
     now: actionCenterNow,
   }) : null, [actionCenterCommunicationItem, tracker, completeActionCenterRequisitions, sites, communicationSettings, actionCenterNow]);
+  const openActionCenterCommunicationPreview = (item) => {
+    setActionCenterCommunicationActionReview(null);
+    setActionCenterCommunicationActionResult(null);
+    setActionCenterCommunicationActionProcessing(false);
+    setActionCenterCommunicationPreviewId(item.id);
+  };
+  const closeActionCenterCommunicationPreview = () => {
+    setActionCenterCommunicationPreviewId("");
+    setActionCenterCommunicationActionReview(null);
+    setActionCenterCommunicationActionResult(null);
+    setActionCenterCommunicationActionProcessing(false);
+  };
+  const requestActionCenterCommunicationAction = (actionType, documentKey) => {
+    setActionCenterCommunicationActionResult(null);
+    const prepared = prepareActionCenterCommunicationAction({
+      preview: actionCenterCommunicationPreview,
+      documentKey,
+      actionType,
+      controlledActionsAuthorized: controlledCommunicationActionsAuthorized,
+      prefilledEmailDraftAuthorized,
+    });
+    if (!prepared.ok) {
+      setActionCenterCommunicationActionReview(null);
+      setActionCenterCommunicationActionResult({ status: "failure", message: prepared.message });
+      return;
+    }
+    setActionCenterCommunicationActionReview(prepared.review);
+  };
+  const cancelActionCenterCommunicationAction = () => {
+    setActionCenterCommunicationActionReview(null);
+    setActionCenterCommunicationActionResult({
+      status: "cancelled",
+      message: "Action cancelled. Nothing was copied, opened, sent, or changed.",
+    });
+  };
+  const confirmActionCenterCommunicationAction = async () => {
+    if (actionCenterCommunicationActionProcessing || !actionCenterCommunicationActionReview) return;
+    setActionCenterCommunicationActionProcessing(true);
+    try {
+      const item = navigableActionCenterItems.find((entry) => entry.id === actionCenterCommunicationActionReview.actionId);
+      if (!item) {
+        setActionCenterCommunicationActionReview(null);
+        setActionCenterCommunicationActionResult({ status: "failure", message: "The Action Center item is no longer available. Nothing was copied, opened, sent, or changed." });
+        return;
+      }
+      const revalidated = revalidateActionCenterCommunicationAction({
+        review: actionCenterCommunicationActionReview,
+        item,
+        tracker,
+        requisitions: completeActionCenterRequisitions,
+        sites,
+        settings: communicationSettings,
+        now: new Date(),
+        controlledActionsAuthorized: controlledCommunicationActionsAuthorized,
+        prefilledEmailDraftAuthorized,
+      });
+      if (!revalidated.ok) {
+        setActionCenterCommunicationActionReview(null);
+        setActionCenterCommunicationActionResult({ status: "failure", message: `${revalidated.message} Nothing was copied, opened, sent, or changed.` });
+        return;
+      }
+      if (revalidated.action.type === ACTION_CENTER_COMMUNICATION_ACTIONS.openEmailDraft) {
+        if (typeof onOpenPrefilledEmailDraft !== "function") throw new Error("Prefilled email drafts are unavailable in this runtime.");
+        await onOpenPrefilledEmailDraft(revalidated.action.mailtoUrl);
+        setActionCenterCommunicationActionResult({ status: "success", message: "Prefilled email draft opened. Review it and send manually; WelcomeFlow did not send it or change any record." });
+      } else {
+        if (typeof onCopyApprovedCommunication !== "function") throw new Error("Clipboard access is unavailable in this runtime.");
+        await onCopyApprovedCommunication(revalidated.action.value);
+        const label = revalidated.action.type === ACTION_CENTER_COMMUNICATION_ACTIONS.copySubject ? "subject" : "body";
+        setActionCenterCommunicationActionResult({ status: "success", message: `Approved ${label} copied. No email was sent and no record changed.` });
+      }
+      setActionCenterCommunicationActionReview(null);
+    } catch (error) {
+      setActionCenterCommunicationActionReview(null);
+      setActionCenterCommunicationActionResult({
+        status: "failure",
+        message: `${error instanceof Error ? error.message : "The controlled communication action failed."} Nothing was sent or changed.`,
+      });
+    } finally {
+      setActionCenterCommunicationActionProcessing(false);
+    }
+  };
   const openActionCenterItem = (item) => {
     if (item.destination.disabled) return;
     if (item.destination.type === "candidate" && typeof onOpenActionCenterCandidate === "function") onOpenActionCenterCandidate(item.destination.id, item.requisitionId, item);
@@ -343,9 +470,21 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
             </div>
             <div role="tabpanel" aria-label={`${actionCenterFilter} Action Center items`} style={{ display: "grid", gap: 8 }}>
               {actionCenterItems.length ? actionCenterItems.map((item) => <ActionCenterRow key={item.id} item={item} theme={theme} narrow={isNarrow} onReview={setActionCenterDetailId} onOpen={openActionCenterItem} />) : <div style={{ border: `1px dashed ${theme.borderSoft}`, borderRadius: 8, padding: 20, color: theme.muted, textAlign: "center" }}>No {actionCenterFilter === ACTION_CENTER_CATEGORIES.all ? "Action Center" : actionCenterFilter.toLowerCase()} items need attention right now.</div>}
-              {actionCenterDetail ? <ActionCenterDetail item={actionCenterDetail} theme={theme} onClose={() => setActionCenterDetailId("")} onOpen={openActionCenterItem} onPreviewCommunication={(item) => setActionCenterCommunicationPreviewId(item.id)} /> : null}
+              {actionCenterDetail ? <ActionCenterDetail item={actionCenterDetail} theme={theme} onClose={() => setActionCenterDetailId("")} onOpen={openActionCenterItem} onPreviewCommunication={openActionCenterCommunicationPreview} /> : null}
             </div>
-            {actionCenterCommunicationPreview ? <ActionCenterCommunicationPreviewDialog preview={actionCenterCommunicationPreview} theme={theme} onClose={() => setActionCenterCommunicationPreviewId("")} /> : null}
+            {actionCenterCommunicationPreview ? <ActionCenterCommunicationPreviewDialog
+              preview={actionCenterCommunicationPreview}
+              theme={theme}
+              controlledActionsAuthorized={controlledCommunicationActionsAuthorized}
+              prefilledEmailDraftAuthorized={prefilledEmailDraftAuthorized}
+              actionReview={actionCenterCommunicationActionReview}
+              actionResult={actionCenterCommunicationActionResult}
+              actionProcessing={actionCenterCommunicationActionProcessing}
+              onClose={closeActionCenterCommunicationPreview}
+              onRequestAction={requestActionCenterCommunicationAction}
+              onCancelAction={cancelActionCenterCommunicationAction}
+              onConfirmAction={confirmActionCenterCommunicationAction}
+            /> : null}
           </WorkspaceCard> : null}
 
           <WorkspaceCard theme={theme} title="My Work Queue" subtitle="Every item explains its source, owner, timing, and recommended next step.">

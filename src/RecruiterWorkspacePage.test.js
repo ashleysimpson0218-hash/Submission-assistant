@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { RecruiterWorkspacePage } from "./RecruiterWorkspacePage";
 import { FacilityPositionSetupPage, actionCenterNavigationState, activeActionCenterCandidateTargetForSelection, clearedActionCenterTargets, resolveActionCenterCandidateTarget, resolveActionCenterSetupTarget } from "./App";
 
@@ -448,6 +448,113 @@ test("opens an exact read-only candidate follow-up communication preview", () =>
   expect(within(dialog).queryByRole("button", { name: /Copy|Open|Send|Save|Complete|Approve/i })).not.toBeInTheDocument();
   expect(onTaskAction).not.toHaveBeenCalled();
   expect(onWorkspaceEvent).not.toHaveBeenCalled();
+});
+
+function controlledFollowUpProps(overrides = {}) {
+  return {
+    theme,
+    tracker: [{
+      id: "candidate-controlled-follow-up",
+      candidate: "Synthetic Controlled Candidate",
+      candidateEmail: "candidate@example.test",
+      candidateType: "External",
+      candidateTypeConfirmed: true,
+      status: "Submitted",
+      nextAction: "Follow up with candidate",
+      nextActionDueDate: "2026-07-21",
+      lastActionAt: "2026-07-18T12:00:00.000Z",
+      currentOwner: "Recruiter",
+      ownerType: "Recruiter",
+      requisitionId: "req-controlled-follow-up",
+      facilityId: "facility-controlled-follow-up",
+      site: "Synthetic Controlled Facility",
+      position: "RN",
+    }],
+    requisitions: [{ id: "req-controlled-follow-up", reqNumber: "SYN-CONTROLLED", positionTitle: "RN", facilityId: "facility-controlled-follow-up", siteName: "Synthetic Controlled Facility", status: "Active" }],
+    sites: [{ id: "facility-controlled-follow-up", siteName: "Synthetic Controlled Facility", regionName: "Synthetic Region", status: "Active", hiringManagerEmail: "manager@example.test" }],
+    communicationSettings: { general: { recruiterName: "Synthetic Recruiter" }, templates: { candidate48HourFollowUp: { subject: "Approved | {candidate_name}", body: "Approved body for {candidate_name} at {facility}." } } },
+    controlledCommunicationActionsAuthorized: true,
+    onOpenCandidate: jest.fn(),
+    onOpenRequisition: jest.fn(),
+    onOpenWeeklyCleanup: jest.fn(),
+    onOpenReports: jest.fn(),
+    ...overrides,
+  };
+}
+
+function openControlledFollowUpPreview() {
+  fireEvent.click(screen.getByRole("button", { name: /Review details for Recruiter follow-up due for Synthetic Controlled Candidate/i }));
+  fireEvent.click(screen.getByRole("button", { name: "Preview Communication" }));
+  return screen.getByRole("dialog", { name: "Candidate Follow-Up Preview" });
+}
+
+test("requires confirmation before copying approved content and reports cancellation and success", async () => {
+  const onCopyApprovedCommunication = jest.fn(() => Promise.resolve());
+  render(<RecruiterWorkspacePage {...controlledFollowUpProps({ onCopyApprovedCommunication })} />);
+
+  const previewDialog = openControlledFollowUpPreview();
+  fireEvent.click(within(previewDialog).getByRole("button", { name: "Copy Approved Subject" }));
+  expect(onCopyApprovedCommunication).not.toHaveBeenCalled();
+  const cancellation = screen.getByRole("alertdialog", { name: "Confirm Copy Approved Subject" });
+  expect(within(cancellation).getByText("candidate-controlled-follow-up")).toBeInTheDocument();
+  expect(within(cancellation).getByText("req-controlled-follow-up")).toBeInTheDocument();
+  expect(within(cancellation).getByText("facility-controlled-follow-up")).toBeInTheDocument();
+  fireEvent.click(within(cancellation).getByRole("button", { name: "Cancel" }));
+  expect(onCopyApprovedCommunication).not.toHaveBeenCalled();
+  expect(screen.getByRole("status")).toHaveTextContent("Nothing was copied, opened, sent, or changed");
+
+  fireEvent.click(within(previewDialog).getByRole("button", { name: "Copy Approved Subject" }));
+  const confirmation = screen.getByRole("alertdialog", { name: "Confirm Copy Approved Subject" });
+  fireEvent.click(within(confirmation).getByRole("button", { name: "Confirm Copy Approved Subject" }));
+  await waitFor(() => expect(onCopyApprovedCommunication).toHaveBeenCalledTimes(1));
+  expect(onCopyApprovedCommunication).toHaveBeenCalledWith("Approved | Synthetic Controlled Candidate");
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("No email was sent and no record changed"));
+});
+
+test("opens a prefilled draft only after separate authorization and confirmation", async () => {
+  const onOpenPrefilledEmailDraft = jest.fn();
+  const { unmount } = render(<RecruiterWorkspacePage {...controlledFollowUpProps({ onOpenPrefilledEmailDraft })} />);
+  let previewDialog = openControlledFollowUpPreview();
+  expect(within(previewDialog).queryByRole("button", { name: "Open Prefilled Email Draft" })).not.toBeInTheDocument();
+  expect(within(previewDialog).getByText(/Prefilled email drafts are not authorized/i)).toBeInTheDocument();
+  unmount();
+
+  render(<RecruiterWorkspacePage {...controlledFollowUpProps({ prefilledEmailDraftAuthorized: true, onOpenPrefilledEmailDraft })} />);
+  previewDialog = openControlledFollowUpPreview();
+  fireEvent.click(within(previewDialog).getByRole("button", { name: "Open Prefilled Email Draft" }));
+  expect(onOpenPrefilledEmailDraft).not.toHaveBeenCalled();
+  const confirmation = screen.getByRole("alertdialog", { name: "Confirm Open Prefilled Email Draft" });
+  fireEvent.click(within(confirmation).getByRole("button", { name: "Confirm Open Prefilled Email Draft" }));
+  await waitFor(() => expect(onOpenPrefilledEmailDraft).toHaveBeenCalledTimes(1));
+  expect(onOpenPrefilledEmailDraft.mock.calls[0][0]).toMatch(/^mailto:candidate%40example\.test\?/);
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("WelcomeFlow did not send it or change any record"));
+});
+
+test("fails closed when exact communication context changes after recruiter review", async () => {
+  const onCopyApprovedCommunication = jest.fn();
+  const initialProps = controlledFollowUpProps({ onCopyApprovedCommunication });
+  const { rerender } = render(<RecruiterWorkspacePage {...initialProps} />);
+  const previewDialog = openControlledFollowUpPreview();
+  fireEvent.click(within(previewDialog).getByRole("button", { name: "Copy Approved Body" }));
+  expect(screen.getByRole("alertdialog", { name: "Confirm Copy Approved Body" })).toBeInTheDocument();
+
+  rerender(<RecruiterWorkspacePage {...initialProps} tracker={[{ ...initialProps.tracker[0], candidateEmail: "changed@example.test" }]} />);
+  const confirmation = screen.getByRole("alertdialog", { name: "Confirm Copy Approved Body" });
+  fireEvent.click(within(confirmation).getByRole("button", { name: "Confirm Copy Approved Body" }));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/changed before confirmation|Nothing was copied/i));
+  expect(onCopyApprovedCommunication).not.toHaveBeenCalled();
+  expect(screen.getByRole("status")).toHaveTextContent(/changed before confirmation|Nothing was copied/i);
+});
+
+test("reports clipboard failure without claiming success or changing workflow state", async () => {
+  const onCopyApprovedCommunication = jest.fn(() => Promise.reject(new Error("Clipboard permission denied.")));
+  render(<RecruiterWorkspacePage {...controlledFollowUpProps({ onCopyApprovedCommunication })} />);
+  const previewDialog = openControlledFollowUpPreview();
+  fireEvent.click(within(previewDialog).getByRole("button", { name: "Copy Approved Body" }));
+  const confirmation = screen.getByRole("alertdialog", { name: "Confirm Copy Approved Body" });
+  fireEvent.click(within(confirmation).getByRole("button", { name: "Confirm Copy Approved Body" }));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Clipboard permission denied. Nothing was sent or changed."));
+  expect(screen.queryByText(/Approved body copied/i)).not.toBeInTheDocument();
 });
 
 test("previews manager feedback with the canonical facility recipient", () => {

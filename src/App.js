@@ -6163,6 +6163,8 @@ function RecruiterApp() {
   const reviewedCandidateReadyConfirmationEnabled = communicationRuntimeEnabled && isFeatureFlagEnabled(settings, "reviewedCandidateReadyConfirmation");
   const reviewedSubmissionCommunicationActionsEnabled = testRuntime.ok && isFeatureFlagEnabled(settings, "reviewedSubmissionCommunicationActions");
   const communicationPreviewFlowEnabled = communicationRuntimeEnabled && (isFeatureFlagEnabled(settings, "communicationPreviewFlow") || reviewedCandidateReadyConfirmationEnabled);
+  const actionCenterControlledCommunicationActionsEnabled = communicationRuntimeEnabled && isFeatureFlagEnabled(settings, "actionCenterControlledCommunicationActions");
+  const actionCenterPrefilledEmailDraftsEnabled = actionCenterControlledCommunicationActionsEnabled && isFeatureFlagEnabled(settings, "actionCenterPrefilledEmailDrafts");
   const [ignoredDuplicateUniqueIds, setIgnoredDuplicateUniqueIds] = useState(() => loadStoredValue("welcomeflow-ignored-duplicate-unique-ids", []));
   const [form, setForm] = useState(DEFAULT_FORM);
   const [submissionDate, setSubmissionDate] = useState(todayIso());
@@ -16122,6 +16124,20 @@ function rowifyCandidate(item = {}) {
             history={history}
             workflowRules={settings.options?.workflowRules || {}}
             communicationSettings={settings}
+            controlledCommunicationActionsAuthorized={actionCenterControlledCommunicationActionsEnabled}
+            prefilledEmailDraftAuthorized={actionCenterPrefilledEmailDraftsEnabled}
+            onCopyApprovedCommunication={async (value) => {
+              if (typeof navigator === "undefined" || !navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+                throw new Error("Clipboard access is unavailable in this browser.");
+              }
+              await navigator.clipboard.writeText(value);
+            }}
+            onOpenPrefilledEmailDraft={(mailtoUrl) => {
+              if (!mailtoUrl || typeof window === "undefined" || typeof window.open !== "function") {
+                throw new Error("The default email application is unavailable in this browser.");
+              }
+              window.open(mailtoUrl, "_self");
+            }}
             theme={THEME}
             isNarrow={isNarrow}
             isMedium={isMedium}
