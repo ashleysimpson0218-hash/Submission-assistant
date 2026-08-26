@@ -134,6 +134,65 @@ test("revalidates the exact approved context before returning clipboard content"
 });
 
 test.each([
+  ACTION_CENTER_COMMUNICATION_ACTIONS.copyBody,
+  ACTION_CENTER_COMMUNICATION_ACTIONS.openEmailDraft,
+])("rejects a confirmed copy-subject review changed to %s", (changedActionType) => {
+  const item = followUpItem();
+  const prepared = prepareActionCenterCommunicationAction({
+    preview: preview({ item }),
+    documentKey: "candidate-follow-up",
+    actionType: ACTION_CENTER_COMMUNICATION_ACTIONS.copySubject,
+    controlledActionsAuthorized: true,
+  });
+  const tamperedReview = {
+    ...prepared.review,
+    actionType: changedActionType,
+    id: `controlled-communication-v1:${encodeURIComponent(changedActionType)}:${encodeURIComponent(prepared.review.actionId)}:${encodeURIComponent(prepared.review.documentKey)}`,
+  };
+  const result = revalidateActionCenterCommunicationAction({
+    review: tamperedReview,
+    item,
+    tracker: [candidate],
+    requisitions: [requisition],
+    sites: [facility],
+    settings,
+    now: new Date("2026-08-25T15:00:00.000Z"),
+    controlledActionsAuthorized: true,
+    prefilledEmailDraftAuthorized: true,
+  });
+  expect(result).toMatchObject({ ok: false, code: "COMMUNICATION_CONTEXT_CHANGED" });
+  expect(result).not.toHaveProperty("action");
+});
+
+test.each([
+  ["malformed", "not-a-controlled-action-review"],
+  ["wrong action", `controlled-communication-v1:${encodeURIComponent(ACTION_CENTER_COMMUNICATION_ACTIONS.copyBody)}:${encodeURIComponent(followUpItem().id)}:candidate-follow-up`],
+  ["wrong item", `controlled-communication-v1:${encodeURIComponent(ACTION_CENTER_COMMUNICATION_ACTIONS.copySubject)}:candidate-other:candidate-follow-up`],
+  ["wrong document", `controlled-communication-v1:${encodeURIComponent(ACTION_CENTER_COMMUNICATION_ACTIONS.copySubject)}:${encodeURIComponent(followUpItem().id)}:manager-feedback`],
+])("rejects a %s confirmation review ID", (_, reviewId) => {
+  const item = followUpItem();
+  const prepared = prepareActionCenterCommunicationAction({
+    preview: preview({ item }),
+    documentKey: "candidate-follow-up",
+    actionType: ACTION_CENTER_COMMUNICATION_ACTIONS.copySubject,
+    controlledActionsAuthorized: true,
+  });
+  const result = revalidateActionCenterCommunicationAction({
+    review: { ...prepared.review, id: reviewId },
+    item,
+    tracker: [candidate],
+    requisitions: [requisition],
+    sites: [facility],
+    settings,
+    now: new Date("2026-08-25T15:00:00.000Z"),
+    controlledActionsAuthorized: true,
+    prefilledEmailDraftAuthorized: true,
+  });
+  expect(result).toMatchObject({ ok: false, code: "COMMUNICATION_CONFIRMATION_INVALID" });
+  expect(result).not.toHaveProperty("action");
+});
+
+test.each([
   ["candidate", { tracker: [{ ...candidate, candidateEmail: "changed@example.test" }] }],
   ["requisition", { requisitions: [{ ...requisition, positionTitle: "Changed Role" }] }],
   ["facility", { sites: [{ ...facility, siteName: "Changed Facility" }] }],

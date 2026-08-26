@@ -50,8 +50,13 @@ function emailDocument(document = {}) {
     && Boolean(text(document.body));
 }
 
-function documentContract(preview = {}, document = {}) {
+function controlledActionReviewId(actionType = "", actionId = "", documentKey = "") {
+  return `controlled-communication-v1:${encodeURIComponent(text(actionType))}:${encodeURIComponent(text(actionId))}:${encodeURIComponent(text(documentKey))}`;
+}
+
+function documentContract(preview = {}, document = {}, actionType = "") {
   return {
+    actionType: text(actionType),
     actionId: text(preview.actionId),
     category: text(preview.category),
     snapshotHash: text(preview.snapshotHash),
@@ -103,9 +108,9 @@ export function prepareActionCenterCommunicationAction({
   if (actionType !== ACTION_CENTER_COMMUNICATION_ACTIONS.openEmailDraft && !value) {
     return failure("COMMUNICATION_VALUE_MISSING", "The approved communication value is no longer available.");
   }
-  const contract = documentContract(preview, document);
+  const contract = documentContract(preview, document, actionType);
   const review = {
-    id: `controlled-communication-v1:${encodeURIComponent(actionType)}:${encodeURIComponent(text(preview.actionId))}:${encodeURIComponent(text(document.key))}`,
+    id: controlledActionReviewId(actionType, preview.actionId, document.key),
     actionType,
     actionId: text(preview.actionId),
     category: text(preview.category),
@@ -141,6 +146,10 @@ export function revalidateActionCenterCommunicationAction({
   prefilledEmailDraftAuthorized = false,
 } = {}) {
   if (!text(review.id) || !review.requiresConfirmation) return failure("COMMUNICATION_CONFIRMATION_INVALID", "The communication confirmation request is invalid.");
+  const canonicalReviewId = controlledActionReviewId(review.actionType, review.actionId, review.documentKey);
+  if (text(review.id) !== canonicalReviewId) {
+    return failure("COMMUNICATION_CONFIRMATION_INVALID", "The communication confirmation no longer matches the exact requested action. Review it again.");
+  }
   if (text(review.actionId) !== text(item.id)) return failure("COMMUNICATION_CONTEXT_CHANGED", "The Action Center item changed before confirmation. Review it again.");
   const freshPreview = buildActionCenterCommunicationPreview({ item, tracker, requisitions, sites, settings, now });
   const prepared = prepareActionCenterCommunicationAction({
@@ -151,6 +160,9 @@ export function revalidateActionCenterCommunicationAction({
     prefilledEmailDraftAuthorized,
   });
   if (!prepared.ok) return prepared;
+  if (prepared.review.id !== text(review.id)) {
+    return failure("COMMUNICATION_CONTEXT_CHANGED", "The requested communication action changed before confirmation. Review it again.");
+  }
   if (prepared.review.expectedFingerprint !== text(review.expectedFingerprint)) {
     return failure("COMMUNICATION_CONTEXT_CHANGED", "Candidate, requisition, facility, recipient, or approved content changed before confirmation. Review the communication again.");
   }
