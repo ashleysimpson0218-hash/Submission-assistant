@@ -245,7 +245,7 @@ function ActionCenterCommunicationPreviewDialog({ preview, theme, onClose, contr
   );
 }
 
-export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EMPTY_LIST, actionCenterRequisitions = null, sites = EMPTY_LIST, history = EMPTY_LIST, calendarEvents = EMPTY_LIST, workflowRules = EMPTY_RULES, communicationSettings = EMPTY_RULES, controlledCommunicationActionsAuthorized = false, prefilledEmailDraftAuthorized = false, onCopyApprovedCommunication = null, onOpenPrefilledEmailDraft = null, theme, isNarrow = false, isMedium = false, recruiterName = "Recruiter", onOpenCandidate, onOpenActionCenterCandidate = onOpenCandidate, onOpenRequisition, onOpenActionCenterRequisition = onOpenRequisition, onOpenFacility = null, onOpenActionCenterFacility = onOpenFacility, onOpenCalendar = () => {}, onOpenCalendarEvent = () => {}, onAddCalendarEvent = () => {}, onScheduleCalendar = () => {}, onOpenWeeklyCleanup, onOpenReports, onTaskAction = () => true, onWorkspaceEvent = () => true }) {
+export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EMPTY_LIST, actionCenterRequisitions = null, sites = EMPTY_LIST, history = EMPTY_LIST, calendarEvents = EMPTY_LIST, workflowRules = EMPTY_RULES, communicationSettings = EMPTY_RULES, controlledCommunicationActionsAuthorized = false, prefilledEmailDraftAuthorized = false, onCopyApprovedCommunication = null, onOpenPrefilledEmailDraft = null, onRecordControlledCommunicationAction = null, theme, isNarrow = false, isMedium = false, recruiterName = "Recruiter", onOpenCandidate, onOpenActionCenterCandidate = onOpenCandidate, onOpenRequisition, onOpenActionCenterRequisition = onOpenRequisition, onOpenFacility = null, onOpenActionCenterFacility = onOpenFacility, onOpenCalendar = () => {}, onOpenCalendarEvent = () => {}, onAddCalendarEvent = () => {}, onScheduleCalendar = () => {}, onOpenWeeklyCleanup, onOpenReports, onTaskAction = () => true, onWorkspaceEvent = () => true }) {
   const [activeFilter, setActiveFilter] = useState("Do Now");
   const [actionTaskId, setActionTaskId] = useState("");
   const [focusMode, setFocusMode] = useState(false);
@@ -344,6 +344,8 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
   const confirmActionCenterCommunicationAction = async () => {
     if (actionCenterCommunicationActionProcessing || !actionCenterCommunicationActionReview) return;
     setActionCenterCommunicationActionProcessing(true);
+    let auditRunId = "";
+    let effectCompleted = false;
     try {
       const item = navigableActionCenterItems.find((entry) => entry.id === actionCenterCommunicationActionReview.actionId);
       if (!item) {
@@ -367,22 +369,66 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
         setActionCenterCommunicationActionResult({ status: "failure", message: `${revalidated.message} Nothing was copied, opened, sent, or changed.` });
         return;
       }
+      if (typeof onRecordControlledCommunicationAction !== "function") {
+        throw new Error("Communication audit is unavailable. Nothing was copied or opened.");
+      }
+      const auditStart = await onRecordControlledCommunicationAction({
+        phase: "begin",
+        review: actionCenterCommunicationActionReview,
+      });
+      if (!auditStart?.ok) throw new Error(auditStart?.message || "Communication approval could not be recorded.");
+      if (auditStart.duplicate) {
+        setActionCenterCommunicationActionReview(null);
+        setActionCenterCommunicationActionResult({ status: "cancelled", message: "This exact confirmed action was already recorded. Nothing was repeated." });
+        return;
+      }
+      auditRunId = auditStart.actionRunId;
       if (revalidated.action.type === ACTION_CENTER_COMMUNICATION_ACTIONS.openEmailDraft) {
         if (typeof onOpenPrefilledEmailDraft !== "function") throw new Error("Prefilled email drafts are unavailable in this runtime.");
         await onOpenPrefilledEmailDraft(revalidated.action.mailtoUrl);
-        setActionCenterCommunicationActionResult({ status: "success", message: "Prefilled email draft opened. Review it and send manually; WelcomeFlow did not send it or change any record." });
       } else {
         if (typeof onCopyApprovedCommunication !== "function") throw new Error("Clipboard access is unavailable in this runtime.");
         await onCopyApprovedCommunication(revalidated.action.value);
+      }
+      effectCompleted = true;
+      const resultCode = revalidated.action.type === ACTION_CENTER_COMMUNICATION_ACTIONS.openEmailDraft
+        ? "EMAIL_DRAFT_OPENED"
+        : revalidated.action.type === ACTION_CENTER_COMMUNICATION_ACTIONS.copySubject
+          ? "APPROVED_SUBJECT_COPIED"
+          : "APPROVED_BODY_COPIED";
+      let auditCompletion = null;
+      try {
+        auditCompletion = await onRecordControlledCommunicationAction({
+          phase: "complete",
+          actionRunId: auditRunId,
+          resultStatus: "succeeded",
+          resultCode,
+        });
+      } catch {
+        auditCompletion = null;
+      }
+      if (!auditCompletion?.ok) {
+        setActionCenterCommunicationActionResult({ status: "failure", message: "The browser action completed, but its audit result could not be saved. Do not repeat the action; ask an administrator to reconcile it." });
+      } else if (revalidated.action.type === ACTION_CENTER_COMMUNICATION_ACTIONS.openEmailDraft) {
+        setActionCenterCommunicationActionResult({ status: "success", message: "Prefilled email draft opened and recorded. Review it and send manually; WelcomeFlow did not send it or change candidate status." });
+      } else {
         const label = revalidated.action.type === ACTION_CENTER_COMMUNICATION_ACTIONS.copySubject ? "subject" : "body";
-        setActionCenterCommunicationActionResult({ status: "success", message: `Approved ${label} copied. No email was sent and no record changed.` });
+        setActionCenterCommunicationActionResult({ status: "success", message: `Approved ${label} copied and recorded. No email was sent and no candidate status changed.` });
       }
       setActionCenterCommunicationActionReview(null);
     } catch (error) {
+      if (auditRunId && !effectCompleted && typeof onRecordControlledCommunicationAction === "function") {
+        await onRecordControlledCommunicationAction({
+          phase: "complete",
+          actionRunId: auditRunId,
+          resultStatus: "failed",
+          resultCode: "BROWSER_ACTION_FAILED",
+        }).catch(() => null);
+      }
       setActionCenterCommunicationActionReview(null);
       setActionCenterCommunicationActionResult({
         status: "failure",
-        message: `${error instanceof Error ? error.message : "The controlled communication action failed."} Nothing was sent or changed.`,
+        message: `${error instanceof Error ? error.message : "The controlled communication action failed."} No email was sent and no candidate status changed.`,
       });
     } finally {
       setActionCenterCommunicationActionProcessing(false);

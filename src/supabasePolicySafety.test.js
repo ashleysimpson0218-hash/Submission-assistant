@@ -7,6 +7,7 @@ const remoteBaselinePath = path.resolve(migrationRoot, "20260807035516_remote_sc
 const containmentPath = path.resolve(migrationRoot, "20260807035517_contain_real_candidate_data.sql");
 const defaultPrivilegeHardeningPath = path.resolve(migrationRoot, "20260807035518_harden_default_public_privileges.sql");
 const rateLimitPath = path.resolve(migrationRoot, "20260807035519_add_shared_api_rate_limits.sql");
+const communicationActionAuditPath = path.resolve(migrationRoot, "20260826015254_add_communication_action_audit.sql");
 
 function normalizedSql(filePath) {
   return fs.readFileSync(filePath, "utf8").replace(/\s+/g, " ").trim().toLowerCase();
@@ -122,5 +123,31 @@ describe("WelcomeFlow workspace bootstrap safety", () => {
     expect(sql).toContain("expires_at < clock_timestamp()");
     expect(sql).toContain("revoke all privileges on function public.welcomeflow_consume_api_rate_limits(text, text[], integer, integer) from public, anon, authenticated");
     expect(sql).toContain("grant execute on function public.welcomeflow_consume_api_rate_limits(text, text[], integer, integer) to service_role");
+  });
+
+  test("communication action audit is RLS-protected, service-only, immutable, and retained", () => {
+    const sql = normalizedSql(communicationActionAuditPath);
+    ["welcomeflow_communication_action_runs", "welcomeflow_communication_action_audit_events"].forEach((table) => {
+      expect(sql).toContain(`alter table public.${table} enable row level security`);
+      expect(sql).toContain(`revoke all privileges on table public.${table} from public, anon, authenticated`);
+    });
+    expect(sql).not.toMatch(/create policy/);
+    expect(sql).toContain("communication action audit events are immutable");
+    expect(sql).toContain("communication action run identity and approval are immutable");
+    expect(sql).toContain("retention_until timestamptz not null default (clock_timestamp() + interval '365 days')");
+    expect(sql).toContain("current_user <> 'service_role'");
+    expect(sql).toContain("grant execute on function public.welcomeflow_purge_expired_communication_action_audit(integer) to service_role");
+  });
+
+  test("communication action lifecycle is atomic and prevents duplicate approvals", () => {
+    const sql = normalizedSql(communicationActionAuditPath);
+    expect(sql).toContain("unique (workspace_id, idempotency_key)");
+    expect(sql).toContain("pg_advisory_xact_lock");
+    expect(sql).toContain("return 'duplicate_' || existing.action_status");
+    expect(sql).toContain("action_status in ('approved', 'succeeded', 'failed', 'cancelled')");
+    expect(sql).toContain("unique (action_run_id, event_type)");
+    expect(sql).toContain("grant execute on function public.welcomeflow_begin_communication_action");
+    expect(sql).toContain("grant execute on function public.welcomeflow_complete_communication_action");
+    expect(sql).not.toMatch(/to (anon|authenticated)/);
   });
 });

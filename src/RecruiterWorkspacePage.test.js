@@ -474,6 +474,9 @@ function controlledFollowUpProps(overrides = {}) {
     sites: [{ id: "facility-controlled-follow-up", siteName: "Synthetic Controlled Facility", regionName: "Synthetic Region", status: "Active", hiringManagerEmail: "manager@example.test" }],
     communicationSettings: { general: { recruiterName: "Synthetic Recruiter" }, templates: { candidate48HourFollowUp: { subject: "Approved | {candidate_name}", body: "Approved body for {candidate_name} at {facility}." } } },
     controlledCommunicationActionsAuthorized: true,
+    onRecordControlledCommunicationAction: jest.fn((payload) => Promise.resolve(payload.phase === "begin"
+      ? { ok: true, status: "begun", actionRunId: payload.review.approvalId }
+      : { ok: true, status: "completed", actionRunId: payload.actionRunId })),
     onOpenCandidate: jest.fn(),
     onOpenRequisition: jest.fn(),
     onOpenWeeklyCleanup: jest.fn(),
@@ -508,7 +511,7 @@ test("requires confirmation before copying approved content and reports cancella
   fireEvent.click(within(confirmation).getByRole("button", { name: "Confirm Copy Approved Subject" }));
   await waitFor(() => expect(onCopyApprovedCommunication).toHaveBeenCalledTimes(1));
   expect(onCopyApprovedCommunication).toHaveBeenCalledWith("Approved | Synthetic Controlled Candidate");
-  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("No email was sent and no record changed"));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("No email was sent and no candidate status changed"));
 });
 
 test("opens a prefilled draft only after separate authorization and confirmation", async () => {
@@ -527,7 +530,7 @@ test("opens a prefilled draft only after separate authorization and confirmation
   fireEvent.click(within(confirmation).getByRole("button", { name: "Confirm Open Prefilled Email Draft" }));
   await waitFor(() => expect(onOpenPrefilledEmailDraft).toHaveBeenCalledTimes(1));
   expect(onOpenPrefilledEmailDraft.mock.calls[0][0]).toMatch(/^mailto:candidate%40example\.test\?/);
-  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("WelcomeFlow did not send it or change any record"));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("WelcomeFlow did not send it or change candidate status"));
 });
 
 test("fails closed when exact communication context changes after recruiter review", async () => {
@@ -553,8 +556,60 @@ test("reports clipboard failure without claiming success or changing workflow st
   fireEvent.click(within(previewDialog).getByRole("button", { name: "Copy Approved Body" }));
   const confirmation = screen.getByRole("alertdialog", { name: "Confirm Copy Approved Body" });
   fireEvent.click(within(confirmation).getByRole("button", { name: "Confirm Copy Approved Body" }));
-  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Clipboard permission denied. Nothing was sent or changed."));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Clipboard permission denied. No email was sent and no candidate status changed."));
   expect(screen.queryByText(/Approved body copied/i)).not.toBeInTheDocument();
+});
+
+test("records approval before the browser effect and records the exact success result", async () => {
+  const sequence = [];
+  const onRecordControlledCommunicationAction = jest.fn((payload) => {
+    sequence.push(`audit:${payload.phase}:${payload.resultCode || "approved"}`);
+    return Promise.resolve(payload.phase === "begin"
+      ? { ok: true, status: "begun", actionRunId: payload.review.approvalId }
+      : { ok: true, status: "completed", actionRunId: payload.actionRunId });
+  });
+  const onCopyApprovedCommunication = jest.fn(() => { sequence.push("clipboard"); return Promise.resolve(); });
+  render(<RecruiterWorkspacePage {...controlledFollowUpProps({ onRecordControlledCommunicationAction, onCopyApprovedCommunication })} />);
+  const previewDialog = openControlledFollowUpPreview();
+  fireEvent.click(within(previewDialog).getByRole("button", { name: "Copy Approved Body" }));
+  fireEvent.click(within(screen.getByRole("alertdialog", { name: "Confirm Copy Approved Body" })).getByRole("button", { name: "Confirm Copy Approved Body" }));
+  await waitFor(() => expect(onRecordControlledCommunicationAction).toHaveBeenCalledTimes(2));
+  expect(sequence).toEqual(["audit:begin:approved", "clipboard", "audit:complete:APPROVED_BODY_COPIED"]);
+  expect(onRecordControlledCommunicationAction.mock.calls[1][0]).toMatchObject({ phase: "complete", resultStatus: "succeeded", resultCode: "APPROVED_BODY_COPIED" });
+});
+
+test("does not execute the browser effect when audit begin fails or reports a duplicate", async () => {
+  const onCopyApprovedCommunication = jest.fn();
+  const failedAudit = jest.fn(() => Promise.resolve({ ok: false, message: "Audit unavailable." }));
+  const { unmount } = render(<RecruiterWorkspacePage {...controlledFollowUpProps({ onRecordControlledCommunicationAction: failedAudit, onCopyApprovedCommunication })} />);
+  let previewDialog = openControlledFollowUpPreview();
+  fireEvent.click(within(previewDialog).getByRole("button", { name: "Copy Approved Subject" }));
+  fireEvent.click(within(screen.getByRole("alertdialog", { name: "Confirm Copy Approved Subject" })).getByRole("button", { name: "Confirm Copy Approved Subject" }));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Audit unavailable"));
+  expect(onCopyApprovedCommunication).not.toHaveBeenCalled();
+  unmount();
+
+  const duplicateAudit = jest.fn((payload) => Promise.resolve({ ok: true, duplicate: true, status: "duplicate_succeeded", actionRunId: payload.review.approvalId }));
+  render(<RecruiterWorkspacePage {...controlledFollowUpProps({ onRecordControlledCommunicationAction: duplicateAudit, onCopyApprovedCommunication })} />);
+  previewDialog = openControlledFollowUpPreview();
+  fireEvent.click(within(previewDialog).getByRole("button", { name: "Copy Approved Subject" }));
+  fireEvent.click(within(screen.getByRole("alertdialog", { name: "Confirm Copy Approved Subject" })).getByRole("button", { name: "Confirm Copy Approved Subject" }));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Nothing was repeated"));
+  expect(onCopyApprovedCommunication).not.toHaveBeenCalled();
+});
+
+test("reports an audit reconciliation failure without repeating an already completed browser effect", async () => {
+  const onCopyApprovedCommunication = jest.fn(() => Promise.resolve());
+  const onRecordControlledCommunicationAction = jest.fn((payload) => Promise.resolve(payload.phase === "begin"
+    ? { ok: true, status: "begun", actionRunId: payload.review.approvalId }
+    : { ok: false, message: "Audit completion unavailable." }));
+  render(<RecruiterWorkspacePage {...controlledFollowUpProps({ onRecordControlledCommunicationAction, onCopyApprovedCommunication })} />);
+  const previewDialog = openControlledFollowUpPreview();
+  fireEvent.click(within(previewDialog).getByRole("button", { name: "Copy Approved Body" }));
+  fireEvent.click(within(screen.getByRole("alertdialog", { name: "Confirm Copy Approved Body" })).getByRole("button", { name: "Confirm Copy Approved Body" }));
+  await waitFor(() => expect(onCopyApprovedCommunication).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("audit result could not be saved"));
+  expect(screen.getByRole("status")).toHaveTextContent("Do not repeat");
 });
 
 test("previews manager feedback with the canonical facility recipient", () => {

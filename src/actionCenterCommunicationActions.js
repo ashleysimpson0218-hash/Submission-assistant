@@ -54,6 +54,23 @@ function controlledActionReviewId(actionType = "", actionId = "", documentKey = 
   return `controlled-communication-v1:${encodeURIComponent(text(actionType))}:${encodeURIComponent(text(actionId))}:${encodeURIComponent(text(documentKey))}`;
 }
 
+function createApprovalId() {
+  const cryptoApi = typeof window !== "undefined" ? window.crypto : null;
+  if (typeof cryptoApi?.randomUUID === "function") return cryptoApi.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (typeof cryptoApi?.getRandomValues === "function") cryptoApi.getRandomValues(bytes);
+  else {
+    const seed = `${Date.now()}|${typeof performance !== "undefined" ? performance.now() : 0}|${Math.random()}|${Math.random()}`;
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256) ^ seed.charCodeAt(index % seed.length);
+    }
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const value = Array.from(bytes, (entry) => entry.toString(16).padStart(2, "0")).join("");
+  return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
+}
+
 function documentContract(preview = {}, document = {}, actionType = "") {
   return {
     actionType: text(actionType),
@@ -94,6 +111,7 @@ export function prepareActionCenterCommunicationAction({
   actionType = "",
   controlledActionsAuthorized = false,
   prefilledEmailDraftAuthorized = false,
+  approvalId = "",
 } = {}) {
   if (!controlledActionsAuthorized) return failure("CONTROLLED_ACTION_NOT_AUTHORIZED", "Controlled communication actions are not authorized in this runtime.");
   if (!preview.canReview || preview.blockers?.length) return failure("COMMUNICATION_PREVIEW_BLOCKED", "The communication preview is blocked and cannot be used for an action.");
@@ -109,7 +127,10 @@ export function prepareActionCenterCommunicationAction({
     return failure("COMMUNICATION_VALUE_MISSING", "The approved communication value is no longer available.");
   }
   const contract = documentContract(preview, document, actionType);
+  const resolvedApprovalId = text(approvalId) || createApprovalId();
+  if (!resolvedApprovalId) return failure("COMMUNICATION_APPROVAL_ID_UNAVAILABLE", "A secure immutable approval ID could not be created.");
   const review = {
+    approvalId: resolvedApprovalId,
     id: controlledActionReviewId(actionType, preview.actionId, document.key),
     actionType,
     actionId: text(preview.actionId),

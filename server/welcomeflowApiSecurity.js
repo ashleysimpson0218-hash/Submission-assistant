@@ -8,6 +8,7 @@ const ACTION_ENABLE_FLAGS = Object.freeze({
   email: "WELCOMEFLOW_ENABLE_EMAIL_ACTIONS",
   resume: "WELCOMEFLOW_ENABLE_RESUME_ACTIONS",
   booking: "WELCOMEFLOW_ENABLE_BOOKING_ACTIONS",
+  communicationAudit: "WELCOMEFLOW_ENABLE_COMMUNICATION_AUDIT_ACTIONS",
 });
 
 function configuredValue(...names) {

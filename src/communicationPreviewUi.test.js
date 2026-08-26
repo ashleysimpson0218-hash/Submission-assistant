@@ -162,7 +162,8 @@ describe("side-effect-free submission package preview", () => {
     const workspaceSource = fs.readFileSync(path.join(__dirname, "RecruiterWorkspacePage.js"), "utf8");
     const actionSource = fs.readFileSync(path.join(__dirname, "actionCenterCommunicationActions.js"), "utf8");
 
-    expect(appSource).toMatch(/communicationRuntimeEnabled && isFeatureFlagEnabled\(settings, "actionCenterControlledCommunicationActions"\)/);
+    expect(appSource).toMatch(/actionCenterCommunicationAuditPersistenceEnabled && isFeatureFlagEnabled\(settings, "actionCenterControlledCommunicationActions"\)/);
+    expect(appSource).toMatch(/communicationRuntimeEnabled && Boolean\(supabase\) && isFeatureFlagEnabled\(settings, "actionCenterCommunicationAuditPersistence"\)/);
     expect(appSource).toMatch(/actionCenterControlledCommunicationActionsEnabled && isFeatureFlagEnabled\(settings, "actionCenterPrefilledEmailDrafts"\)/);
     expect(appSource).toMatch(/controlledCommunicationActionsAuthorized=\{actionCenterControlledCommunicationActionsEnabled\}/);
     expect(appSource).toMatch(/prefilledEmailDraftAuthorized=\{actionCenterPrefilledEmailDraftsEnabled\}/);
