@@ -156,4 +156,19 @@ describe("side-effect-free submission package preview", () => {
     const actionSource = source.slice(actionStart, actionEnd);
     expect(actionSource).not.toMatch(/buildOutput|generateOutput|applyTokens|\/api\//);
   });
+
+  test("Phase 2.1C Action Center controls are independently authorized and do not send or persist", () => {
+    const appSource = fs.readFileSync(path.join(__dirname, "App.js"), "utf8");
+    const workspaceSource = fs.readFileSync(path.join(__dirname, "RecruiterWorkspacePage.js"), "utf8");
+    const actionSource = fs.readFileSync(path.join(__dirname, "actionCenterCommunicationActions.js"), "utf8");
+
+    expect(appSource).toMatch(/communicationRuntimeEnabled && isFeatureFlagEnabled\(settings, "actionCenterControlledCommunicationActions"\)/);
+    expect(appSource).toMatch(/actionCenterControlledCommunicationActionsEnabled && isFeatureFlagEnabled\(settings, "actionCenterPrefilledEmailDrafts"\)/);
+    expect(appSource).toMatch(/controlledCommunicationActionsAuthorized=\{actionCenterControlledCommunicationActionsEnabled\}/);
+    expect(appSource).toMatch(/prefilledEmailDraftAuthorized=\{actionCenterPrefilledEmailDraftsEnabled\}/);
+    expect(workspaceSource).toMatch(/revalidateActionCenterCommunicationAction/);
+    expect(workspaceSource).toMatch(/Recruiter confirmation required/);
+    expect(actionSource).not.toMatch(/fetch\(|supabase|localStorage|sessionStorage|indexedDB|Paycom/i);
+    expect(workspaceSource).not.toMatch(/Mark Sent|Send Email|Send Now/);
+  });
 });
