@@ -20,4 +20,10 @@ describe("protected recruiter API client boundary", () => {
     expect(appSource).toContain(["Authorization: `Bearer $", "{accessToken}`"].join(""));
     expect(appSource).toContain('"X-WelcomeFlow-Workspace-Id": CLOUD_WORKSPACE_ID');
   });
+
+  test("controlled communication audit uses the protected bearer and workspace client", () => {
+    expect(appSource).toContain("recordActionCenterCommunicationAudit({");
+    expect(appSource).toContain("workspaceId: CLOUD_WORKSPACE_ID");
+    expect(appSource).toContain("actionCenterCommunicationAuditPersistence");
+  });
 });

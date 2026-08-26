@@ -21,6 +21,7 @@ import {
 import { isFeatureFlagEnabled } from "./featureFlags";
 import { readRuntimeConfig, workspacePersistenceMode } from "./runtimeConfig";
 import { getRuntimeSupabaseClient } from "./supabaseRuntimeClient";
+import { recordActionCenterCommunicationAudit } from "./actionCenterCommunicationAuditClient";
 import { reportActionFailure, safeActionFailure } from "./runtimeErrors";
 import { openApprovedExternalUrl } from "./safeExternalUrl";
 import { issueBookingAccess } from "./bookingAccess";
@@ -6163,7 +6164,8 @@ function RecruiterApp() {
   const reviewedCandidateReadyConfirmationEnabled = communicationRuntimeEnabled && isFeatureFlagEnabled(settings, "reviewedCandidateReadyConfirmation");
   const reviewedSubmissionCommunicationActionsEnabled = testRuntime.ok && isFeatureFlagEnabled(settings, "reviewedSubmissionCommunicationActions");
   const communicationPreviewFlowEnabled = communicationRuntimeEnabled && (isFeatureFlagEnabled(settings, "communicationPreviewFlow") || reviewedCandidateReadyConfirmationEnabled);
-  const actionCenterControlledCommunicationActionsEnabled = communicationRuntimeEnabled && isFeatureFlagEnabled(settings, "actionCenterControlledCommunicationActions");
+  const actionCenterCommunicationAuditPersistenceEnabled = communicationRuntimeEnabled && Boolean(supabase) && isFeatureFlagEnabled(settings, "actionCenterCommunicationAuditPersistence");
+  const actionCenterControlledCommunicationActionsEnabled = actionCenterCommunicationAuditPersistenceEnabled && isFeatureFlagEnabled(settings, "actionCenterControlledCommunicationActions");
   const actionCenterPrefilledEmailDraftsEnabled = actionCenterControlledCommunicationActionsEnabled && isFeatureFlagEnabled(settings, "actionCenterPrefilledEmailDrafts");
   const [ignoredDuplicateUniqueIds, setIgnoredDuplicateUniqueIds] = useState(() => loadStoredValue("welcomeflow-ignored-duplicate-unique-ids", []));
   const [form, setForm] = useState(DEFAULT_FORM);
@@ -16126,6 +16128,11 @@ function rowifyCandidate(item = {}) {
             communicationSettings={settings}
             controlledCommunicationActionsAuthorized={actionCenterControlledCommunicationActionsEnabled}
             prefilledEmailDraftAuthorized={actionCenterPrefilledEmailDraftsEnabled}
+            onRecordControlledCommunicationAction={(payload) => recordActionCenterCommunicationAudit({
+              client: supabase,
+              workspaceId: CLOUD_WORKSPACE_ID,
+              ...payload,
+            })}
             onCopyApprovedCommunication={async (value) => {
               if (typeof navigator === "undefined" || !navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
                 throw new Error("Clipboard access is unavailable in this browser.");
@@ -16136,7 +16143,8 @@ function rowifyCandidate(item = {}) {
               if (!mailtoUrl || typeof window === "undefined" || typeof window.open !== "function") {
                 throw new Error("The default email application is unavailable in this browser.");
               }
-              window.open(mailtoUrl, "_self");
+              const opened = window.open(mailtoUrl, "_self");
+              if (!opened) throw new Error("The default email application did not accept the approved draft.");
             }}
             theme={THEME}
             isNarrow={isNarrow}

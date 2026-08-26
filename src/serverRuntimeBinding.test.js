@@ -12,6 +12,7 @@ function baseEnvironment(patch = {}) {
     WELCOMEFLOW_ENABLE_EMAIL_ACTIONS: "true",
     WELCOMEFLOW_ENABLE_RESUME_ACTIONS: "true",
     WELCOMEFLOW_ENABLE_BOOKING_ACTIONS: "true",
+    WELCOMEFLOW_ENABLE_COMMUNICATION_AUDIT_ACTIONS: "true",
     ...patch,
   };
 }
@@ -87,6 +88,7 @@ describe("server runtime and project binding", () => {
     ["email", "WELCOMEFLOW_ENABLE_EMAIL_ACTIONS"],
     ["resume", "WELCOMEFLOW_ENABLE_RESUME_ACTIONS"],
     ["booking", "WELCOMEFLOW_ENABLE_BOOKING_ACTIONS"],
+    ["communicationAudit", "WELCOMEFLOW_ENABLE_COMMUNICATION_AUDIT_ACTIONS"],
   ])("requires the positive %s action flag", (action, flag) => {
     const { readServerRuntimeConfig } = require("../server/welcomeflowApiSecurity");
     const omitted = baseEnvironment();
@@ -100,6 +102,7 @@ describe("server runtime and project binding", () => {
     ["send-email", "email", "WELCOMEFLOW_ENABLE_EMAIL_ACTIONS", { method: "POST", headers: {}, body: {} }],
     ["parse-resume", "resume", "WELCOMEFLOW_ENABLE_RESUME_ACTIONS", { method: "POST", headers: {}, body: {} }],
     ["book-screening", "booking", "WELCOMEFLOW_ENABLE_BOOKING_ACTIONS", { method: "GET", headers: {}, query: {} }],
+    ["record-communication-action", "communicationAudit", "WELCOMEFLOW_ENABLE_COMMUNICATION_AUDIT_ACTIONS", { method: "POST", headers: {}, body: {} }],
   ])("%s rejects disabled configuration before Supabase or providers", async (moduleName, _action, flag, request) => {
     Object.assign(process.env, baseEnvironment({ [flag]: "false", WELCOMEFLOW_MAINTENANCE_MODE: "false", WELCOMEFLOW_UAT_EXTERNAL_ACTIONS_DISABLED: "false" }));
     const createClient = jest.fn(() => { throw new Error("Supabase must not initialize"); });
