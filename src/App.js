@@ -14256,7 +14256,7 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
         hasTemplate: standardNoOpeningsTemplateAvailable,
         unresolvedOpeningRisk: unresolvedOpeningRiskIds.has(row.facilityId),
       });
-      return withFacilityReadiness(applyNoOpeningOutcome(row, outcome), eligibility.scopedIssues);
+      return withFacilityReadiness(applyNoOpeningOutcome({ ...row, noOpeningsPolicy }, outcome), eligibility.scopedIssues);
     }),
     [facilityReportQueue, reportValidationIssues, noOpeningsPolicy, noOpeningWeeklyDecisions, standardNoOpeningsTemplateAvailable, unresolvedOpeningRiskIds],
   );
@@ -16124,6 +16124,7 @@ function rowifyCandidate(item = {}) {
             actionCenterRequisitions={allRequisitions}
             sites={settings.sites || []}
             history={history}
+            facilityReadinessRows={facilityReadinessRows}
             workflowRules={settings.options?.workflowRules || {}}
             communicationSettings={settings}
             controlledCommunicationActionsAuthorized={actionCenterControlledCommunicationActionsEnabled}

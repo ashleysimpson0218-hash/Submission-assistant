@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { RecruiterWorkspacePage } from "./RecruiterWorkspacePage";
 import { FacilityPositionSetupPage, actionCenterNavigationState, activeActionCenterCandidateTargetForSelection, clearedActionCenterTargets, resolveActionCenterCandidateTarget, resolveActionCenterSetupTarget } from "./App";
+import { ACTION_CENTER_CATEGORIES } from "./actionCenterSelectors";
 
 const theme = {
   panel: "#fff", panelAlt: "#f7f4ff", borderSoft: "#ddd", shadow: "none", text: "#17112f", muted: "#6b6680",
@@ -219,6 +220,13 @@ test("renders the read-only Action Center with the approved category filters and
   expect(within(filters).getByRole("tab", { name: /Follow-up Due/i })).toBeInTheDocument();
   expect(within(filters).getByRole("tab", { name: /Manager Feedback/i })).toBeInTheDocument();
   expect(within(filters).getByRole("tab", { name: /Candidate Ready/i })).toBeInTheDocument();
+  expect(within(filters).getByRole("tab", { name: /Interview Scheduling/i })).toBeInTheDocument();
+  expect(within(filters).getByRole("tab", { name: /Offer Follow-up/i })).toBeInTheDocument();
+  expect(within(filters).getByRole("tab", { name: /Stale Candidates/i })).toBeInTheDocument();
+  expect(within(filters).getByRole("tab", { name: /Candidate \/ Requisition Info/i })).toBeInTheDocument();
+  expect(within(filters).getByRole("tab", { name: /Facility Contact/i })).toBeInTheDocument();
+  expect(within(filters).getByRole("tab", { name: /Report Readiness/i })).toBeInTheDocument();
+  expect(within(filters).getByRole("tab", { name: /Ask Weekly Decision/i })).toBeInTheDocument();
   expect(within(filters).getByRole("tab", { name: /Data Blockers/i })).toBeInTheDocument();
   fireEvent.click(within(filters).getByRole("tab", { name: /Follow-up Due/i }));
   expect(screen.getByText(/Recruiter follow-up due for Synthetic Follow-Up Candidate/i)).toBeInTheDocument();
@@ -316,7 +324,7 @@ test("routes missing facility contact review with the exact facility context", (
     onOpenReports={jest.fn()}
   />);
   const filters = screen.getByRole("tablist", { name: "Action Center filters" });
-  fireEvent.click(within(filters).getByRole("tab", { name: /Data Blockers/i }));
+  fireEvent.click(within(filters).getByRole("tab", { name: /Facility Contact/i }));
   expect(screen.getByText("Facility contact is missing")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Open Facility" }));
   expect(onOpenFacility).toHaveBeenCalledWith("facility-contact", expect.objectContaining({ issueCode: "facility-recipient-missing", facilityId: "facility-contact" }));
@@ -335,11 +343,48 @@ test("fails closed when a facility destination has no facility handler", () => {
     onOpenReports={jest.fn()}
   />);
   const filters = screen.getByRole("tablist", { name: "Action Center filters" });
-  fireEvent.click(within(filters).getByRole("tab", { name: /Data Blockers/i }));
+  fireEvent.click(within(filters).getByRole("tab", { name: /Facility Contact/i }));
   const unavailable = screen.getByRole("button", { name: "Target unavailable" });
   expect(unavailable).toBeDisabled();
   fireEvent.click(unavailable);
   expect(onOpenRequisition).not.toHaveBeenCalled();
+});
+
+test("opens the canonical Ask Weekly decision in Weekly Reporting", () => {
+  const onOpenWeeklyCleanup = jest.fn();
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={[]}
+    requisitions={[]}
+    sites={[]}
+    facilityReadinessRows={[{
+      id: "facility-ask-weekly",
+      facilityId: "facility-ask-weekly",
+      facility: "Synthetic Ask Weekly Facility",
+      regionName: "Synthetic Region",
+      noOpeningsPolicy: "Ask Weekly",
+      readiness: "Needs Review",
+      readinessIssues: [],
+      noOpeningOutcome: {
+        applies: true,
+        outcomeLabel: "Weekly Decision Needed",
+        reason: "Choose whether to create a standard report for this session.",
+      },
+    }]}
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={onOpenWeeklyCleanup}
+    onOpenReports={jest.fn()}
+  />);
+  const filters = screen.getByRole("tablist", { name: "Action Center filters" });
+  fireEvent.click(within(filters).getByRole("tab", { name: /Ask Weekly Decision/i }));
+  expect(screen.getByText("Weekly no-opening decision needed for Synthetic Ask Weekly Facility")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Open Weekly Reporting" }));
+  expect(onOpenWeeklyCleanup).toHaveBeenCalledWith(expect.objectContaining({
+    category: ACTION_CENTER_CATEGORIES.askWeekly,
+    facilityId: "facility-ask-weekly",
+    issueCode: "ask-weekly-decision",
+  }));
 });
 
 test("refreshes the Action Center clock when source data changes", () => {
@@ -820,7 +865,7 @@ test("uses the complete Action Center requisition collection to expose a missing
   />);
 
   const filters = screen.getByRole("tablist", { name: "Action Center filters" });
-  fireEvent.click(within(filters).getByRole("tab", { name: /Data Blockers/i }));
+  fireEvent.click(within(filters).getByRole("tab", { name: /Candidate \/ Requisition Info/i }));
   expect(screen.getByText("Req Number or Unique ID is missing")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Open Requisition" }));
   expect(onOpenActionCenterRequisition).toHaveBeenCalledWith(
