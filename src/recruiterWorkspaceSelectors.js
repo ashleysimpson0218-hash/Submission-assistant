@@ -246,6 +246,12 @@ export function buildCandidateWorkspaceTasks(tracker = [], options = {}) {
       estimatedMinutes: /email|text|reminder|follow up/.test(lower(item.nextAction)) ? 10 : 15,
       recommendedAction: text(item.nextAction) || "Open the candidate and assign a next action",
       reportImpact: !text(item.candidateNotes) || !text(item.nextAction) ? "Needs review" : "Complete",
+      sourceRevision: text(
+        item.updatedAt
+        || item.lastActionAt
+        || (Array.isArray(item.audit) ? item.audit[item.audit.length - 1]?.timestamp || item.audit[item.audit.length - 1]?.at : "")
+        || item.submissionDate
+      ),
     };
     const scored = scoreWorkspaceTask(task);
     return { ...task, reason: reasonForTask(item, owner, risk, now), priority: priorityFor(task), priorityScore: scored.score, priorityReasons: scored.reasons };
