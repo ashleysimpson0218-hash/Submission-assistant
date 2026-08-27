@@ -169,6 +169,17 @@ export function compareWorkspaceTasks(a = {}, b = {}) {
   return 0;
 }
 
+function workspaceTaskIdentitySegment(value) {
+  return encodeURIComponent(text(value));
+}
+
+function candidateWorkspaceTaskIdentity(item = {}) {
+  const candidateId = text(item.id);
+  if (!candidateId) return "";
+  const requisitionId = text(item.requisitionId || item.selectedRequisitionId || item.formSnapshot?.selectedRequisitionId);
+  return `candidate:${workspaceTaskIdentitySegment(candidateId)}:requisition:${workspaceTaskIdentitySegment(requisitionId || "unassigned")}`;
+}
+
 export function scoreWorkspaceTask(task = {}) {
   const reasons = [];
   let score = 0;
@@ -194,9 +205,16 @@ export function scoreWorkspaceTask(task = {}) {
 export function buildCandidateWorkspaceTasks(tracker = [], options = {}) {
   const now = options.now instanceof Date ? options.now : new Date(options.now || Date.now());
   const rules = resolvedRules(options.rules);
-  return tracker.filter((item) => activeCandidate(item)
+  const eligibleCandidates = tracker.filter((item) => candidateWorkspaceTaskIdentity(item)
+    && activeCandidate(item)
     && !(item.snoozedUntil && new Date(item.snoozedUntil) > now)
-    && !(item.taskStatus === "Completed" && String(item.completedAt || "").slice(0, 10) === now.toISOString().slice(0, 10))).map((item) => {
+    && !(item.taskStatus === "Completed" && String(item.completedAt || "").slice(0, 10) === now.toISOString().slice(0, 10)));
+  const identityCounts = eligibleCandidates.reduce((counts, item) => {
+    const identity = candidateWorkspaceTaskIdentity(item);
+    counts.set(identity, (counts.get(identity) || 0) + 1);
+    return counts;
+  }, new Map());
+  return eligibleCandidates.filter((item) => identityCounts.get(candidateWorkspaceTaskIdentity(item)) === 1).map((item) => {
     const owner = ownerForCandidate(item);
     const risk = candidateRiskForWorkspace(item, now, rules);
     const dueAt = dueDateFor(item);
@@ -205,12 +223,13 @@ export function buildCandidateWorkspaceTasks(tracker = [], options = {}) {
     const waitingHours = hoursBetween(item.waitingSince || activityAt || item.submissionDate, now.toISOString());
     const category = taskCategoryFor(item, owner, risk);
     const isOverdue = Boolean(due && due < now);
+    const requisitionId = item.requisitionId || item.selectedRequisitionId || item.formSnapshot?.selectedRequisitionId || "";
     const task = {
-      id: `candidate:${item.id || candidateNameFor(item)}`,
+      id: candidateWorkspaceTaskIdentity(item),
       sourceType: "candidate",
       sourceId: item.id || "",
       candidateId: item.id || "",
-      requisitionId: item.requisitionId || item.selectedRequisitionId || item.formSnapshot?.selectedRequisitionId || "",
+      requisitionId,
       candidateName: candidateNameFor(item),
       position: positionNameFor(item),
       facilityName: facilityNameFor(item),

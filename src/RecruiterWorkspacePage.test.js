@@ -278,6 +278,35 @@ test("opens explicit task actions without invoking communication behavior", () =
   expect(screen.queryByText(/Send Email|Send Text|Copy/i)).not.toBeInTheDocument();
 });
 
+test("selects and applies actions to the exact requisition-specific operational task", () => {
+  const onTaskAction = jest.fn(() => true);
+  const tracker = [
+    { id: "candidate-shared", candidate: "Synthetic Shared Candidate", requisitionId: "req-one", status: "Recruiter Review", nextAction: "Review req one", lastActionAt: "2026-07-21T12:00:00.000Z", candidateNotes: "Synthetic" },
+    { id: "candidate-shared", candidate: "Synthetic Shared Candidate", requisitionId: "req-two", status: "Recruiter Review", nextAction: "Review req two", lastActionAt: "2026-07-21T12:00:00.000Z", candidateNotes: "Synthetic" },
+  ];
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={tracker}
+    requisitions={[]}
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+    onTaskAction={onTaskAction}
+  />);
+
+  const actionButtons = screen.getAllByRole("button", { name: "More actions for Synthetic Shared Candidate" });
+  expect(actionButtons).toHaveLength(2);
+  fireEvent.click(actionButtons[1]);
+  fireEvent.click(screen.getByRole("button", { name: "Mark Resolved" }));
+  expect(onTaskAction).toHaveBeenCalledTimes(1);
+  expect(onTaskAction).toHaveBeenCalledWith(expect.objectContaining({
+    id: "candidate:candidate-shared:requisition:req-two",
+    sourceId: "candidate-shared",
+    requisitionId: "req-two",
+  }), "resolve", expect.any(Object));
+});
+
 test("Focus Mode minimizes nonurgent workspace content", () => {
   const onWorkspaceEvent = jest.fn();
   render(<RecruiterWorkspacePage
