@@ -145,6 +145,7 @@ export function resolveWorkspaceTaskRecord(records = [], task = {}) {
   if (!sourceId) return { ok: false, error: "The candidate task has no stable candidate identity." };
   const matches = [];
   (Array.isArray(records) ? records : []).forEach((record, index) => {
+    if (!record || typeof record !== "object" || Array.isArray(record)) return;
     if (text(record.id) === sourceId && recordRequisitionId(record) === requisitionId) matches.push({ record, index });
   });
   if (matches.length !== 1) return { ok: false, error: matches.length ? "The candidate task matches multiple workspace records." : "The exact candidate and requisition record is no longer available." };

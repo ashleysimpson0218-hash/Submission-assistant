@@ -274,10 +274,11 @@ function WorkspaceBulkActionReview({ review, processing, theme, onCancel, onConf
   const [confirmed, setConfirmed] = useState(false);
   const headingId = useId();
   const descriptionId = useId();
+  const dialogRef = useRef(null);
   useEffect(() => setConfirmed(false), [review.id]);
   return (
     <div role="presentation" style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(18, 11, 46, 0.62)", display: "grid", placeItems: "center", padding: 20 }}>
-      <section role="dialog" aria-modal="true" aria-labelledby={headingId} aria-describedby={descriptionId} onKeyDown={(event) => { if (event.key === "Escape" && !processing) onCancel(); }} style={{ width: "min(760px, 100%)", maxHeight: "88vh", overflow: "auto", background: theme.panel, border: `2px solid ${theme.primary2}`, borderRadius: 12, padding: 18, color: theme.text, boxShadow: theme.shadow }}>
+      <section ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={headingId} aria-describedby={descriptionId} tabIndex={-1} onKeyDown={(event) => { if (event.key === "Escape" && !processing) { event.preventDefault(); event.stopPropagation(); onCancel(); return; } trapDialogFocus(event, dialogRef.current); }} style={{ width: "min(760px, 100%)", maxHeight: "88vh", overflow: "auto", background: theme.panel, border: `2px solid ${theme.primary2}`, borderRadius: 12, padding: 18, color: theme.text, boxShadow: theme.shadow }}>
         <h2 id={headingId} style={{ margin: 0, fontSize: 18 }}>Confirm bulk recruiter action</h2>
         <p id={descriptionId} style={{ color: theme.muted, margin: "6px 0 14px", fontSize: 12 }}>{review.label}. WelcomeFlow will revalidate every record immediately before changing it. No email, text, calendar action, or external system action will occur.</p>
         <div style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 8, overflow: "hidden" }}>
@@ -419,6 +420,8 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
   const actionCenterLastReviewedItemIdRef = useRef("");
   const controlledActionTriggerRef = useRef(null);
   const previousControlledActionReviewRef = useRef(null);
+  const bulkActionTriggerRef = useRef(null);
+  const previousBulkReviewRef = useRef(null);
   const completeActionCenterRequisitions = Array.isArray(actionCenterRequisitions) ? actionCenterRequisitions : requisitions;
   const model = useMemo(() => buildRecruiterWorkspaceModel({ tracker, requisitions, sites, history, calendarEvents, rules: workflowRules }), [tracker, requisitions, sites, history, calendarEvents, workflowRules]);
   const actionCenter = useMemo(() => buildRecruiterActionCenter({ tracker, requisitions: completeActionCenterRequisitions, sites, history, calendarEvents, facilityReadinessRows, workflowRules, now: actionCenterNow }), [tracker, completeActionCenterRequisitions, sites, history, calendarEvents, facilityReadinessRows, workflowRules, actionCenterNow]);
@@ -501,6 +504,10 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
     }
     previousControlledActionReviewRef.current = actionCenterCommunicationActionReview;
   }, [actionCenterCommunicationActionReview]);
+  useEffect(() => {
+    if (previousBulkReviewRef.current && !bulkReview) bulkActionTriggerRef.current?.focus?.();
+    previousBulkReviewRef.current = bulkReview;
+  }, [bulkReview]);
   const actionCenterCommunicationItem = navigableActionCenterItems.find((item) => item.id === actionCenterCommunicationPreviewId) || null;
   const actionCenterCommunicationPreview = useMemo(() => actionCenterCommunicationItem ? buildActionCenterCommunicationPreview({
     item: actionCenterCommunicationItem,
@@ -856,7 +863,7 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
                 </select></label>
                 {bulkAction === WORKSPACE_TASK_ACTIONS.REASSIGN ? <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 11, fontWeight: 800 }}>Owner<select value={bulkOwnerType} onChange={(event) => setBulkOwnerType(event.target.value)} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: 6, background: theme.panel, color: theme.text }}>{OWNER_OPTIONS.map((owner) => <option key={owner}>{owner}</option>)}</select></label> : null}
                 {bulkAction !== WORKSPACE_TASK_ACTIONS.SNOOZE ? <label style={{ flex: "1 1 220px", display: "flex", gap: 6, alignItems: "center", fontSize: 11, fontWeight: 800 }}>Update<input value={bulkNote} onChange={(event) => setBulkNote(event.target.value)} placeholder={bulkAction === WORKSPACE_TASK_ACTIONS.ADD_UPDATE ? "Required update" : "Optional ownership note"} style={{ flex: 1, border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: 6, background: theme.panel, color: theme.text }} /></label> : null}
-                <button type="button" onClick={previewBulkAction} disabled={!selectedBulkTaskIds.length || typeof onBulkTaskAction !== "function"} style={{ border: 0, borderRadius: 6, padding: "7px 10px", background: theme.primary2, color: "#fff", fontWeight: 900, opacity: selectedBulkTaskIds.length && typeof onBulkTaskAction === "function" ? 1 : 0.55 }}>Preview affected records</button>
+                <button ref={bulkActionTriggerRef} type="button" onClick={previewBulkAction} disabled={!selectedBulkTaskIds.length || typeof onBulkTaskAction !== "function"} style={{ border: 0, borderRadius: 6, padding: "7px 10px", background: theme.primary2, color: "#fff", fontWeight: 900, opacity: selectedBulkTaskIds.length && typeof onBulkTaskAction === "function" ? 1 : 0.55 }}>Preview affected records</button>
               </div>
               <p style={{ margin: "7px 0 0", color: theme.muted, fontSize: 10 }}>Limited to {WORKSPACE_BULK_ACTION_LIMIT} exact candidate/requisition tasks. Every record is revalidated after confirmation. No communication is sent and no Paycom integration is used.</p>
             </section>

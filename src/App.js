@@ -14608,7 +14608,7 @@ function rowifyCandidate(item = {}) {
       setCopyNotice("Open the requisition to update recruiting coverage.");
       return false;
     }
-    const resolved = resolveWorkspaceTaskRecord(safeTrackerRows, task);
+    const resolved = resolveWorkspaceTaskRecord(tracker, task);
     if (!resolved.ok) {
       setCopyNotice(resolved.error);
       return false;
@@ -15503,7 +15503,7 @@ function rowifyCandidate(item = {}) {
       now,
       rules: settings.options?.workflowRules || {},
     });
-    const result = applyWorkspaceBulkTaskReviewToRecords(safeTrackerRows, currentTasks, review, {
+    const result = applyWorkspaceBulkTaskReviewToRecords(tracker, currentTasks, review, {
       actor: settings.general?.recruiterName || "Recruiter",
       now,
     });

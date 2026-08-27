@@ -98,4 +98,32 @@ describe("recruiter workspace task actions", () => {
     expect(resolveWorkspaceTaskRecord(records, task)).toMatchObject({ ok: true, index: 1 });
     expect(resolveWorkspaceTaskRecord([...records, { ...records[1] }], task)).toMatchObject({ ok: false });
   });
+
+  test("preserves unrelated malformed rows while updating the exact record", () => {
+    const records = [
+      null,
+      { ...candidate, id: "candidate-shared", requisitionId: "req-one", updatedAt: NOW },
+      { ...candidate, id: "candidate-shared", requisitionId: "req-two", updatedAt: NOW },
+    ];
+    const task = {
+      id: "candidate:candidate-shared:requisition:req-two",
+      sourceType: "candidate",
+      sourceId: "candidate-shared",
+      candidateId: "candidate-shared",
+      requisitionId: "req-two",
+      candidateName: "Synthetic Candidate",
+      facilityName: "Synthetic Facility",
+      title: "Review candidate",
+      ownerType: "Recruiter",
+      sourceRevision: NOW,
+    };
+    const prepared = prepareWorkspaceBulkTaskReview([task], WORKSPACE_TASK_ACTIONS.ADD_UPDATE, { note: "Reviewed exact record." });
+    const result = applyWorkspaceBulkTaskReviewToRecords(records, [task], prepared.review, { now: NOW, actor: "Synthetic Recruiter" });
+
+    expect(result).toMatchObject({ ok: true, succeeded: 1, failed: 0 });
+    expect(result.records[0]).toBeNull();
+    expect(result.records[1]).toEqual(records[1]);
+    expect(result.records[2]).toMatchObject({ id: "candidate-shared", requisitionId: "req-two", lastActionLabel: "Workspace update" });
+    expect(resolveWorkspaceTaskRecord(records, task)).toMatchObject({ ok: true, index: 2 });
+  });
 });

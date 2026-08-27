@@ -141,7 +141,15 @@ test("previews exact bulk records, requires confirmation, and reports partial fa
   expect(onBulkTaskAction).not.toHaveBeenCalled();
   const confirm = within(dialog).getByRole("button", { name: "Confirm Exact Bulk Action" });
   expect(confirm).toBeDisabled();
-  fireEvent.click(within(dialog).getByRole("checkbox", { name: /approve this internal workspace update/i }));
+  const approval = within(dialog).getByRole("checkbox", { name: /approve this internal workspace update/i });
+  expect(approval).toHaveFocus();
+  fireEvent.click(approval);
+  confirm.focus();
+  fireEvent.keyDown(dialog, { key: "Tab" });
+  expect(approval).toHaveFocus();
+  approval.focus();
+  fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+  expect(confirm).toHaveFocus();
   fireEvent.click(confirm);
 
   await waitFor(() => expect(onBulkTaskAction).toHaveBeenCalledTimes(1));
@@ -163,13 +171,15 @@ test("cancels bulk preview without applying an action or exposing communication 
     onBulkTaskAction={onBulkTaskAction}
   />);
   fireEvent.click(screen.getByRole("checkbox", { name: /Select Synthetic Cancel on requisition req-cancel/i }));
-  fireEvent.click(screen.getByRole("button", { name: "Preview affected records" }));
+  const previewButton = screen.getByRole("button", { name: "Preview affected records" });
+  fireEvent.click(previewButton);
   const dialog = screen.getByRole("dialog", { name: "Confirm bulk recruiter action" });
   expect(within(dialog).queryByRole("button", { name: /send|copy|mailto|paycom/i })).not.toBeInTheDocument();
-  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  fireEvent.keyDown(dialog, { key: "Escape" });
   expect(onBulkTaskAction).not.toHaveBeenCalled();
   expect(screen.queryByRole("dialog", { name: "Confirm bulk recruiter action" })).not.toBeInTheDocument();
   expect(screen.getByText("Cancelled. No records changed.")).toBeInTheDocument();
+  expect(previewButton).toHaveFocus();
 });
 
 test("pages canonical Action Center priorities and restores a durable item on its exact page", () => {
