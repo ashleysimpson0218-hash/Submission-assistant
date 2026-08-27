@@ -30,3 +30,14 @@ test("keeps legacy queue navigation separate from exact Action Center candidate 
   expect(workspaceProps).toContain("onOpenActionCenterCandidate={openActionCenterCandidateRecord}");
   expect(workspaceProps).not.toContain("onOpenCandidate={openActionCenterCandidateRecord}");
 });
+
+test("clears durable Action Center state before legacy workspace navigation leaves Home", () => {
+  const workspaceStart = appSource.indexOf("<RecruiterWorkspacePage");
+  const workspaceEnd = appSource.indexOf("/>", workspaceStart);
+  const workspaceProps = appSource.slice(workspaceStart, workspaceEnd);
+  expect(workspaceProps).toMatch(/onOpenCandidate=\{\(candidateId\) => \{[\s\S]*?leaveActionCenterNavigation\("workspace"\)[\s\S]*?setActivePage\("workspace"\)/);
+  expect(workspaceProps).toMatch(/onOpenRequisition=\{\(\) => \{[\s\S]*?leaveActionCenterNavigation\("positions"\)[\s\S]*?setActivePage\("positions"\)/);
+  expect(workspaceProps).toMatch(/onOpenCalendar=\{\(\) => \{[\s\S]*?leaveActionCenterNavigation\("calendar"\)[\s\S]*?setActivePage\("calendar"\)/);
+  expect(workspaceProps).toMatch(/onAddCalendarEvent=\{\(\) => \{[\s\S]*?leaveActionCenterNavigation\("calendar"\)[\s\S]*?openCalendarCreate\(\)/);
+  expect(workspaceProps).toMatch(/onScheduleCalendar=\{\(task\) => \{[\s\S]*?leaveActionCenterNavigation\("calendar"\)[\s\S]*?openCalendarCreate/);
+});

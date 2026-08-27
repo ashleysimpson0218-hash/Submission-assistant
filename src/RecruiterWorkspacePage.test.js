@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { RecruiterWorkspacePage } from "./RecruiterWorkspacePage";
 import { FacilityPositionSetupPage, actionCenterNavigationState, activeActionCenterCandidateTargetForSelection, clearedActionCenterTargets, resolveActionCenterCandidateTarget, resolveActionCenterSetupTarget } from "./App";
-import { ACTION_CENTER_CATEGORIES } from "./actionCenterSelectors";
+import { ACTION_CENTER_CATEGORIES, buildActionCenterItemId } from "./actionCenterSelectors";
 
 const theme = {
   panel: "#fff", panelAlt: "#f7f4ff", borderSoft: "#ddd", shadow: "none", text: "#17112f", muted: "#6b6680",
@@ -493,6 +493,122 @@ test("opens an exact read-only candidate follow-up communication preview", () =>
   expect(within(dialog).queryByRole("button", { name: /Copy|Open|Send|Save|Complete|Approve/i })).not.toBeInTheDocument();
   expect(onTaskAction).not.toHaveBeenCalled();
   expect(onWorkspaceEvent).not.toHaveBeenCalled();
+});
+
+test("publishes stable Action Center filter and selected-item navigation", () => {
+  const onActionCenterNavigationChange = jest.fn();
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={[{
+      id: "candidate-route",
+      candidate: "Synthetic Route Candidate",
+      status: "Submitted",
+      nextAction: "Follow up with candidate",
+      nextActionDueDate: "2026-07-21",
+      lastActionAt: "2026-07-18T12:00:00.000Z",
+      candidateNotes: "Synthetic",
+      currentOwner: "Recruiter",
+      ownerType: "Recruiter",
+      requisitionId: "req-route",
+      position: "LPN",
+      site: "Synthetic Facility",
+      facilityId: "facility-route",
+    }]}
+    requisitions={[{ id: "req-route", reqNumber: "SYN-ROUTE", positionTitle: "LPN", siteName: "Synthetic Facility", facilityId: "facility-route", status: "Active" }]}
+    sites={[{ id: "facility-route", siteName: "Synthetic Facility", status: "Active", hiringManagerEmail: "manager@example.test" }]}
+    onActionCenterNavigationChange={onActionCenterNavigationChange}
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+  />);
+
+  const filters = screen.getByRole("tablist", { name: "Action Center filters" });
+  fireEvent.click(within(filters).getByRole("tab", { name: /Follow-up Due/i }));
+  expect(onActionCenterNavigationChange).toHaveBeenLastCalledWith({
+    filter: ACTION_CENTER_CATEGORIES.followUp,
+    itemId: "",
+  });
+  fireEvent.click(screen.getByRole("button", { name: /Review details for Recruiter follow-up due for Synthetic Route Candidate/i }));
+  expect(onActionCenterNavigationChange).toHaveBeenLastCalledWith({
+    filter: ACTION_CENTER_CATEGORIES.followUp,
+    itemId: buildActionCenterItemId({
+      category: ACTION_CENTER_CATEGORIES.followUp,
+      sourceType: "candidate",
+      candidateId: "candidate-route",
+      requisitionId: "req-route",
+      facilityId: "facility-route",
+    }),
+  });
+});
+
+test("restores an exact Action Center filter and item from durable navigation", () => {
+  const exactItemId = buildActionCenterItemId({
+    category: ACTION_CENTER_CATEGORIES.followUp,
+    sourceType: "candidate",
+    candidateId: "candidate-refresh",
+    requisitionId: "req-refresh",
+    facilityId: "facility-refresh",
+  });
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={[{
+      id: "candidate-refresh",
+      candidate: "Synthetic Refresh Candidate",
+      status: "Submitted",
+      nextAction: "Follow up with candidate",
+      nextActionDueDate: "2026-07-21",
+      lastActionAt: "2026-07-18T12:00:00.000Z",
+      candidateNotes: "Synthetic",
+      currentOwner: "Recruiter",
+      ownerType: "Recruiter",
+      requisitionId: "req-refresh",
+      position: "RN",
+      site: "Synthetic Refresh Facility",
+      facilityId: "facility-refresh",
+    }]}
+    requisitions={[{ id: "req-refresh", reqNumber: "SYN-REFRESH", positionTitle: "RN", siteName: "Synthetic Refresh Facility", facilityId: "facility-refresh", status: "Active" }]}
+    sites={[{ id: "facility-refresh", siteName: "Synthetic Refresh Facility", status: "Active", hiringManagerEmail: "manager@example.test" }]}
+    actionCenterNavigation={{ present: true, valid: true, version: "1", filter: ACTION_CENTER_CATEGORIES.followUp, itemId: exactItemId }}
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+  />);
+
+  expect(screen.getByRole("tab", { name: /Follow-up Due/i })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("region", { name: /Action details for Recruiter follow-up due for Synthetic Refresh Candidate/i })).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+test("fails closed when a durable Action Center item is invalid, missing, or outside its filter", () => {
+  const { rerender } = render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={[]}
+    requisitions={[]}
+    sites={[]}
+    actionCenterNavigation={{ present: true, valid: false, filter: ACTION_CENTER_CATEGORIES.all, itemId: "", message: "This Action Center link contains an invalid item identifier." }}
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+  />);
+  expect(screen.getByRole("alert")).toHaveTextContent("invalid item identifier");
+  expect(screen.queryByRole("region", { name: /Action details/i })).not.toBeInTheDocument();
+
+  rerender(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={[]}
+    requisitions={[]}
+    sites={[]}
+    actionCenterNavigation={{ present: true, valid: true, version: "1", filter: ACTION_CENTER_CATEGORIES.followUp, itemId: "action-center-v1:Follow-up%20Due:candidate:missing:requisition:req:facility:facility" }}
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+  />);
+  expect(screen.getByRole("alert")).toHaveTextContent("unavailable or does not belong to this filter");
+  expect(screen.queryByRole("region", { name: /Action details/i })).not.toBeInTheDocument();
 });
 
 function controlledFollowUpProps(overrides = {}) {

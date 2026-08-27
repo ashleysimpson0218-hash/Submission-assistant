@@ -1,5 +1,11 @@
 import { render, screen } from "@testing-library/react";
-import App, { migrateTrackerRecords } from "./App";
+import App, {
+  candidateProfileCreated,
+  migrateTrackerRecords,
+  movementPatchForStage,
+  movementStageIndex,
+  pipelineProgressionForItem,
+} from "./App";
 
 function validCandidateReadyPackage() {
   return {
@@ -75,4 +81,74 @@ test("preserves Candidate Ready defaults for a fully valid saved package", () =>
     waitingOn: "Recruiter",
     communicationActionStates: { facilitySubmission: "Ready to Send" },
   });
+});
+
+test("does not treat a named Recruiter Review candidate as a created submission profile", () => {
+  const candidate = {
+    candidate: "Synthetic Pre-Submission Candidate",
+    formSnapshot: { fullName: "Synthetic Pre-Submission Candidate" },
+    createdAt: "2026-08-26T12:00:00.000Z",
+    submissionDate: "2026-08-26",
+    status: "Recruiter Review",
+  };
+
+  expect(candidateProfileCreated(candidate)).toBe(false);
+  expect(movementStageIndex(candidate)).toBe(2);
+  expect(pipelineProgressionForItem(candidate)).toBe("Recruiter Review");
+});
+
+test("keeps a named Screen Complete candidate before the Submit stage", () => {
+  const candidate = {
+    candidate: "Synthetic Screened Candidate",
+    formSnapshot: { fullName: "Synthetic Screened Candidate" },
+    createdAt: "2026-08-26T12:00:00.000Z",
+    submissionDate: "2026-08-26",
+    status: "Screen Complete",
+  };
+
+  expect(candidateProfileCreated(candidate)).toBe(false);
+  expect(movementStageIndex(candidate)).toBe(1);
+  expect(pipelineProgressionForItem(candidate)).toBe("Screen Complete");
+});
+
+test("records explicit Submit movement as Facility Submission evidence", () => {
+  const patch = movementPatchForStage("Submit", {
+    candidate: "Synthetic Submitted Candidate",
+    status: "Recruiter Review",
+  });
+
+  expect(patch).toMatchObject({
+    movementStage: "Submit",
+    status: "Submitted",
+    profileCreated: true,
+  });
+  expect(candidateProfileCreated(patch)).toBe(true);
+  expect(movementStageIndex(patch)).toBe(3);
+  expect(pipelineProgressionForItem(patch)).toBe("Facility Submission");
+});
+
+test.each([
+  [{ status: "Submitted" }],
+  [{ status: "Recruiter Review", candidateSubmittedToFacilityAt: "2026-08-26T12:00:00.000Z" }],
+  [{ status: "Recruiter Review", facilitySubmissionSentAt: "2026-08-26T12:00:00.000Z" }],
+])("preserves Facility Submission for canonical submission evidence", (evidence) => {
+  expect(pipelineProgressionForItem({
+    candidate: "Synthetic Submitted Candidate",
+    ...evidence,
+  })).toBe("Facility Submission");
+});
+
+test("preserves the correct close-out pipeline stage when submission was never reached", () => {
+  const candidate = {
+    candidate: "Synthetic Closed Candidate",
+    formSnapshot: { fullName: "Synthetic Closed Candidate" },
+    createdAt: "2026-08-26T12:00:00.000Z",
+    submissionDate: "2026-08-26",
+    status: "Recruiter Review",
+    nextAction: "Clear missing requirements",
+  };
+
+  const closedFromPipelineStep = pipelineProgressionForItem(candidate);
+  expect(closedFromPipelineStep).toBe("Recruiter Review");
+  expect(closedFromPipelineStep).not.toBe("Facility Submission");
 });
