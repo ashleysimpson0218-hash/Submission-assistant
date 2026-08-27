@@ -8,6 +8,13 @@ export const ACTION_CENTER_CATEGORIES = Object.freeze({
   followUp: "Follow-up Due",
   managerFeedback: "Manager Feedback",
   candidateReady: "Candidate Ready",
+  interviewScheduling: "Interview Scheduling",
+  offerFollowUp: "Offer Follow-up",
+  staleCandidate: "Stale Candidates",
+  candidateData: "Candidate / Requisition Info",
+  facilityContact: "Facility Contact",
+  reportReadiness: "Report Readiness",
+  askWeekly: "Ask Weekly Decision",
   dataBlocker: "Data Blockers",
 });
 
@@ -74,6 +81,22 @@ const ACTIONABLE_READINESS_CODES = new Set([
   "missing-risk-explanation",
   "missing-start-date",
   "unresolved-ownership",
+]);
+
+const CANDIDATE_DATA_READINESS_CODES = new Set([
+  "missing-activity-date",
+  "missing-candidate-notes",
+  "missing-next-action",
+  "missing-position",
+  "missing-requisition-id",
+  "missing-requisition-number",
+  "missing-start-date",
+  "unresolved-ownership",
+]);
+
+const REPORT_READINESS_CODES = new Set([
+  "calendar-outcome-missing",
+  "missing-risk-explanation",
 ]);
 
 const text = (value) => String(value ?? "").trim();
@@ -371,6 +394,84 @@ function futureFollowUpEligibilityAt(candidate, task, now, workflowRules, feedba
   return candidates.sort((a, b) => a - b)[0] || null;
 }
 
+function configuredStaleThresholdDays(workflowRules = {}) {
+  const value = Number(workflowRules.workspaceRiskInactivityDays);
+  return Number.isFinite(value) && value >= 1 ? value : 7;
+}
+
+function confirmedInterviewAt(candidate = {}) {
+  const sources = [
+    candidate.actualInterviewAt,
+    candidate.interviewCompletedAt,
+    candidate.rescheduledInterviewDate,
+    candidate.interviewDate,
+    candidate.facilityInterviewDate,
+    candidate.bookingRecord?.interviewDate,
+    candidate.bookingRecord?.date,
+  ];
+  return sources.map(parseDate).find(Boolean) || null;
+}
+
+function interviewSchedulingState(candidate = {}, now = new Date(), calendarEvents = [], requisitionId = "") {
+  if (managerFeedbackReceived(candidate) || completedInterviewAt(candidate, now)) return null;
+  const status = lower(candidate.status);
+  const nextAction = lower(candidate.nextAction);
+  const requested = ["interview requested", "interview scheduling", "schedule interview"].includes(status)
+    || /schedule (an )?interview|confirm interview availability|collect interview availability/.test(nextAction);
+  if (!requested) return null;
+  const scheduledAt = confirmedInterviewAt(candidate);
+  if (scheduledAt && scheduledAt.getTime() > now.getTime()) return null;
+  const exactCalendarInterviewExists = calendarEvents.some((event) => {
+    const eventAt = parseDate(event.startDateTime || event.startAt || event.date);
+    const cancelled = ["cancelled", "canceled", "deleted"].includes(lower(event.status));
+    return !cancelled
+      && text(event.candidateId) === text(candidate.id)
+      && text(event.requisitionId) === text(requisitionId)
+      && /interview/.test(lower(event.eventType || event.type || event.title))
+      && eventAt
+      && eventAt > now;
+  });
+  if (exactCalendarInterviewExists) return null;
+  const dueAt = parseDate(candidate.nextActionDueDate);
+  return {
+    dueAt,
+    overdue: Boolean(dueAt && dueAt <= now),
+  };
+}
+
+function offerFollowUpState(candidate = {}, now = new Date(), workflowRules = {}) {
+  const status = lower(candidate.status);
+  const nextAction = lower(candidate.nextAction);
+  const offerStage = ["offer", "offered", "offer pending", "verbal offer"].includes(status)
+    || /offer follow.?up|follow.?up on offer|prepare offer|review offer/.test(nextAction);
+  if (!offerStage || candidateIsTerminal(candidate)) return null;
+  if (text(candidate.offerAcceptedAt || candidate.offerDeclinedAt || candidate.offerRescindedAt)) return null;
+  const dueAt = parseDate(candidate.offerFollowUpDueAt || candidate.nextActionDueDate);
+  const offeredAt = parseDate(candidate.offerSentAt || candidate.offerExtendedAt || candidate.verbalOfferAt || candidate.updatedAt);
+  const thresholdValue = Number(workflowRules.offerFollowUpHours ?? workflowRules.workspaceFacilityReviewDelayHours);
+  const thresholdHours = Number.isFinite(thresholdValue) && thresholdValue >= 0 ? thresholdValue : 72;
+  const thresholdAt = offeredAt ? new Date(offeredAt.getTime() + thresholdHours * 3600000) : null;
+  const overdue = Boolean((dueAt && dueAt <= now) || (thresholdAt && thresholdAt <= now));
+  const transitionAt = !overdue
+    ? [dueAt, thresholdAt].filter((value) => value && value > now).sort((a, b) => a - b)[0]
+    : null;
+  return { dueAt, overdue, offeredAt, thresholdHours, transitionAt };
+}
+
+function staleCandidateState(candidate = {}, task = null, now = new Date(), workflowRules = {}) {
+  const lastActivity = candidateLastActivity(candidate);
+  if (!lastActivity) return null;
+  const thresholdDays = configuredStaleThresholdDays(workflowRules);
+  const thresholdAt = new Date(lastActivity.getTime() + thresholdDays * 86400000);
+  const daysWaiting = Math.max(0, Math.floor(hoursBetween(lastActivity, now) / 24));
+  return {
+    stale: thresholdAt <= now,
+    thresholdAt,
+    thresholdDays,
+    daysWaiting: Number.isFinite(Number(task?.daysWaiting)) ? Number(task.daysWaiting) : daysWaiting,
+  };
+}
+
 function destinationFor(sourceType, sourceId, requisitionId = "") {
   if (!text(sourceId)) return { type: "unavailable", id: "", label: "Target unavailable", disabled: true, reason: "The affected record has no stable identifier." };
   if (sourceType === "candidate" && !text(requisitionId)) return { type: "unavailable", id: "", requisitionId: "", label: "Target unavailable", disabled: true, reason: "The candidate is not connected to one exact requisition." };
@@ -446,8 +547,13 @@ function itemForReadinessIssue(issue, sources, exactCandidate = null) {
   const destination = sourceType === "requisition" && !context.requisitionId
     ? { type: "unavailable", id: "", label: "Target unavailable", disabled: true, reason: "The blocker has no exact canonical requisition identity." }
     : destinationFor(sourceType, sourceType === "requisition" ? context.requisitionId : sourceId, context.requisitionId);
+  const category = CANDIDATE_DATA_READINESS_CODES.has(issue.code)
+    ? ACTION_CENTER_CATEGORIES.candidateData
+    : REPORT_READINESS_CODES.has(issue.code)
+      ? ACTION_CENTER_CATEGORIES.reportReadiness
+      : ACTION_CENTER_CATEGORIES.dataBlocker;
   return stableActionItem({
-    category: ACTION_CENTER_CATEGORIES.dataBlocker,
+    category,
     sourceType,
     sourceId,
     candidateId: context.candidateId,
@@ -497,7 +603,7 @@ function contactBlockers(sources) {
       currentOwner: "Recruiter",
     };
     return [stableActionItem({
-      category: ACTION_CENTER_CATEGORIES.dataBlocker,
+      category: ACTION_CENTER_CATEGORIES.facilityContact,
       sourceType: "facility",
       sourceId: facilityId,
       facilityId,
@@ -514,13 +620,102 @@ function contactBlockers(sources) {
   });
 }
 
-export function buildRecruiterActionCenter({ tracker = [], requisitions = [], sites = [], history = [], calendarEvents = [], workflowRules = {}, now = new Date() } = {}) {
+function reportingRowContext(row = {}, issue = {}) {
+  const facilityId = text(issue.facilityId || row.facilityId || row.id);
+  return {
+    candidate: text(issue.candidateName),
+    candidateId: text(issue.candidateId),
+    requisition: text(issue.position),
+    requisitionId: text(issue.requisitionId),
+    requisitionNumber: text(issue.requisitionNumber),
+    facility: text(issue.canonicalFacilityName || issue.facilityName || row.facilityName || row.facility) || "Facility unresolved",
+    facilityId,
+    region: text(issue.regionName || row.regionName),
+    currentOwner: "Recruiter",
+  };
+}
+
+function reportingBlockerItems(rows = []) {
+  return rows.flatMap((row) => {
+    if (text(row.readiness || row.status) !== "Blocked") return [];
+    const issues = Array.isArray(row.readinessIssues) ? row.readinessIssues : [];
+    return issues.filter((issue) => issue?.blocking !== false).map((issue) => {
+      const context = reportingRowContext(row, issue);
+      const code = text(issue.code || issue.issue || issue.type || "reporting-blocker");
+      const isContact = code === "MISSING_REQUIRED_CONTACT" || /contact/i.test(text(issue.issue || issue.type));
+      const sourceType = isContact
+        ? "facility"
+        : context.candidateId && context.requisitionId
+          ? "candidate"
+          : context.requisitionId
+            ? "requisition"
+            : "reporting";
+      const sourceId = sourceType === "candidate"
+        ? context.candidateId
+        : sourceType === "requisition"
+          ? context.requisitionId
+          : context.facilityId;
+      if (!sourceId) return null;
+      const destination = sourceType === "candidate"
+        ? destinationFor(sourceType, sourceId, context.requisitionId)
+        : destinationFor(sourceType, sourceId);
+      return stableActionItem({
+        category: isContact ? ACTION_CENTER_CATEGORIES.facilityContact : ACTION_CENTER_CATEGORIES.reportReadiness,
+        sourceType,
+        sourceId,
+        candidateId: context.candidateId,
+        requisitionId: context.requisitionId,
+        facilityId: context.facilityId,
+        title: text(issue.issue || issue.type) || "Report-readiness blocker",
+        explanation: text(issue.reason || issue.detail) || `${text(issue.issue || issue.type) || "This source issue"} blocks the facility report.`,
+        recommendedAction: text(issue.resolutionAction) || "Review the affected reporting source",
+        destination,
+        priorityScore: isContact ? 90 : 84,
+        riskLevel: "High",
+        context,
+        missingData: [code],
+        issueCode: code,
+      });
+    }).filter(Boolean);
+  });
+}
+
+function askWeeklyItems(rows = []) {
+  return rows.flatMap((row) => {
+    const outcome = row.noOpeningOutcome || {};
+    const facilityId = text(row.facilityId || row.id);
+    const needsDecision = lower(row.noOpeningsPolicy) === "ask weekly"
+      && text(row.readiness || row.status) === "Needs Review"
+      && outcome.applies === true
+      && text(outcome.outcomeLabel || row.noOpeningOutcomeLabel) === "Weekly Decision Needed";
+    if (!needsDecision || !facilityId) return [];
+    const context = reportingRowContext(row);
+    return [stableActionItem({
+      category: ACTION_CENTER_CATEGORIES.askWeekly,
+      sourceType: "reporting",
+      sourceId: facilityId,
+      facilityId,
+      title: `Weekly no-opening decision needed for ${context.facility}`,
+      explanation: text(outcome.reason) || "Choose whether this facility needs a standard report for the current session.",
+      recommendedAction: "Review weekly no-opening decision",
+      destination: destinationFor("reporting", facilityId),
+      priorityScore: 68,
+      riskLevel: "Medium",
+      context,
+      missingData: [],
+      issueCode: "ask-weekly-decision",
+    })];
+  });
+}
+
+export function buildRecruiterActionCenter({ tracker = [], requisitions = [], sites = [], history = [], calendarEvents = [], facilityReadinessRows = [], workflowRules = {}, now = new Date() } = {}) {
   const current = now instanceof Date ? new Date(now.getTime()) : new Date(now);
   if (Number.isNaN(current.getTime())) throw new Error("A valid Action Center calculation time is required.");
   const safeTracker = Array.isArray(tracker) ? tracker : [];
   const safeRequisitions = Array.isArray(requisitions) ? requisitions : [];
   const safeSites = Array.isArray(sites) ? sites : [];
   const safeEvents = Array.isArray(calendarEvents) ? calendarEvents : [];
+  const safeFacilityReadinessRows = Array.isArray(facilityReadinessRows) ? facilityReadinessRows : [];
   const workspace = buildRecruiterWorkspaceModel({ tracker: safeTracker, requisitions: safeRequisitions, sites: safeSites, history, calendarEvents: safeEvents, rules: workflowRules, now: current });
   const taskKey = (candidateId, requisitionId) => `${text(candidateId)}::${text(requisitionId)}`;
   const taskByCandidateRequisition = new Map(workspace.tasks.filter((task) => task.sourceType === "candidate").map((task) => [taskKey(task.sourceId, task.requisitionId), task]));
@@ -572,6 +767,9 @@ export function buildRecruiterActionCenter({ tracker = [], requisitions = [], si
     const task = taskByCandidateRequisition.get(taskKey(candidateId, context.requisitionId));
     const feedbackState = managerFeedbackState(candidate, task, current, workflowRules);
     const readyPackagePending = candidateReadyPending(candidate, requisition, facility);
+    const schedulingState = interviewSchedulingState(candidate, current, safeEvents, context.requisitionId);
+    const offerState = offerFollowUpState(candidate, current, workflowRules);
+    const staleState = staleCandidateState(candidate, task, current, workflowRules);
     if (feedbackState) {
       const elapsedHours = Math.max(0, Math.floor(feedbackState.elapsed || 0));
       const remainingHours = feedbackState.elapsed == null ? null : Math.max(0, Math.ceil(feedbackState.threshold - feedbackState.elapsed));
@@ -599,7 +797,7 @@ export function buildRecruiterActionCenter({ tracker = [], requisitions = [], si
         missingData: context.requisitionId && context.facilityId ? [] : [!context.requisitionId ? "requisition" : "", !context.facilityId ? "facility" : ""].filter(Boolean),
         transitionAt: feedbackState.transitionAt,
       }));
-    } else if (followUpDue(candidate, task, current, workflowRules, feedbackState, readyPackagePending)) {
+    } else if (!schedulingState && !offerState && followUpDue(candidate, task, current, workflowRules, feedbackState, readyPackagePending)) {
       items.push(stableActionItem({
         category: ACTION_CENTER_CATEGORIES.followUp,
         sourceType: "candidate",
@@ -617,9 +815,51 @@ export function buildRecruiterActionCenter({ tracker = [], requisitions = [], si
         context,
         missingData: context.requisitionId ? [] : ["requisition"],
       }));
-    } else {
+    } else if (!schedulingState && !offerState) {
       const futureFollowUp = futureFollowUpEligibilityAt(candidate, task, current, workflowRules, feedbackState, readyPackagePending);
       if (futureFollowUp) futureTransitions.push(futureFollowUp);
+    }
+    if (schedulingState) {
+      items.push(stableActionItem({
+        category: ACTION_CENTER_CATEGORIES.interviewScheduling,
+        sourceType: "candidate",
+        sourceId: candidateId,
+        candidateId,
+        requisitionId: context.requisitionId,
+        facilityId: context.facilityId,
+        title: `Interview scheduling needed for ${context.candidate}`,
+        explanation: schedulingState.overdue
+          ? `The interview scheduling step for ${context.candidate} is overdue, and no confirmed future interview time is recorded.`
+          : `${context.candidate} is ready for interview scheduling, but no confirmed future interview time is recorded.`,
+        recommendedAction: "Review interview scheduling",
+        destination: destinationFor("candidate", candidateId, context.requisitionId),
+        priorityScore: schedulingState.overdue ? 82 : 66,
+        riskLevel: schedulingState.overdue ? "High" : "Medium",
+        dueAt: schedulingState.dueAt,
+        context,
+      }));
+    }
+
+    if (offerState) {
+      items.push(stableActionItem({
+        category: ACTION_CENTER_CATEGORIES.offerFollowUp,
+        sourceType: "candidate",
+        sourceId: candidateId,
+        candidateId,
+        requisitionId: context.requisitionId,
+        facilityId: context.facilityId,
+        title: `Offer follow-up ${offerState.overdue ? "overdue" : "needed"} for ${context.candidate}`,
+        explanation: offerState.overdue
+          ? `The offer follow-up for ${context.candidate} has reached its due threshold without a recorded final response.`
+          : `An offer is active for ${context.candidate}, and recruiter follow-up remains pending.`,
+        recommendedAction: "Review offer follow-up",
+        destination: destinationFor("candidate", candidateId, context.requisitionId),
+        priorityScore: offerState.overdue ? 85 : 64,
+        riskLevel: offerState.overdue ? "High" : "Medium",
+        dueAt: offerState.dueAt || offerState.offeredAt,
+        transitionAt: offerState.transitionAt,
+        context,
+      }));
     }
 
     if (readyPackagePending) {
@@ -640,12 +880,36 @@ export function buildRecruiterActionCenter({ tracker = [], requisitions = [], si
         missingData: context.requisitionId && context.facilityId ? [] : [!context.requisitionId ? "requisition" : "", !context.facilityId ? "facility" : ""].filter(Boolean),
       }));
     }
+    const hasSpecificCandidateAction = Boolean(feedbackState || schedulingState || offerState || readyPackagePending
+      || items.some((item) => item.candidateId === candidateId && item.requisitionId === context.requisitionId && item.category === ACTION_CENTER_CATEGORIES.followUp));
+    if (staleState?.stale && !hasSpecificCandidateAction) {
+      items.push(stableActionItem({
+        category: ACTION_CENTER_CATEGORIES.staleCandidate,
+        sourceType: "candidate",
+        sourceId: candidateId,
+        candidateId,
+        requisitionId: context.requisitionId,
+        facilityId: context.facilityId,
+        title: `Candidate activity is stale for ${context.candidate}`,
+        explanation: task?.riskReason || `${context.candidate} has no recorded activity for ${staleState.daysWaiting} days.`,
+        recommendedAction: "Review candidate activity",
+        destination: destinationFor("candidate", candidateId, context.requisitionId),
+        priorityScore: ["High", "Critical"].includes(task?.riskLevel) ? 76 : 62,
+        riskLevel: ["High", "Critical"].includes(task?.riskLevel) ? task.riskLevel : "Medium",
+        context,
+        issueCode: "stale-candidate",
+      }));
+    } else if (staleState && !staleState.stale && !hasSpecificCandidateAction) {
+      futureTransitions.push(staleState.thresholdAt);
+    }
   });
 
   workspace.reportReadiness.issues.forEach((issue) => {
     items.push(...itemsForReadinessIssue(issue, sources));
   });
-  items.push(...contactBlockers(sources));
+  items.push(...reportingBlockerItems(safeFacilityReadinessRows));
+  items.push(...askWeeklyItems(safeFacilityReadinessRows));
+  if (!safeFacilityReadinessRows.length) items.push(...contactBlockers(sources));
 
   const uniqueItems = [...items.reduce((result, item) => {
     const currentItem = result.get(item.id);

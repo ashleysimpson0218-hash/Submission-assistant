@@ -245,7 +245,7 @@ function ActionCenterCommunicationPreviewDialog({ preview, theme, onClose, contr
   );
 }
 
-export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EMPTY_LIST, actionCenterRequisitions = null, sites = EMPTY_LIST, history = EMPTY_LIST, calendarEvents = EMPTY_LIST, workflowRules = EMPTY_RULES, communicationSettings = EMPTY_RULES, controlledCommunicationActionsAuthorized = false, prefilledEmailDraftAuthorized = false, onCopyApprovedCommunication = null, onOpenPrefilledEmailDraft = null, onRecordControlledCommunicationAction = null, theme, isNarrow = false, isMedium = false, recruiterName = "Recruiter", onOpenCandidate, onOpenActionCenterCandidate = onOpenCandidate, onOpenRequisition, onOpenActionCenterRequisition = onOpenRequisition, onOpenFacility = null, onOpenActionCenterFacility = onOpenFacility, onOpenCalendar = () => {}, onOpenCalendarEvent = () => {}, onAddCalendarEvent = () => {}, onScheduleCalendar = () => {}, onOpenWeeklyCleanup, onOpenReports, onTaskAction = () => true, onWorkspaceEvent = () => true }) {
+export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EMPTY_LIST, actionCenterRequisitions = null, sites = EMPTY_LIST, history = EMPTY_LIST, calendarEvents = EMPTY_LIST, facilityReadinessRows = EMPTY_LIST, workflowRules = EMPTY_RULES, communicationSettings = EMPTY_RULES, controlledCommunicationActionsAuthorized = false, prefilledEmailDraftAuthorized = false, onCopyApprovedCommunication = null, onOpenPrefilledEmailDraft = null, onRecordControlledCommunicationAction = null, theme, isNarrow = false, isMedium = false, recruiterName = "Recruiter", onOpenCandidate, onOpenActionCenterCandidate = onOpenCandidate, onOpenRequisition, onOpenActionCenterRequisition = onOpenRequisition, onOpenFacility = null, onOpenActionCenterFacility = onOpenFacility, onOpenCalendar = () => {}, onOpenCalendarEvent = () => {}, onAddCalendarEvent = () => {}, onScheduleCalendar = () => {}, onOpenWeeklyCleanup, onOpenReports, onTaskAction = () => true, onWorkspaceEvent = () => true }) {
   const [activeFilter, setActiveFilter] = useState("Do Now");
   const [actionTaskId, setActionTaskId] = useState("");
   const [focusMode, setFocusMode] = useState(false);
@@ -261,10 +261,10 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
   const [actionCenterNow, setActionCenterNow] = useState(() => new Date());
   const completeActionCenterRequisitions = Array.isArray(actionCenterRequisitions) ? actionCenterRequisitions : requisitions;
   const model = useMemo(() => buildRecruiterWorkspaceModel({ tracker, requisitions, sites, history, calendarEvents, rules: workflowRules }), [tracker, requisitions, sites, history, calendarEvents, workflowRules]);
-  const actionCenter = useMemo(() => buildRecruiterActionCenter({ tracker, requisitions: completeActionCenterRequisitions, sites, history, calendarEvents, workflowRules, now: actionCenterNow }), [tracker, completeActionCenterRequisitions, sites, history, calendarEvents, workflowRules, actionCenterNow]);
+  const actionCenter = useMemo(() => buildRecruiterActionCenter({ tracker, requisitions: completeActionCenterRequisitions, sites, history, calendarEvents, facilityReadinessRows, workflowRules, now: actionCenterNow }), [tracker, completeActionCenterRequisitions, sites, history, calendarEvents, facilityReadinessRows, workflowRules, actionCenterNow]);
   useEffect(() => {
     setActionCenterNow(new Date());
-  }, [tracker, completeActionCenterRequisitions, sites, history, calendarEvents, workflowRules]);
+  }, [tracker, completeActionCenterRequisitions, sites, history, calendarEvents, facilityReadinessRows, workflowRules]);
   useEffect(() => {
     const transitionAt = Date.parse(actionCenter.nextRefreshAt);
     if (!Number.isFinite(transitionAt)) return undefined;
@@ -440,7 +440,7 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
     else if (item.destination.type === "requisition" && typeof onOpenActionCenterRequisition === "function") onOpenActionCenterRequisition(item.destination.id, item);
     else if (item.destination.type === "facility" && typeof onOpenActionCenterFacility === "function") onOpenActionCenterFacility(item.destination.id, item);
     else if (item.destination.type === "calendar" && typeof onOpenCalendarEvent === "function") onOpenCalendarEvent(item.destination.id);
-    else if (item.destination.type === "reporting" && typeof onOpenWeeklyCleanup === "function") onOpenWeeklyCleanup();
+    else if (item.destination.type === "reporting" && typeof onOpenWeeklyCleanup === "function") onOpenWeeklyCleanup(item);
   };
   const filteredTasks = useMemo(() => activeFilter === "Urgent"
     ? model.tasks.filter((task) => task.isOverdue || ["High", "Critical"].includes(task.riskLevel))

@@ -132,13 +132,15 @@ describe("side-effect-free submission package preview", () => {
     expect(source).toMatch(/candidateTypeConfirmed: form\.candidateTypeConfirmed === true/);
   });
 
-  test("reviewed Candidate Ready records remain pre-submission during legacy tracker migration", () => {
+  test("only valid reviewed Candidate Ready packages receive pre-submission migration defaults", () => {
     const source = fs.readFileSync(path.join(__dirname, "App.js"), "utf8");
-    expect(source).toMatch(/submissionDate: item\.reviewedSubmissionPackage \? \(item\.submissionDate \|\| ""\)/);
-    expect(source).toMatch(/item\.reviewedSubmissionPackage && Array\.isArray\(item\.audit\) \? item\.audit/);
-    expect(source).toMatch(/item\.reviewedSubmissionPackage \? "Ready for Facility Submission" : "Submitted"/);
-    expect(source).toMatch(/item\.reviewedSubmissionPackage \? "Send facility submission"/);
-    expect(source).toMatch(/item\.reviewedSubmissionPackage \? "Recruiter"/);
+    expect(source).toMatch(/const hasValidReviewedSubmissionPackage = Boolean\(item\.reviewedSubmissionPackage\)/);
+    expect(source).toMatch(/validateCandidateReadyFacilitySubmissionPackage\(item\.reviewedSubmissionPackage/);
+    expect(source).toMatch(/submissionDate: hasValidReviewedSubmissionPackage \? \(item\.submissionDate \|\| ""\)/);
+    expect(source).toMatch(/hasValidReviewedSubmissionPackage && Array\.isArray\(item\.audit\) \? item\.audit/);
+    expect(source).toMatch(/hasValidReviewedSubmissionPackage \? "Ready for Facility Submission" : "Submitted"/);
+    expect(source).toMatch(/hasValidReviewedSubmissionPackage \? "Send facility submission"/);
+    expect(source).toMatch(/hasValidReviewedSubmissionPackage \? "Recruiter"/);
   });
 
   test("Phase 2E communication actions are test-flagged and replace legacy actions only for reviewed packages", () => {

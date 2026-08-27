@@ -37,6 +37,7 @@ import {
   applyCandidateReadyConfirmation,
   validateCandidateReadyEligibility,
 } from "./candidateReadyConfirmation";
+import { validateCandidateReadyFacilitySubmissionPackage } from "./candidateReadyPackageValidation";
 import {
   ACTION_STATES,
   applyAtsUpdateCompleted,
@@ -2240,13 +2241,22 @@ function isThisWeek(dateIso) {
   return date >= start && date < end;
 }
 
-function migrateTrackerRecords(records, settings) {
+export function migrateTrackerRecords(records, settings) {
   return (records || [])
     .filter((item) => item && typeof item === "object")
     .map((item) => {
     const snapshot = item.formSnapshot || {};
     const candidate = item.candidate || snapshot.fullName || "Unnamed Candidate";
     const position = normalizeCommonSpelling(item.position || snapshot.position || "N/A");
+    const candidateId = item.id || "";
+    const requisitionId = item.requisitionId || snapshot.selectedRequisitionId || "";
+    const facilityId = item.facilityId || item.canonicalFacilityId || snapshot.facilityId || snapshot.canonicalFacilityId || "";
+    const hasValidReviewedSubmissionPackage = Boolean(item.reviewedSubmissionPackage)
+      && validateCandidateReadyFacilitySubmissionPackage(item.reviewedSubmissionPackage, {
+        candidate: { ...item, id: candidateId },
+        requisition: { id: requisitionId },
+        facility: { id: facilityId },
+      }).valid;
     const migrated = {
       ...item,
       id: item.id || makeId("sub"),
@@ -2258,13 +2268,13 @@ function migrateTrackerRecords(records, settings) {
       candidateSource: item.candidateSource || snapshot.candidateSource || "",
       requisitionId: item.requisitionId || snapshot.selectedRequisitionId || "",
       managerEmail: managerEmailFor(settings, item),
-      submissionDate: item.reviewedSubmissionPackage ? (item.submissionDate || "") : (item.submissionDate || todayIso()),
-      status: item.status || (item.reviewedSubmissionPackage ? "Ready for Facility Submission" : "Submitted"),
-      pipelineStage: item.pipelineStage || (item.reviewedSubmissionPackage ? "Submit" : item.pipelineStage),
-      stage: item.stage || (item.reviewedSubmissionPackage ? "Submit" : item.stage),
+      submissionDate: hasValidReviewedSubmissionPackage ? (item.submissionDate || "") : (item.submissionDate || todayIso()),
+      status: item.status || (hasValidReviewedSubmissionPackage ? "Ready for Facility Submission" : "Submitted"),
+      pipelineStage: item.pipelineStage || (hasValidReviewedSubmissionPackage ? "Submit" : item.pipelineStage),
+      stage: item.stage || (hasValidReviewedSubmissionPackage ? "Submit" : item.stage),
       owner: item.owner || "Recruiter",
-      nextAction: item.nextAction || (item.reviewedSubmissionPackage ? "Send facility submission" : isClosedStatus(item.status) ? "No action needed" : "Awaiting manager review"),
-      waitingOn: item.waitingOn || (item.reviewedSubmissionPackage ? "Recruiter" : item.waitingOn),
+      nextAction: item.nextAction || (hasValidReviewedSubmissionPackage ? "Send facility submission" : isClosedStatus(item.status) ? "No action needed" : "Awaiting manager review"),
+      waitingOn: item.waitingOn || (hasValidReviewedSubmissionPackage ? "Recruiter" : item.waitingOn),
       approvalLevel: item.approvalLevel || "Recruiter approval required",
       relationshipOwner: item.relationshipOwner || "Recruiter",
       interviewDate: item.interviewDate || snapshot.interviewDate || "",
@@ -2275,9 +2285,9 @@ function migrateTrackerRecords(records, settings) {
       archiveReason: item.archiveReason || "",
       futureReviewStatus: item.futureReviewStatus || "",
       archiveNotes: item.archiveNotes || "",
-      audit: item.reviewedSubmissionPackage && Array.isArray(item.audit) ? item.audit : item.audit?.length ? item.audit : [{ id: makeId("audit"), timestamp: new Date().toISOString(), label: "Record migrated", detail: `${candidate} | ${position}` }],
+      audit: hasValidReviewedSubmissionPackage && Array.isArray(item.audit) ? item.audit : item.audit?.length ? item.audit : [{ id: makeId("audit"), timestamp: new Date().toISOString(), label: "Record migrated", detail: `${candidate} | ${position}` }],
     };
-    return item.reviewedSubmissionPackage ? normalizeReviewedCommunicationRecord(migrated) : migrated;
+    return hasValidReviewedSubmissionPackage ? normalizeReviewedCommunicationRecord(migrated) : migrated;
   });
 }
 
@@ -14256,7 +14266,7 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
         hasTemplate: standardNoOpeningsTemplateAvailable,
         unresolvedOpeningRisk: unresolvedOpeningRiskIds.has(row.facilityId),
       });
-      return withFacilityReadiness(applyNoOpeningOutcome(row, outcome), eligibility.scopedIssues);
+      return withFacilityReadiness(applyNoOpeningOutcome({ ...row, noOpeningsPolicy }, outcome), eligibility.scopedIssues);
     }),
     [facilityReportQueue, reportValidationIssues, noOpeningsPolicy, noOpeningWeeklyDecisions, standardNoOpeningsTemplateAvailable, unresolvedOpeningRiskIds],
   );
@@ -16124,6 +16134,7 @@ function rowifyCandidate(item = {}) {
             actionCenterRequisitions={allRequisitions}
             sites={settings.sites || []}
             history={history}
+            facilityReadinessRows={facilityReadinessRows}
             workflowRules={settings.options?.workflowRules || {}}
             communicationSettings={settings}
             controlledCommunicationActionsAuthorized={actionCenterControlledCommunicationActionsEnabled}

@@ -343,7 +343,7 @@ test("turns canonical missing-data issues into exact blocker targets", () => {
   const result = build({ tracker: [candidate({ id: "candidate-missing", candidateNotes: "", nextAction: "" })] });
   const note = result.items.find((entry) => entry.issueCode === "missing-candidate-notes");
   const action = result.items.find((entry) => entry.issueCode === "missing-next-action");
-  expect(note).toMatchObject({ category: ACTION_CENTER_CATEGORIES.dataBlocker, sourceType: "candidate", sourceId: "candidate-missing", destination: { type: "candidate", id: "candidate-missing" } });
+  expect(note).toMatchObject({ category: ACTION_CENTER_CATEGORIES.candidateData, sourceType: "candidate", sourceId: "candidate-missing", destination: { type: "candidate", id: "candidate-missing" } });
   expect(action).toBeDefined();
   expect(note.context).toMatchObject({ requisitionId: "req-1", facilityId: "facility-1" });
 });
@@ -354,7 +354,181 @@ test("surfaces a missing facility contact only for a facility in active scope", 
   const result = build({ tracker: [], requisitions: [req], sites: [noContact, { id: "unused", siteName: "Unused Facility", status: "Active" }] });
   const contacts = result.items.filter((entry) => entry.issueCode === "facility-recipient-missing");
   expect(contacts).toHaveLength(1);
-  expect(contacts[0]).toMatchObject({ sourceType: "facility", sourceId: "facility-no-contact", facilityId: "facility-no-contact", destination: { type: "facility", id: "facility-no-contact" } });
+  expect(contacts[0]).toMatchObject({ category: ACTION_CENTER_CATEGORIES.facilityContact, sourceType: "facility", sourceId: "facility-no-contact", facilityId: "facility-no-contact", destination: { type: "facility", id: "facility-no-contact" } });
+});
+
+test("derives interview scheduling only when no confirmed future interview exists", () => {
+  const needsScheduling = candidate({
+    id: "candidate-schedule",
+    status: "Interview Requested",
+    nextAction: "Schedule interview",
+    nextActionDueDate: "2026-08-07T16:00:00.000Z",
+  });
+  const scheduled = candidate({
+    id: "candidate-scheduled",
+    status: "Interview Requested",
+    nextAction: "Schedule interview",
+    interviewDate: "2026-08-09T16:00:00.000Z",
+  });
+  const result = build({ tracker: [needsScheduling, scheduled] });
+  expect(result.items.find((entry) => entry.category === ACTION_CENTER_CATEGORIES.interviewScheduling)).toMatchObject({
+    candidateId: "candidate-schedule",
+    requisitionId: "req-1",
+    facilityId: "facility-1",
+    riskLevel: "High",
+    destination: { type: "candidate", id: "candidate-schedule" },
+  });
+  expect(result.items.some((entry) => entry.category === ACTION_CENTER_CATEGORIES.interviewScheduling && entry.candidateId === "candidate-scheduled")).toBe(false);
+});
+
+test("does not request interview scheduling when an exact future calendar interview exists", () => {
+  const result = build({
+    tracker: [candidate({ id: "candidate-calendar-interview", status: "Interview Requested", nextAction: "Schedule interview" })],
+    calendarEvents: [{
+      id: "event-calendar-interview",
+      eventType: "Facility Interview",
+      startDateTime: "2026-08-09T16:00:00.000Z",
+      candidateId: "candidate-calendar-interview",
+      requisitionId: "req-1",
+      facilityId: "facility-1",
+    }],
+  });
+  expect(result.items.some((entry) => entry.category === ACTION_CENTER_CATEGORIES.interviewScheduling)).toBe(false);
+});
+
+test("derives offer follow-up and excludes a recorded final offer response", () => {
+  const pending = candidate({
+    id: "candidate-offer",
+    status: "Offer Pending",
+    nextAction: "Follow up on offer",
+    offerSentAt: "2026-08-04T16:00:00.000Z",
+  });
+  const accepted = candidate({
+    id: "candidate-offer-accepted",
+    status: "Offer Pending",
+    nextAction: "Follow up on offer",
+    offerAcceptedAt: "2026-08-07T16:00:00.000Z",
+  });
+  const result = build({ tracker: [pending, accepted], workflowRules: { offerFollowUpHours: 72 } });
+  expect(result.items.find((entry) => entry.category === ACTION_CENTER_CATEGORIES.offerFollowUp)).toMatchObject({
+    candidateId: "candidate-offer",
+    riskLevel: "High",
+    destination: { type: "candidate", id: "candidate-offer" },
+  });
+  expect(result.items.some((entry) => entry.category === ACTION_CENTER_CATEGORIES.offerFollowUp && entry.candidateId === "candidate-offer-accepted")).toBe(false);
+});
+
+test("uses the configured inactivity threshold for a lower-priority stale-candidate item", () => {
+  const stale = candidate({
+    id: "candidate-stale",
+    nextAction: "Review profile",
+    nextActionDueDate: "",
+    lastActionAt: "2026-07-30T16:00:00.000Z",
+  });
+  const recent = candidate({
+    id: "candidate-recent",
+    nextAction: "Review profile",
+    nextActionDueDate: "",
+    lastActionAt: "2026-08-05T16:00:00.000Z",
+  });
+  const result = build({ tracker: [stale, recent], workflowRules: { workspaceRiskInactivityDays: 7 } });
+  expect(result.items.find((entry) => entry.category === ACTION_CENTER_CATEGORIES.staleCandidate)).toMatchObject({
+    candidateId: "candidate-stale",
+    issueCode: "stale-candidate",
+    destination: { type: "candidate", id: "candidate-stale" },
+  });
+  expect(result.items.some((entry) => entry.category === ACTION_CENTER_CATEGORIES.staleCandidate && entry.candidateId === "candidate-recent")).toBe(false);
+  expect(result.nextRefreshAt).toBe("2026-08-12T16:00:00.000Z");
+});
+
+test("uses canonical facility readiness for report blockers and Ask Weekly decisions", () => {
+  const result = build({
+    tracker: [],
+    facilityReadinessRows: [
+      {
+        id: "facility-blocked",
+        facilityId: "facility-blocked",
+        facility: "Blocked Facility",
+        regionName: "Synthetic Region",
+        readiness: "Blocked",
+        readinessIssues: [{
+          code: "MISSING_REQUIRED_SHIFT",
+          issue: "Missing shift",
+          blocking: true,
+          candidateId: "candidate-shift",
+          candidateName: "Shift Candidate",
+          requisitionId: "req-shift",
+          position: "RN",
+          facilityId: "facility-blocked",
+          canonicalFacilityName: "Blocked Facility",
+          regionName: "Synthetic Region",
+          reason: "Required shift is missing.",
+          resolutionAction: "Add Shift",
+        }],
+      },
+      {
+        id: "facility-weekly",
+        facilityId: "facility-weekly",
+        facility: "Weekly Facility",
+        regionName: "Synthetic Region",
+        noOpeningsPolicy: "Ask Weekly",
+        readiness: "Needs Review",
+        readinessIssues: [],
+        noOpeningOutcome: {
+          applies: true,
+          outcomeLabel: "Weekly Decision Needed",
+          reason: "Choose whether to create a standard report for this session.",
+        },
+      },
+    ],
+  });
+  expect(result.items.find((entry) => entry.category === ACTION_CENTER_CATEGORIES.reportReadiness)).toMatchObject({
+    candidateId: "candidate-shift",
+    requisitionId: "req-shift",
+    facilityId: "facility-blocked",
+    recommendedAction: "Add Shift",
+  });
+  expect(result.items.find((entry) => entry.category === ACTION_CENTER_CATEGORIES.askWeekly)).toMatchObject({
+    facilityId: "facility-weekly",
+    issueCode: "ask-weekly-decision",
+    destination: { type: "reporting", id: "facility-weekly" },
+  });
+});
+
+test("does not classify a genuine reporting blocker as an Ask Weekly decision", () => {
+  const result = build({
+    tracker: [],
+    facilityReadinessRows: [{
+      id: "facility-contact-blocked",
+      facilityId: "facility-contact-blocked",
+      facility: "Contact Blocked Facility",
+      noOpeningsPolicy: "Ask Weekly",
+      readiness: "Blocked",
+      noOpeningOutcome: { applies: true, outcomeLabel: "Blocked", reason: "Resolve the contact." },
+      readinessIssues: [{ code: "MISSING_REQUIRED_CONTACT", issue: "Missing facility contact", blocking: true, facilityId: "facility-contact-blocked", reason: "A facility contact is required.", resolutionAction: "Add Contact" }],
+    }],
+  });
+  expect(result.items.find((entry) => entry.category === ACTION_CENTER_CATEGORIES.facilityContact)).toMatchObject({
+    facilityId: "facility-contact-blocked",
+    recommendedAction: "Add Contact",
+  });
+  expect(result.items.some((entry) => entry.category === ACTION_CENTER_CATEGORIES.askWeekly)).toBe(false);
+});
+
+test("does not label an automatic no-opening policy exception as an Ask Weekly decision", () => {
+  const result = build({
+    tracker: [],
+    facilityReadinessRows: [{
+      id: "facility-auto-policy",
+      facilityId: "facility-auto-policy",
+      facility: "Automatic Policy Facility",
+      noOpeningsPolicy: "Auto Standard Report",
+      readiness: "Needs Review",
+      readinessIssues: [],
+      noOpeningOutcome: { applies: true, outcomeLabel: "Weekly Decision Needed", reason: "The standard template is unavailable." },
+    }],
+  });
+  expect(result.items.some((entry) => entry.category === ACTION_CENTER_CATEGORIES.askWeekly)).toBe(false);
 });
 
 test.each(["Paused", "Cancelled", "Closed", "Filled", "Archived", "Inactive", "Unknown"])("does not create a facility-contact blocker for %s requisitions", (status) => {
@@ -488,8 +662,8 @@ test("preserves the same blocker code for duplicate candidate IDs on two exact r
   const blockers = result.items.filter((entry) => entry.issueCode === "missing-candidate-notes" && entry.candidateId === "duplicate-candidate");
   expect(blockers).toHaveLength(2);
   expect(blockers.map((entry) => entry.id)).toEqual([
-    "action-center-v1:Data%20Blockers:candidate:duplicate-candidate:requisition:req-1:facility:facility-1:missing-candidate-notes",
-    "action-center-v1:Data%20Blockers:candidate:duplicate-candidate:requisition:req-2:facility:facility-2:missing-candidate-notes",
+    "action-center-v1:Candidate%20%2F%20Requisition%20Info:candidate:duplicate-candidate:requisition:req-1:facility:facility-1:missing-candidate-notes",
+    "action-center-v1:Candidate%20%2F%20Requisition%20Info:candidate:duplicate-candidate:requisition:req-2:facility:facility-2:missing-candidate-notes",
   ]);
   expect(blockers.map((entry) => entry.context)).toEqual(expect.arrayContaining([
     expect.objectContaining({ requisitionId: "req-1", facilityId: "facility-1", region: "Synthetic Region" }),
