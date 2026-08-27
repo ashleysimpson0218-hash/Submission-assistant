@@ -403,15 +403,15 @@ function isoDateOnly(value = "") {
   return String(value).slice(0, 10);
 }
 
-function candidateProfileCreated(item = {}) {
-  return Boolean(
-    item.profileCreated ||
-      item.profileCreatedAt ||
-      item.createdAt ||
-      item.submissionDate ||
-      item.formSnapshot?.fullName ||
-      item.candidate
-  );
+export function candidateProfileCreated(item = {}) {
+  if (item.profileCreated === true) return true;
+  return [
+    item.profileCreatedAt,
+    item.candidateSubmittedToFacilityAt,
+    item.submittedToFacilityAt,
+    item.facilitySubmittedAt,
+    item.facilitySubmissionSentAt,
+  ].some((value) => String(value ?? "").trim());
 }
 
 function candidateInterviewDate(item = {}) {
@@ -433,7 +433,7 @@ function interviewDateHasArrived(item = {}) {
   return date <= today;
 }
 
-function movementStageIndex(item = {}) {
+export function movementStageIndex(item = {}) {
   const explicitStage = normalizedMovementStage(item.movementStage);
   const explicitIndex = MOVEMENT_STAGES.indexOf(explicitStage);
   if (explicitIndex >= 0) {
@@ -462,7 +462,7 @@ function movementStageForItem(item = {}) {
   return MOVEMENT_STAGES[movementStageIndex(item)] || "Lead";
 }
 
-function movementPatchForStage(stage, item = {}) {
+export function movementPatchForStage(stage, item = {}) {
   stage = normalizedMovementStage(stage);
   const stageRules = MOVEMENT_STAGE_STATUS_MAP[stage] || MOVEMENT_STAGE_STATUS_MAP.Lead;
   const patch = {
@@ -477,7 +477,7 @@ function movementPatchForStage(stage, item = {}) {
   return patch;
 }
 
-function pipelineProgressionForItem(item = {}) {
+export function pipelineProgressionForItem(item = {}) {
   if (item.closedFromPipelineStep) return item.closedFromPipelineStep;
   const status = String(item.status || "");
   const action = String(item.nextAction || "");
@@ -486,7 +486,11 @@ function pipelineProgressionForItem(item = {}) {
   if (/cleared to start/.test(text)) return "Cleared to Start";
   if (/onboard|application|credentialing|background|clearance/.test(text)) return "Onboarding Started";
   if (/offer/.test(text)) return "Offer/Next Steps";
-  if (interviewDateHasArrived(item) || /decision|selected|not selected|feedback|interview completed/.test(text)) return "Decision Pending";
+  if (
+    interviewDateHasArrived(item)
+    || /selected|not selected|feedback|interview completed/.test(text)
+    || /decision/.test(status.toLowerCase())
+  ) return "Decision Pending";
   if (candidateInterviewDate(item) || /interview scheduled|confirm interview|reminder|rescheduled|canceled|no show/.test(text)) return "Interview Scheduled";
   if (/interview requested|schedule interview|availability/.test(text)) return "Interview Outreach";
   if (/submitted|facility submission/.test(text) || candidateProfileCreated(item)) return "Facility Submission";
