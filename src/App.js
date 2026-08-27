@@ -84,6 +84,7 @@ import {
   buildCanonicalReportContext,
   policyRowsForReportAction as resolvePolicyRowsForReportAction,
   readReportReviewTarget,
+  reportReviewSearch,
   reportAudienceDefinition,
   resolveReportReviewTarget,
   serializeCanonicalReportHistoryRecord,
@@ -97,6 +98,12 @@ import {
   selectWeeklyReportingPrimaryAction,
 } from "./weeklyReportingWorkflow";
 import { RecruiterWorkspacePage } from "./RecruiterWorkspacePage";
+import {
+  actionCenterNavigationSearch,
+  buildActionCenterNavigation,
+  buildActionCenterExitNavigation,
+  readActionCenterNavigation,
+} from "./actionCenterNavigation";
 import { applyWorkspaceTaskAction } from "./recruiterWorkspaceActions";
 import { InternalCalendarPage } from "./InternalCalendarPage";
 import {
@@ -6119,7 +6126,12 @@ function RecruiterApp() {
     () => readSavedHistoryTarget(window.location.search),
     [],
   );
-  const [activePage, setActivePage] = useState(() => initialReportReviewTarget ? "reports" : initialSavedHistoryTarget ? "reporting" : "home");
+  const initialActionCenterNavigation = useMemo(
+    () => readActionCenterNavigation(window.location.search),
+    [],
+  );
+  const [activePage, setActivePage] = useState(() => initialActionCenterNavigation.present ? "home" : initialReportReviewTarget ? "reports" : initialSavedHistoryTarget ? "reporting" : "home");
+  const [actionCenterNavigationTarget, setActionCenterNavigationTarget] = useState(initialActionCenterNavigation);
   const [accountTab, setAccountTab] = useState("profile");
   const [activeSettingsTab, setActiveSettingsTab] = useState("general");
   const [reportsTab, setReportsTabState] = useState(() => initialReportReviewTarget ? "review-reports" : "overview");
@@ -6132,13 +6144,17 @@ function RecruiterApp() {
   const reportReviewTargetRestoredRef = useRef("");
   const reportReviewPreviewRestoredRef = useRef("");
   useEffect(() => {
-    const restoreReportTargetFromLocation = () => {
+    const restoreNavigationFromLocation = () => {
       const targetId = readReportReviewTarget(window.location.search);
       const historyTargetId = readSavedHistoryTarget(window.location.search);
+      const actionCenterTarget = readActionCenterNavigation(window.location.search);
       setReportReviewTargetId(targetId);
+      setActionCenterNavigationTarget(actionCenterTarget);
       reportReviewTargetRestoredRef.current = "";
       reportReviewPreviewRestoredRef.current = "";
-      if (targetId) {
+      if (actionCenterTarget.present) {
+        setActivePage("home");
+      } else if (targetId) {
         setActivePage("reports");
         setReportsTab("review-reports");
       } else if (historyTargetId) {
@@ -6149,8 +6165,8 @@ function RecruiterApp() {
         if (window.history.state.reportsTab) setReportsTab(window.history.state.reportsTab);
       }
     };
-    window.addEventListener("popstate", restoreReportTargetFromLocation);
-    return () => window.removeEventListener("popstate", restoreReportTargetFromLocation);
+    window.addEventListener("popstate", restoreNavigationFromLocation);
+    return () => window.removeEventListener("popstate", restoreNavigationFromLocation);
   }, [setReportsTab]);
   const [reportHistoryStatusView, setReportHistoryStatusView] = useState("All");
   const setReportsHubTab = useCallback((value) => {
@@ -15349,6 +15365,7 @@ function rowifyCandidate(item = {}) {
       setCopyNotice(resolution.error);
       return false;
     }
+    leaveActionCenterNavigation("positions");
     const navigation = actionCenterNavigationState({ setupTarget: resolution.target });
     setReportCorrectionTarget(navigation.reportCorrectionTarget);
     setActionCenterCandidateTarget(navigation.actionCenterCandidateTarget);
@@ -15368,6 +15385,7 @@ function rowifyCandidate(item = {}) {
       setCopyNotice(resolution.error);
       return false;
     }
+    leaveActionCenterNavigation("workspace");
     const navigation = actionCenterNavigationState({ candidateTarget: resolution.target });
     setReportCorrectionTarget(navigation.reportCorrectionTarget);
     setActionCenterSetupTarget(navigation.actionCenterSetupTarget);
@@ -15435,11 +15453,60 @@ function rowifyCandidate(item = {}) {
     ["settings", "Settings", "\u2699\uFE0F"],
     ["account", "Profile & Account", "\uD83D\uDC64"],
   ];
+  function updateActionCenterNavigation({ filter, itemId = "" } = {}) {
+    const navigation = buildActionCenterNavigation({
+      search: window.location.search,
+      filter,
+      itemId,
+    });
+    if (!navigation.ok) {
+      setCopyNotice(navigation.message);
+      return false;
+    }
+    let nextSearch = reportReviewSearch(navigation.search, "");
+    nextSearch = savedHistorySearch(nextSearch, "");
+    const nextLocation = `${window.location.pathname}${nextSearch}${window.location.hash}`;
+    const currentTarget = readActionCenterNavigation(window.location.search);
+    const historyMethod = currentTarget.present
+      && currentTarget.valid
+      && currentTarget.filter === navigation.navigation.filter
+      && currentTarget.itemId === navigation.navigation.itemId
+      ? "replaceState"
+      : "pushState";
+    window.history[historyMethod](
+      { ...(window.history.state || {}), ...navigation.state },
+      "",
+      nextLocation,
+    );
+    setActionCenterNavigationTarget(navigation.navigation);
+    setReportReviewTargetId("");
+    setActivePage("home");
+    return true;
+  }
+  function leaveActionCenterNavigation(nextPage) {
+    const currentTarget = readActionCenterNavigation(window.location.search);
+    if (!currentTarget.present) return false;
+    const navigation = buildActionCenterExitNavigation({
+      search: window.location.search,
+      activePage: nextPage,
+    });
+    const nextLocation = `${window.location.pathname}${navigation.search}${window.location.hash}`;
+    window.history.pushState(
+      {
+        ...(window.history.state || {}),
+        ...navigation.state,
+      },
+      "",
+      nextLocation,
+    );
+    setActionCenterNavigationTarget(readActionCenterNavigation(navigation.search));
+    return true;
+  }
   function navigateToReportingValue(value) {
     clearActionCenterNavigationTargets();
     const route = resolveReportingNavigation(value);
     const navigation = buildReportingNavigation({
-      search: window.location.search,
+      search: actionCenterNavigationSearch(window.location.search, null),
       activePage: route.destination,
       reportsTab: route.step,
     });
@@ -15455,6 +15522,7 @@ function rowifyCandidate(item = {}) {
     } else {
       window.history.replaceState({ ...currentState, ...navigation.state }, "", nextLocation);
     }
+    setActionCenterNavigationTarget(readActionCenterNavigation(nextSearch));
     setReportReviewTargetId("");
     reportReviewTargetRestoredRef.current = "";
     reportReviewPreviewRestoredRef.current = "";
@@ -15464,6 +15532,7 @@ function rowifyCandidate(item = {}) {
   function navigateToPage(key) {
     clearActionCenterNavigationTargets();
     if (key === "actions") {
+      leaveActionCenterNavigation("home");
       setActivePage("home");
       return;
     }
@@ -15475,6 +15544,7 @@ function rowifyCandidate(item = {}) {
       navigateToReportingValue("overview");
       return;
     }
+    leaveActionCenterNavigation(key);
     setActivePage(key);
     if (key === "hot") {
       setHotLeadDetailOpen(false);
@@ -16139,6 +16209,8 @@ function rowifyCandidate(item = {}) {
             communicationSettings={settings}
             controlledCommunicationActionsAuthorized={actionCenterControlledCommunicationActionsEnabled}
             prefilledEmailDraftAuthorized={actionCenterPrefilledEmailDraftsEnabled}
+            actionCenterNavigation={actionCenterNavigationTarget}
+            onActionCenterNavigationChange={updateActionCenterNavigation}
             onRecordControlledCommunicationAction={(payload) => recordActionCenterCommunicationAudit({
               client: supabase,
               workspaceId: CLOUD_WORKSPACE_ID,
@@ -16163,12 +16235,16 @@ function rowifyCandidate(item = {}) {
             recruiterName={settings.general?.recruiterName || "Recruiter"}
             calendarEvents={calendarEvents}
             onOpenCandidate={(candidateId) => {
+              leaveActionCenterNavigation("workspace");
               setSelectedId(candidateId);
               setTrackerPanelOpen(false);
               setActivePage("workspace");
             }}
             onOpenActionCenterCandidate={openActionCenterCandidateRecord}
-            onOpenRequisition={() => setActivePage("positions")}
+            onOpenRequisition={() => {
+              leaveActionCenterNavigation("positions");
+              setActivePage("positions");
+            }}
             onOpenActionCenterRequisition={(requisitionId) => openActionCenterSetupRecord("requisition", requisitionId)}
             onOpenActionCenterFacility={(facilityId) => openActionCenterSetupRecord("facility", facilityId)}
             onOpenWeeklyCleanup={() => {
@@ -16177,16 +16253,28 @@ function rowifyCandidate(item = {}) {
             onOpenReports={() => {
               navigateToReportingValue("reports-history");
             }}
-            onOpenCalendar={() => setActivePage("calendar")}
-            onOpenCalendarEvent={openCalendarEvent}
-            onAddCalendarEvent={() => openCalendarCreate()}
-            onScheduleCalendar={(task) => openCalendarCreate({
-              eventType: "Recruiter Follow-Up",
-              candidateId: task.candidateId || task.sourceId || "",
-              requisitionId: task.requisitionId || "",
-              facilityId: task.calendarEvent?.facilityId || "",
-              title: `Follow-Up: ${task.candidateName || task.position || "Recruiting activity"}`,
-            })}
+            onOpenCalendar={() => {
+              leaveActionCenterNavigation("calendar");
+              setActivePage("calendar");
+            }}
+            onOpenCalendarEvent={(eventId) => {
+              leaveActionCenterNavigation("calendar");
+              openCalendarEvent(eventId);
+            }}
+            onAddCalendarEvent={() => {
+              leaveActionCenterNavigation("calendar");
+              openCalendarCreate();
+            }}
+            onScheduleCalendar={(task) => {
+              leaveActionCenterNavigation("calendar");
+              openCalendarCreate({
+                eventType: "Recruiter Follow-Up",
+                candidateId: task.candidateId || task.sourceId || "",
+                requisitionId: task.requisitionId || "",
+                facilityId: task.calendarEvent?.facilityId || "",
+                title: `Follow-Up: ${task.candidateName || task.position || "Recruiting activity"}`,
+              });
+            }}
             onTaskAction={applyRecruiterWorkspaceAction}
             onWorkspaceEvent={(event) => addHistory(event.type, event.subject, event.body, "", event.meta || {})}
           />

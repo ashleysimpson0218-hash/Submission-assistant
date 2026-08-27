@@ -245,15 +245,15 @@ function ActionCenterCommunicationPreviewDialog({ preview, theme, onClose, contr
   );
 }
 
-export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EMPTY_LIST, actionCenterRequisitions = null, sites = EMPTY_LIST, history = EMPTY_LIST, calendarEvents = EMPTY_LIST, facilityReadinessRows = EMPTY_LIST, workflowRules = EMPTY_RULES, communicationSettings = EMPTY_RULES, controlledCommunicationActionsAuthorized = false, prefilledEmailDraftAuthorized = false, onCopyApprovedCommunication = null, onOpenPrefilledEmailDraft = null, onRecordControlledCommunicationAction = null, theme, isNarrow = false, isMedium = false, recruiterName = "Recruiter", onOpenCandidate, onOpenActionCenterCandidate = onOpenCandidate, onOpenRequisition, onOpenActionCenterRequisition = onOpenRequisition, onOpenFacility = null, onOpenActionCenterFacility = onOpenFacility, onOpenCalendar = () => {}, onOpenCalendarEvent = () => {}, onAddCalendarEvent = () => {}, onScheduleCalendar = () => {}, onOpenWeeklyCleanup, onOpenReports, onTaskAction = () => true, onWorkspaceEvent = () => true }) {
+export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EMPTY_LIST, actionCenterRequisitions = null, sites = EMPTY_LIST, history = EMPTY_LIST, calendarEvents = EMPTY_LIST, facilityReadinessRows = EMPTY_LIST, workflowRules = EMPTY_RULES, communicationSettings = EMPTY_RULES, controlledCommunicationActionsAuthorized = false, prefilledEmailDraftAuthorized = false, actionCenterNavigation = null, onActionCenterNavigationChange = () => {}, onCopyApprovedCommunication = null, onOpenPrefilledEmailDraft = null, onRecordControlledCommunicationAction = null, theme, isNarrow = false, isMedium = false, recruiterName = "Recruiter", onOpenCandidate, onOpenActionCenterCandidate = onOpenCandidate, onOpenRequisition, onOpenActionCenterRequisition = onOpenRequisition, onOpenFacility = null, onOpenActionCenterFacility = onOpenFacility, onOpenCalendar = () => {}, onOpenCalendarEvent = () => {}, onAddCalendarEvent = () => {}, onScheduleCalendar = () => {}, onOpenWeeklyCleanup, onOpenReports, onTaskAction = () => true, onWorkspaceEvent = () => true }) {
   const [activeFilter, setActiveFilter] = useState("Do Now");
   const [actionTaskId, setActionTaskId] = useState("");
   const [focusMode, setFocusMode] = useState(false);
   const [focusStartedAt, setFocusStartedAt] = useState("");
   const [readinessExpanded, setReadinessExpanded] = useState(false);
   const [wrapUpOpen, setWrapUpOpen] = useState(false);
-  const [actionCenterFilter, setActionCenterFilter] = useState(ACTION_CENTER_CATEGORIES.all);
-  const [actionCenterDetailId, setActionCenterDetailId] = useState("");
+  const [actionCenterFilter, setActionCenterFilter] = useState(() => actionCenterNavigation?.valid ? actionCenterNavigation.filter : ACTION_CENTER_CATEGORIES.all);
+  const [actionCenterDetailId, setActionCenterDetailId] = useState(() => actionCenterNavigation?.valid ? actionCenterNavigation.itemId : "");
   const [actionCenterCommunicationPreviewId, setActionCenterCommunicationPreviewId] = useState("");
   const [actionCenterCommunicationActionReview, setActionCenterCommunicationActionReview] = useState(null);
   const [actionCenterCommunicationActionResult, setActionCenterCommunicationActionResult] = useState(null);
@@ -262,6 +262,22 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
   const completeActionCenterRequisitions = Array.isArray(actionCenterRequisitions) ? actionCenterRequisitions : requisitions;
   const model = useMemo(() => buildRecruiterWorkspaceModel({ tracker, requisitions, sites, history, calendarEvents, rules: workflowRules }), [tracker, requisitions, sites, history, calendarEvents, workflowRules]);
   const actionCenter = useMemo(() => buildRecruiterActionCenter({ tracker, requisitions: completeActionCenterRequisitions, sites, history, calendarEvents, facilityReadinessRows, workflowRules, now: actionCenterNow }), [tracker, completeActionCenterRequisitions, sites, history, calendarEvents, facilityReadinessRows, workflowRules, actionCenterNow]);
+  useEffect(() => {
+    if (!actionCenterNavigation?.present) return;
+    if (!actionCenterNavigation.valid) {
+      setActionCenterFilter(ACTION_CENTER_CATEGORIES.all);
+      setActionCenterDetailId("");
+      setActionCenterCommunicationPreviewId("");
+      setActionCenterCommunicationActionReview(null);
+      setActionCenterCommunicationActionResult(null);
+      return;
+    }
+    setActionCenterFilter(actionCenterNavigation.filter);
+    setActionCenterDetailId(actionCenterNavigation.itemId);
+    setActionCenterCommunicationPreviewId("");
+    setActionCenterCommunicationActionReview(null);
+    setActionCenterCommunicationActionResult(null);
+  }, [actionCenterNavigation]);
   useEffect(() => {
     setActionCenterNow(new Date());
   }, [tracker, completeActionCenterRequisitions, sites, history, calendarEvents, facilityReadinessRows, workflowRules]);
@@ -296,7 +312,16 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
     };
   }), [actionCenter.items, onOpenActionCenterCandidate, onOpenActionCenterRequisition, onOpenActionCenterFacility, onOpenCalendarEvent, onOpenWeeklyCleanup]);
   const actionCenterItems = useMemo(() => filterRecruiterActionCenter(navigableActionCenterItems, actionCenterFilter), [navigableActionCenterItems, actionCenterFilter]);
-  const actionCenterDetail = navigableActionCenterItems.find((item) => item.id === actionCenterDetailId) || null;
+  const actionCenterDetailCandidate = navigableActionCenterItems.find((item) => item.id === actionCenterDetailId) || null;
+  const actionCenterDetail = actionCenterDetailCandidate
+    && (actionCenterFilter === ACTION_CENTER_CATEGORIES.all || actionCenterDetailCandidate.category === actionCenterFilter)
+    ? actionCenterDetailCandidate
+    : null;
+  const actionCenterRouteError = actionCenterNavigation?.present && !actionCenterNavigation.valid
+    ? actionCenterNavigation.message
+    : actionCenterNavigation?.present && actionCenterNavigation.itemId && !actionCenterDetail
+      ? "The selected Action Center item is unavailable or does not belong to this filter. No other record was opened."
+      : "";
   const actionCenterCommunicationItem = navigableActionCenterItems.find((item) => item.id === actionCenterCommunicationPreviewId) || null;
   const actionCenterCommunicationPreview = useMemo(() => actionCenterCommunicationItem ? buildActionCenterCommunicationPreview({
     item: actionCenterCommunicationItem,
@@ -317,6 +342,22 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
     setActionCenterCommunicationActionReview(null);
     setActionCenterCommunicationActionResult(null);
     setActionCenterCommunicationActionProcessing(false);
+  };
+  const selectActionCenterFilter = (filter) => {
+    setActionCenterFilter(filter);
+    setActionCenterDetailId("");
+    closeActionCenterCommunicationPreview();
+    onActionCenterNavigationChange({ filter, itemId: "" });
+  };
+  const selectActionCenterDetail = (itemId) => {
+    setActionCenterDetailId(itemId);
+    closeActionCenterCommunicationPreview();
+    onActionCenterNavigationChange({ filter: actionCenterFilter, itemId });
+  };
+  const closeActionCenterDetail = () => {
+    setActionCenterDetailId("");
+    closeActionCenterCommunicationPreview();
+    onActionCenterNavigationChange({ filter: actionCenterFilter, itemId: "" });
   };
   const requestActionCenterCommunicationAction = (actionType, documentKey) => {
     setActionCenterCommunicationActionResult(null);
@@ -512,11 +553,12 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
 
           {!focusMode ? <WorkspaceCard theme={theme} title="Recruiter Action Center" subtitle="Read-only priorities explain what needs attention, why it matters, and the exact record to review.">
             <div role="tablist" aria-label="Action Center filters" style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 12 }}>
-              {ACTION_CENTER_FILTERS.map((filter) => <button key={filter} type="button" role="tab" aria-selected={actionCenterFilter === filter} onClick={() => { setActionCenterFilter(filter); setActionCenterDetailId(""); }} style={{ border: `1px solid ${actionCenterFilter === filter ? theme.primary2 : theme.borderSoft}`, borderRadius: 6, background: actionCenterFilter === filter ? theme.primary2 : theme.panelAlt, color: actionCenterFilter === filter ? "#fff" : theme.text, padding: "7px 10px", fontWeight: 850, cursor: "pointer" }}>{filter} <span aria-label={`${actionCenter.counts[filter]} items`}>{actionCenter.counts[filter]}</span></button>)}
+              {ACTION_CENTER_FILTERS.map((filter) => <button key={filter} type="button" role="tab" aria-selected={actionCenterFilter === filter} onClick={() => selectActionCenterFilter(filter)} style={{ border: `1px solid ${actionCenterFilter === filter ? theme.primary2 : theme.borderSoft}`, borderRadius: 6, background: actionCenterFilter === filter ? theme.primary2 : theme.panelAlt, color: actionCenterFilter === filter ? "#fff" : theme.text, padding: "7px 10px", fontWeight: 850, cursor: "pointer" }}>{filter} <span aria-label={`${actionCenter.counts[filter]} items`}>{actionCenter.counts[filter]}</span></button>)}
             </div>
+            {actionCenterRouteError ? <div role="alert" style={{ border: `1px solid ${theme.red}`, borderRadius: 6, padding: 10, marginBottom: 10, background: theme.redBg, color: theme.text, fontWeight: 850 }}>{actionCenterRouteError}</div> : null}
             <div role="tabpanel" aria-label={`${actionCenterFilter} Action Center items`} style={{ display: "grid", gap: 8 }}>
-              {actionCenterItems.length ? actionCenterItems.map((item) => <ActionCenterRow key={item.id} item={item} theme={theme} narrow={isNarrow} onReview={setActionCenterDetailId} onOpen={openActionCenterItem} />) : <div style={{ border: `1px dashed ${theme.borderSoft}`, borderRadius: 8, padding: 20, color: theme.muted, textAlign: "center" }}>No {actionCenterFilter === ACTION_CENTER_CATEGORIES.all ? "Action Center" : actionCenterFilter.toLowerCase()} items need attention right now.</div>}
-              {actionCenterDetail ? <ActionCenterDetail item={actionCenterDetail} theme={theme} onClose={() => setActionCenterDetailId("")} onOpen={openActionCenterItem} onPreviewCommunication={openActionCenterCommunicationPreview} /> : null}
+              {actionCenterItems.length ? actionCenterItems.map((item) => <ActionCenterRow key={item.id} item={item} theme={theme} narrow={isNarrow} onReview={selectActionCenterDetail} onOpen={openActionCenterItem} />) : <div style={{ border: `1px dashed ${theme.borderSoft}`, borderRadius: 8, padding: 20, color: theme.muted, textAlign: "center" }}>No {actionCenterFilter === ACTION_CENTER_CATEGORIES.all ? "Action Center" : actionCenterFilter.toLowerCase()} items need attention right now.</div>}
+              {actionCenterDetail ? <ActionCenterDetail item={actionCenterDetail} theme={theme} onClose={closeActionCenterDetail} onOpen={openActionCenterItem} onPreviewCommunication={openActionCenterCommunicationPreview} /> : null}
             </div>
             {actionCenterCommunicationPreview ? <ActionCenterCommunicationPreviewDialog
               preview={actionCenterCommunicationPreview}
