@@ -104,7 +104,12 @@ import {
   buildActionCenterExitNavigation,
   readActionCenterNavigation,
 } from "./actionCenterNavigation";
-import { applyWorkspaceTaskAction } from "./recruiterWorkspaceActions";
+import {
+  applyWorkspaceBulkTaskReviewToRecords,
+  applyWorkspaceTaskAction,
+  resolveWorkspaceTaskRecord,
+} from "./recruiterWorkspaceActions";
+import { buildCandidateWorkspaceTasks } from "./recruiterWorkspaceSelectors";
 import { InternalCalendarPage } from "./InternalCalendarPage";
 import {
   buildInternalCalendarInvitation,
@@ -14603,8 +14608,12 @@ function rowifyCandidate(item = {}) {
       setCopyNotice("Open the requisition to update recruiting coverage.");
       return false;
     }
-    const current = safeTrackerRows.find((item) => item.id === task.sourceId);
-    const result = applyWorkspaceTaskAction(current, action, {
+    const resolved = resolveWorkspaceTaskRecord(safeTrackerRows, task);
+    if (!resolved.ok) {
+      setCopyNotice(resolved.error);
+      return false;
+    }
+    const result = applyWorkspaceTaskAction(resolved.record, action, {
       ...options,
       actor: settings.general?.recruiterName || "Recruiter",
       followUpDays: settings.options?.workflowRules?.managerSecondFollowUpBusinessDays || 2,
@@ -14613,7 +14622,7 @@ function rowifyCandidate(item = {}) {
       setCopyNotice(result.error);
       return false;
     }
-    setTracker((prev) => prev.map((item) => item.id === task.sourceId ? result.record : item));
+    setTracker((prev) => prev.map((item, index) => index === resolved.index ? result.record : item));
     addHistory(result.history.type, result.history.subject, result.history.body, result.history.trackerId, result.history.meta);
     setCopyNotice(`${result.history.type}. Weekly reporting will use the updated activity.`);
     return true;
@@ -15487,6 +15496,28 @@ function rowifyCandidate(item = {}) {
     setActivePage("home");
     return true;
   }
+
+  function applyRecruiterWorkspaceBulkAction(review) {
+    const now = new Date();
+    const currentTasks = buildCandidateWorkspaceTasks(safeTrackerRows, {
+      now,
+      rules: settings.options?.workflowRules || {},
+    });
+    const result = applyWorkspaceBulkTaskReviewToRecords(safeTrackerRows, currentTasks, review, {
+      actor: settings.general?.recruiterName || "Recruiter",
+      now,
+    });
+    if (!result.ok) {
+      setCopyNotice(result.error);
+      return result;
+    }
+    if (result.succeeded) {
+      setTracker(result.records);
+      result.histories.forEach((entry) => addHistory(entry.type, entry.subject, entry.body, entry.trackerId, entry.meta));
+    }
+    setCopyNotice(`${result.succeeded} bulk action${result.succeeded === 1 ? "" : "s"} completed; ${result.failed} failed safely.`);
+    return result;
+  }
   function leaveActionCenterNavigation(nextPage) {
     const currentTarget = readActionCenterNavigation(window.location.search);
     if (!currentTarget.present) return false;
@@ -16280,6 +16311,7 @@ function rowifyCandidate(item = {}) {
               });
             }}
             onTaskAction={applyRecruiterWorkspaceAction}
+            onBulkTaskAction={applyRecruiterWorkspaceBulkAction}
             onWorkspaceEvent={(event) => addHistory(event.type, event.subject, event.body, "", event.meta || {})}
           />
         ) : null}

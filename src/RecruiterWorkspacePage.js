@@ -15,7 +15,11 @@ import {
   revalidateActionCenterCommunicationAction,
 } from "./actionCenterCommunicationActions";
 import { buildRecruiterWorkspaceModel } from "./recruiterWorkspaceSelectors";
-import { WORKSPACE_TASK_ACTIONS } from "./recruiterWorkspaceActions";
+import {
+  WORKSPACE_BULK_ACTION_LIMIT,
+  WORKSPACE_TASK_ACTIONS,
+  prepareWorkspaceBulkTaskReview,
+} from "./recruiterWorkspaceActions";
 import { HomeCalendarWidget } from "./HomeCalendarWidget";
 
 const FILTERS = ["Do Now", "Candidate Rescue", "Waiting on Others", "Offers", "Onboarding", "Recruiting Needed", "Stuck"];
@@ -116,12 +120,13 @@ function CountButton({ label, value, detail, tone, onClick, theme }) {
   );
 }
 
-function QueueRow({ task, theme, narrow, onOpenCandidate, onOpenRequisition, onOpenCalendarEvent, onOpenActions }) {
+function QueueRow({ task, theme, narrow, selected = false, onToggleSelection = null, onOpenCandidate, onOpenRequisition, onOpenCalendarEvent, onOpenActions }) {
   const colors = riskColor(task.riskLevel, theme);
   const primaryAction = task.sourceType === "candidate" ? onOpenCandidate : task.sourceType === "calendar" ? onOpenCalendarEvent : onOpenRequisition;
   const primaryLabel = task.sourceType === "candidate" ? "Open Candidate" : task.sourceType === "calendar" ? "View Event" : "Open Requisition";
   return (
-    <article style={{ display: "grid", gridTemplateColumns: narrow ? "1fr" : "minmax(190px, 1.2fr) minmax(210px, 1.5fr) 110px 125px 95px auto auto", gap: 10, alignItems: "center", border: `1px solid ${theme.borderSoft}`, borderLeft: `4px solid ${colors.color}`, borderRadius: 7, padding: 11, background: theme.panel }}>
+    <article style={{ display: "grid", gridTemplateColumns: narrow ? "1fr" : "28px minmax(190px, 1.2fr) minmax(210px, 1.5fr) 110px 125px 95px auto auto", gap: 10, alignItems: "center", border: `1px solid ${theme.borderSoft}`, borderLeft: `4px solid ${colors.color}`, borderRadius: 7, padding: 11, background: theme.panel }}>
+      {task.sourceType === "candidate" ? <input type="checkbox" checked={selected} onChange={() => onToggleSelection?.(task)} aria-label={`Select ${task.candidateName} on requisition ${task.requisitionId || "unassigned"} for a bulk action`} /> : narrow ? null : <span aria-hidden="true" />}
       <div><strong style={{ display: "block" }}>{task.candidateName}</strong><span style={{ color: theme.muted, fontSize: 11 }}>{task.position} · {task.facilityName}</span></div>
       <div><span style={{ display: "block", color: theme.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>Why this is here</span><strong style={{ display: "block", fontSize: 12, lineHeight: 1.4 }}>{task.reason}</strong><span style={{ display: "block", color: theme.primary2, fontSize: 11, fontWeight: 850, marginTop: 4 }}>Next: {task.recommendedAction}</span></div>
       <span style={{ justifySelf: narrow ? "start" : "center", borderRadius: 999, padding: "4px 8px", color: colors.color, background: colors.background, fontSize: 11, fontWeight: 900 }}>{task.riskLevel}</span>
@@ -265,6 +270,51 @@ function ActionCenterCommunicationActionConfirmation({ review, processing, theme
   );
 }
 
+function WorkspaceBulkActionReview({ review, processing, theme, onCancel, onConfirm }) {
+  const [confirmed, setConfirmed] = useState(false);
+  const headingId = useId();
+  const descriptionId = useId();
+  useEffect(() => setConfirmed(false), [review.id]);
+  return (
+    <div role="presentation" style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(18, 11, 46, 0.62)", display: "grid", placeItems: "center", padding: 20 }}>
+      <section role="dialog" aria-modal="true" aria-labelledby={headingId} aria-describedby={descriptionId} onKeyDown={(event) => { if (event.key === "Escape" && !processing) onCancel(); }} style={{ width: "min(760px, 100%)", maxHeight: "88vh", overflow: "auto", background: theme.panel, border: `2px solid ${theme.primary2}`, borderRadius: 12, padding: 18, color: theme.text, boxShadow: theme.shadow }}>
+        <h2 id={headingId} style={{ margin: 0, fontSize: 18 }}>Confirm bulk recruiter action</h2>
+        <p id={descriptionId} style={{ color: theme.muted, margin: "6px 0 14px", fontSize: 12 }}>{review.label}. WelcomeFlow will revalidate every record immediately before changing it. No email, text, calendar action, or external system action will occur.</p>
+        <div style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 8, overflow: "hidden" }}>
+          {review.items.map((item) => <div key={item.taskId} style={{ padding: 10, borderBottom: `1px solid ${theme.borderSoft}`, display: "grid", gridTemplateColumns: "minmax(150px, 1fr) minmax(120px, 0.8fr) minmax(120px, 0.8fr)", gap: 8, fontSize: 12 }}>
+            <strong>{item.candidateName}</strong>
+            <span>{item.requisitionId || "No requisition"}</span>
+            <span>{item.facilityName || "No facility"}</span>
+          </div>)}
+        </div>
+        <p style={{ margin: "10px 0", color: theme.muted, fontSize: 11 }}>{review.items.length} record{review.items.length === 1 ? "" : "s"} selected. A changed or unavailable record will fail safely without preventing other valid records from completing.</p>
+        <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontWeight: 800, fontSize: 12 }}>
+          <input autoFocus type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
+          I reviewed the exact candidates, requisitions, facilities, and action above and approve this internal workspace update.
+        </label>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+          <button type="button" onClick={onCancel} disabled={processing} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: "8px 12px", background: theme.panel, color: theme.text, fontWeight: 850 }}>Cancel</button>
+          <button type="button" onClick={onConfirm} disabled={!confirmed || processing} style={{ border: 0, borderRadius: 6, padding: "8px 12px", background: theme.primary2, color: "#fff", fontWeight: 900, opacity: confirmed && !processing ? 1 : 0.55 }}>{processing ? "Revalidating..." : "Confirm Exact Bulk Action"}</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function WorkspaceBulkActionResult({ result, theme, onClose }) {
+  return (
+    <section role="status" aria-label="Bulk action result" style={{ border: `1px solid ${result.failed ? theme.amber : theme.green}`, borderRadius: 8, padding: 12, background: result.failed ? theme.amberBg : theme.greenBg, color: theme.text }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+        <strong>{result.cancelled ? "Bulk action cancelled; no records changed" : `${result.succeeded} succeeded; ${result.failed} failed safely`}</strong>
+        <button type="button" onClick={onClose} aria-label="Dismiss bulk action result" style={{ border: 0, background: "transparent", color: theme.text, fontWeight: 900 }}>Close</button>
+      </div>
+      <div style={{ display: "grid", gap: 4, marginTop: 8 }}>
+        {result.results.map((item) => <div key={item.taskId} style={{ fontSize: 11 }}><strong>{item.candidateName}</strong> ({item.requisitionId || "No requisition"}): <span style={{ color: item.ok ? theme.green : theme.red }}>{item.ok ? "Completed" : item.message}</span></div>)}
+      </div>
+    </section>
+  );
+}
+
 function QueuePagination({ pagination, label, onPageChange, theme }) {
   if (!pagination.totalItems) return null;
   return (
@@ -338,7 +388,7 @@ function ActionCenterCommunicationPreviewDialog({ preview, theme, onClose, contr
   );
 }
 
-export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EMPTY_LIST, actionCenterRequisitions = null, sites = EMPTY_LIST, history = EMPTY_LIST, calendarEvents = EMPTY_LIST, facilityReadinessRows = EMPTY_LIST, workflowRules = EMPTY_RULES, communicationSettings = EMPTY_RULES, controlledCommunicationActionsAuthorized = false, prefilledEmailDraftAuthorized = false, actionCenterNavigation = null, onActionCenterNavigationChange = () => {}, onCopyApprovedCommunication = null, onOpenPrefilledEmailDraft = null, onRecordControlledCommunicationAction = null, theme, isNarrow = false, isMedium = false, recruiterName = "Recruiter", onOpenCandidate, onOpenActionCenterCandidate = onOpenCandidate, onOpenRequisition, onOpenActionCenterRequisition = onOpenRequisition, onOpenFacility = null, onOpenActionCenterFacility = onOpenFacility, onOpenCalendar = () => {}, onOpenCalendarEvent = () => {}, onAddCalendarEvent = () => {}, onScheduleCalendar = () => {}, onOpenWeeklyCleanup, onOpenReports, onTaskAction = () => true, onWorkspaceEvent = () => true }) {
+export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EMPTY_LIST, actionCenterRequisitions = null, sites = EMPTY_LIST, history = EMPTY_LIST, calendarEvents = EMPTY_LIST, facilityReadinessRows = EMPTY_LIST, workflowRules = EMPTY_RULES, communicationSettings = EMPTY_RULES, controlledCommunicationActionsAuthorized = false, prefilledEmailDraftAuthorized = false, actionCenterNavigation = null, onActionCenterNavigationChange = () => {}, onCopyApprovedCommunication = null, onOpenPrefilledEmailDraft = null, onRecordControlledCommunicationAction = null, theme, isNarrow = false, isMedium = false, recruiterName = "Recruiter", onOpenCandidate, onOpenActionCenterCandidate = onOpenCandidate, onOpenRequisition, onOpenActionCenterRequisition = onOpenRequisition, onOpenFacility = null, onOpenActionCenterFacility = onOpenFacility, onOpenCalendar = () => {}, onOpenCalendarEvent = () => {}, onAddCalendarEvent = () => {}, onScheduleCalendar = () => {}, onOpenWeeklyCleanup, onOpenReports, onTaskAction = () => true, onBulkTaskAction = null, onWorkspaceEvent = () => true }) {
   const [activeFilter, setActiveFilter] = useState("Do Now");
   const [actionTaskId, setActionTaskId] = useState("");
   const [focusMode, setFocusMode] = useState(false);
@@ -354,6 +404,13 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
   const [actionCenterNow, setActionCenterNow] = useState(() => new Date());
   const [actionCenterPage, setActionCenterPage] = useState(1);
   const [workQueuePage, setWorkQueuePage] = useState(1);
+  const [selectedBulkTaskIds, setSelectedBulkTaskIds] = useState([]);
+  const [bulkAction, setBulkAction] = useState(WORKSPACE_TASK_ACTIONS.SNOOZE);
+  const [bulkOwnerType, setBulkOwnerType] = useState("Recruiter");
+  const [bulkNote, setBulkNote] = useState("");
+  const [bulkReview, setBulkReview] = useState(null);
+  const [bulkProcessing, setBulkProcessing] = useState(false);
+  const [bulkResult, setBulkResult] = useState(null);
   const actionCenterFilterRefs = useRef([]);
   const workQueueFilterRefs = useRef([]);
   const actionCenterReviewButtonRefs = useRef(new Map());
@@ -618,6 +675,10 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
     : model.tasks.filter((task) => task.filters.includes(activeFilter)), [model.tasks, activeFilter]);
   const workQueuePagination = useMemo(() => paginateRecruiterQueue(filteredTasks, workQueuePage), [filteredTasks, workQueuePage]);
   useEffect(() => {
+    const eligibleIds = new Set(model.tasks.filter((task) => task.sourceType === "candidate").map((task) => task.id));
+    setSelectedBulkTaskIds((current) => current.filter((id) => eligibleIds.has(id)));
+  }, [model.tasks]);
+  useEffect(() => {
     if (workQueuePagination.page !== workQueuePage) setWorkQueuePage(workQueuePagination.page);
   }, [workQueuePagination.page, workQueuePage]);
   const taskCount = (filter) => model.tasks.filter((task) => task.filters.includes(filter)).length;
@@ -625,6 +686,9 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
     setActiveFilter(filter);
     setWorkQueuePage(1);
     setActionTaskId("");
+    setSelectedBulkTaskIds([]);
+    setBulkReview(null);
+    setBulkResult(null);
   };
   const changeActionCenterPage = (page) => {
     setActionCenterPage(page);
@@ -639,6 +703,52 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
   const actionCenterFilterIndex = Math.max(0, ACTION_CENTER_FILTERS.indexOf(actionCenterFilter));
   const workQueueFilterIndex = Math.max(0, FILTERS.indexOf(activeFilter));
   const actionTask = model.tasks.find((task) => task.id === actionTaskId) || null;
+  const selectedBulkTasks = model.tasks.filter((task) => selectedBulkTaskIds.includes(task.id));
+  const toggleBulkTask = (task) => {
+    if (task.sourceType !== "candidate") return;
+    setBulkReview(null);
+    setBulkResult(null);
+    setSelectedBulkTaskIds((current) => current.includes(task.id)
+      ? current.filter((id) => id !== task.id)
+      : current.length >= WORKSPACE_BULK_ACTION_LIMIT ? current : [...current, task.id]);
+  };
+  const selectCurrentBulkPage = () => {
+    const pageIds = workQueuePagination.items.filter((task) => task.sourceType === "candidate").map((task) => task.id);
+    setSelectedBulkTaskIds((current) => Array.from(new Set([...current, ...pageIds])).slice(0, WORKSPACE_BULK_ACTION_LIMIT));
+    setBulkReview(null);
+    setBulkResult(null);
+  };
+  const previewBulkAction = () => {
+    const options = bulkAction === WORKSPACE_TASK_ACTIONS.REASSIGN
+      ? { ownerType: bulkOwnerType, note: bulkNote }
+      : bulkAction === WORKSPACE_TASK_ACTIONS.ADD_UPDATE
+        ? { note: bulkNote }
+        : { snoozeDays: 1 };
+    const prepared = prepareWorkspaceBulkTaskReview(selectedBulkTasks, bulkAction, options);
+    if (!prepared.ok) {
+      setBulkResult({ succeeded: 0, failed: selectedBulkTasks.length, results: [{ taskId: "bulk-review", candidateName: "Bulk review", requisitionId: "", ok: false, message: prepared.error }] });
+      return;
+    }
+    setBulkResult(null);
+    setBulkReview(prepared.review);
+  };
+  const confirmBulkAction = async () => {
+    if (!bulkReview || bulkProcessing || typeof onBulkTaskAction !== "function") return;
+    setBulkProcessing(true);
+    try {
+      const result = await onBulkTaskAction(bulkReview);
+      if (!result?.ok) {
+        setBulkResult({ succeeded: 0, failed: bulkReview.items.length, results: bulkReview.items.map((item) => ({ ...item, ok: false, message: result?.error || "The bulk action could not be completed." })) });
+      } else {
+        setBulkResult(result);
+        const failedIds = new Set(result.results.filter((item) => !item.ok).map((item) => item.taskId));
+        setSelectedBulkTaskIds((current) => current.filter((id) => failedIds.has(id)));
+      }
+      setBulkReview(null);
+    } finally {
+      setBulkProcessing(false);
+    }
+  };
   const planItems = [
     { label: "Rescue candidates at risk", value: model.plan.rescue, detail: "High or critical risk", tone: model.plan.rescue ? "High" : "Low", filter: "Candidate Rescue" },
     { label: "Follow up on overdue decisions", value: model.plan.overdueDecisions, detail: "Waiting on another owner", tone: model.plan.overdueDecisions ? "Medium" : "Low", filter: "Waiting on Others" },
@@ -734,13 +844,31 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
             <div role="tablist" aria-label="Work queue filters" style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 12 }}>
               {FILTERS.map((filter, index) => <button key={filter} ref={(node) => { workQueueFilterRefs.current[index] = node; }} id={`work-queue-filter-${index}`} type="button" role="tab" aria-selected={activeFilter === filter} aria-controls="work-queue-items-panel" tabIndex={activeFilter === filter ? 0 : -1} onKeyDown={(event) => moveTabSelection(event, FILTERS, filter, workQueueFilterRefs, setQueueFilter)} onClick={() => setQueueFilter(filter)} style={{ border: `1px solid ${activeFilter === filter ? theme.primary2 : theme.borderSoft}`, borderRadius: 6, background: activeFilter === filter ? theme.primary2 : theme.panelAlt, color: activeFilter === filter ? "#fff" : theme.text, padding: "7px 10px", fontWeight: 850, cursor: "pointer" }}>{filter} <span aria-label={`${taskCount(filter)} items`}>{taskCount(filter)}</span></button>)}
             </div>
+            <section aria-label="Safe bulk actions" style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 8, padding: 10, marginBottom: 12, background: theme.panelAlt }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <strong style={{ fontSize: 12 }}>{selectedBulkTaskIds.length} selected</strong>
+                <button type="button" onClick={selectCurrentBulkPage} disabled={!workQueuePagination.items.some((task) => task.sourceType === "candidate")} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: "6px 9px", background: theme.panel, color: theme.text }}>Select current page</button>
+                <button type="button" onClick={() => { setSelectedBulkTaskIds([]); setBulkReview(null); setBulkResult(null); }} disabled={!selectedBulkTaskIds.length} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: "6px 9px", background: theme.panel, color: theme.text }}>Clear selection</button>
+                <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 11, fontWeight: 800 }}>Internal action<select value={bulkAction} onChange={(event) => { setBulkAction(event.target.value); setBulkReview(null); setBulkResult(null); }} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: 6, background: theme.panel, color: theme.text }}>
+                  <option value={WORKSPACE_TASK_ACTIONS.SNOOZE}>Snooze 1 day</option>
+                  <option value={WORKSPACE_TASK_ACTIONS.REASSIGN}>Change owner</option>
+                  <option value={WORKSPACE_TASK_ACTIONS.ADD_UPDATE}>Add update</option>
+                </select></label>
+                {bulkAction === WORKSPACE_TASK_ACTIONS.REASSIGN ? <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 11, fontWeight: 800 }}>Owner<select value={bulkOwnerType} onChange={(event) => setBulkOwnerType(event.target.value)} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: 6, background: theme.panel, color: theme.text }}>{OWNER_OPTIONS.map((owner) => <option key={owner}>{owner}</option>)}</select></label> : null}
+                {bulkAction !== WORKSPACE_TASK_ACTIONS.SNOOZE ? <label style={{ flex: "1 1 220px", display: "flex", gap: 6, alignItems: "center", fontSize: 11, fontWeight: 800 }}>Update<input value={bulkNote} onChange={(event) => setBulkNote(event.target.value)} placeholder={bulkAction === WORKSPACE_TASK_ACTIONS.ADD_UPDATE ? "Required update" : "Optional ownership note"} style={{ flex: 1, border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: 6, background: theme.panel, color: theme.text }} /></label> : null}
+                <button type="button" onClick={previewBulkAction} disabled={!selectedBulkTaskIds.length || typeof onBulkTaskAction !== "function"} style={{ border: 0, borderRadius: 6, padding: "7px 10px", background: theme.primary2, color: "#fff", fontWeight: 900, opacity: selectedBulkTaskIds.length && typeof onBulkTaskAction === "function" ? 1 : 0.55 }}>Preview affected records</button>
+              </div>
+              <p style={{ margin: "7px 0 0", color: theme.muted, fontSize: 10 }}>Limited to {WORKSPACE_BULK_ACTION_LIMIT} exact candidate/requisition tasks. Every record is revalidated after confirmation. No communication is sent and no Paycom integration is used.</p>
+            </section>
+            {bulkResult ? <WorkspaceBulkActionResult result={bulkResult} theme={theme} onClose={() => setBulkResult(null)} /> : null}
             {activeFilter === "Urgent" ? <div style={{ color: theme.primary2, fontSize: 12, fontWeight: 900, marginBottom: 10 }}>Showing: Urgent Actions</div> : null}
             <div id="work-queue-items-panel" role="tabpanel" aria-labelledby={`work-queue-filter-${workQueueFilterIndex}`} aria-label={`${activeFilter} work queue items`} tabIndex={0} style={{ display: "grid", gap: 8 }}>
-              {workQueuePagination.items.length ? workQueuePagination.items.map((task) => <QueueRow key={task.id} task={task} theme={theme} narrow={isNarrow} onOpenCandidate={onOpenCandidate} onOpenRequisition={onOpenRequisition} onOpenCalendarEvent={onOpenCalendarEvent} onOpenActions={(selectedTask) => setActionTaskId(selectedTask.id)} />) : <EmptyQueue filter={activeFilter} waitingCount={model.snapshot.waiting} focusTask={model.focusTask} theme={theme} />}
+              {workQueuePagination.items.length ? workQueuePagination.items.map((task) => <QueueRow key={task.id} task={task} theme={theme} narrow={isNarrow} selected={selectedBulkTaskIds.includes(task.id)} onToggleSelection={toggleBulkTask} onOpenCandidate={onOpenCandidate} onOpenRequisition={onOpenRequisition} onOpenCalendarEvent={onOpenCalendarEvent} onOpenActions={(selectedTask) => setActionTaskId(selectedTask.id)} />) : <EmptyQueue filter={activeFilter} waitingCount={model.snapshot.waiting} focusTask={model.focusTask} theme={theme} />}
               {actionTask ? <WorkspaceTaskActionPanel task={actionTask} theme={theme} onClose={() => setActionTaskId("")} onApply={onTaskAction} onScheduleCalendar={onScheduleCalendar} /> : null}
             </div>
               <QueuePagination pagination={workQueuePagination} label="operational work" onPageChange={changeWorkQueuePage} theme={theme} />
             </section>
+            {bulkReview ? <WorkspaceBulkActionReview review={bulkReview} processing={bulkProcessing} theme={theme} onCancel={() => { setBulkReview(null); setBulkResult({ cancelled: true, succeeded: 0, failed: 0, results: [{ taskId: "cancelled", candidateName: "Bulk action", requisitionId: "", ok: false, message: "Cancelled. No records changed." }] }); }} onConfirm={confirmBulkAction} /> : null}
           </WorkspaceCard>
 
           {!focusMode ? <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "repeat(3, minmax(0, 1fr))", gap: 10 }}>

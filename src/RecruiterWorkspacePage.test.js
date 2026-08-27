@@ -104,6 +104,74 @@ test("consolidates operational work into the Action Center and pages a large que
   expect(screen.queryByRole("navigation", { name: "operational work pagination" })).not.toBeInTheDocument();
 });
 
+test("previews exact bulk records, requires confirmation, and reports partial failures", async () => {
+  const onBulkTaskAction = jest.fn(async (review) => ({
+    ok: true,
+    succeeded: 1,
+    failed: 1,
+    results: [
+      { taskId: review.items[0].taskId, candidateName: review.items[0].candidateName, requisitionId: review.items[0].requisitionId, ok: true, message: "Completed" },
+      { taskId: review.items[1].taskId, candidateName: review.items[1].candidateName, requisitionId: review.items[1].requisitionId, ok: false, message: "Record changed after preview." },
+    ],
+    histories: [],
+  }));
+  const tracker = [
+    { id: "candidate-bulk-one", candidate: "Synthetic Bulk One", requisitionId: "req-bulk-one", status: "Recruiter Review", nextAction: "Review candidate", candidateNotes: "Synthetic", site: "Facility One", currentOwner: "Recruiter", updatedAt: "2026-07-22T11:00:00.000Z" },
+    { id: "candidate-bulk-two", candidate: "Synthetic Bulk Two", requisitionId: "req-bulk-two", status: "Recruiter Review", nextAction: "Review candidate", candidateNotes: "Synthetic", site: "Facility Two", currentOwner: "Recruiter", updatedAt: "2026-07-22T11:00:00.000Z" },
+  ];
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={tracker}
+    requisitions={[]}
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+    onBulkTaskAction={onBulkTaskAction}
+  />);
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select Synthetic Bulk One on requisition req-bulk-one for a bulk action" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select Synthetic Bulk Two on requisition req-bulk-two for a bulk action" }));
+  fireEvent.click(screen.getByRole("button", { name: "Preview affected records" }));
+
+  const dialog = screen.getByRole("dialog", { name: "Confirm bulk recruiter action" });
+  expect(within(dialog).getByText("Synthetic Bulk One")).toBeInTheDocument();
+  expect(within(dialog).getByText("req-bulk-two")).toBeInTheDocument();
+  expect(within(dialog).getByText(/No email, text, calendar action, or external system action will occur/i)).toBeInTheDocument();
+  expect(onBulkTaskAction).not.toHaveBeenCalled();
+  const confirm = within(dialog).getByRole("button", { name: "Confirm Exact Bulk Action" });
+  expect(confirm).toBeDisabled();
+  fireEvent.click(within(dialog).getByRole("checkbox", { name: /approve this internal workspace update/i }));
+  fireEvent.click(confirm);
+
+  await waitFor(() => expect(onBulkTaskAction).toHaveBeenCalledTimes(1));
+  expect(onBulkTaskAction.mock.calls[0][0]).toMatchObject({ action: "snooze", items: expect.arrayContaining([expect.objectContaining({ sourceId: "candidate-bulk-one", requisitionId: "req-bulk-one" })]) });
+  expect(await screen.findByText("1 succeeded; 1 failed safely")).toBeInTheDocument();
+  expect(screen.getByText("Record changed after preview.")).toBeInTheDocument();
+});
+
+test("cancels bulk preview without applying an action or exposing communication and Paycom controls", () => {
+  const onBulkTaskAction = jest.fn();
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={[{ id: "candidate-cancel", candidate: "Synthetic Cancel", requisitionId: "req-cancel", status: "Recruiter Review", nextAction: "Review candidate", candidateNotes: "Synthetic", currentOwner: "Recruiter" }]}
+    requisitions={[]}
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+    onBulkTaskAction={onBulkTaskAction}
+  />);
+  fireEvent.click(screen.getByRole("checkbox", { name: /Select Synthetic Cancel on requisition req-cancel/i }));
+  fireEvent.click(screen.getByRole("button", { name: "Preview affected records" }));
+  const dialog = screen.getByRole("dialog", { name: "Confirm bulk recruiter action" });
+  expect(within(dialog).queryByRole("button", { name: /send|copy|mailto|paycom/i })).not.toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(onBulkTaskAction).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog", { name: "Confirm bulk recruiter action" })).not.toBeInTheDocument();
+  expect(screen.getByText("Cancelled. No records changed.")).toBeInTheDocument();
+});
+
 test("pages canonical Action Center priorities and restores a durable item on its exact page", () => {
   const facilityReadinessRows = Array.from({ length: 25 }, (_, index) => {
     const number = String(index + 1).padStart(2, "0");
