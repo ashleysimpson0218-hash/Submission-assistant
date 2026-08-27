@@ -4,6 +4,7 @@ import {
   buildWorkspaceReportReadiness,
   buildWrapUpSummary,
   candidateRiskForWorkspace,
+  compareWorkspaceTasks,
   ownerForCandidate,
   scoreWorkspaceTask,
 } from "./recruiterWorkspaceSelectors";
@@ -11,6 +12,30 @@ import {
 const NOW = new Date("2026-07-22T12:00:00.000Z");
 
 describe("recruiter workspace selectors", () => {
+  test("uses stable task identity as the final deterministic ordering rule", () => {
+    const tasks = [
+      { id: "candidate:z", priorityScore: 40, priority: 3, daysWaiting: 2 },
+      { id: "candidate:a", priorityScore: 40, priority: 3, daysWaiting: 2 },
+      { id: "candidate:m", priorityScore: 40, priority: 3, daysWaiting: 2 },
+    ];
+    const expected = ["candidate:a", "candidate:m", "candidate:z"];
+    expect([...tasks].sort(compareWorkspaceTasks).map((task) => task.id)).toEqual(expected);
+    expect([...tasks].reverse().sort(compareWorkspaceTasks).map((task) => task.id)).toEqual(expected);
+  });
+
+  test("uses locale-independent code-point ordering for mixed stable identities", () => {
+    const tasks = [
+      { id: "candidate:a", priorityScore: 40, priority: 3, daysWaiting: 2 },
+      { id: "candidate:_", priorityScore: 40, priority: 3, daysWaiting: 2 },
+      { id: "candidate:%2F", priorityScore: 40, priority: 3, daysWaiting: 2 },
+      { id: "candidate:A", priorityScore: 40, priority: 3, daysWaiting: 2 },
+      { id: "candidate:-", priorityScore: 40, priority: 3, daysWaiting: 2 },
+    ];
+    const expected = ["candidate:%2F", "candidate:-", "candidate:A", "candidate:_", "candidate:a"];
+    expect([...tasks].sort(compareWorkspaceTasks).map((task) => task.id)).toEqual(expected);
+    expect([...tasks].reverse().sort(compareWorkspaceTasks).map((task) => task.id)).toEqual(expected);
+  });
+
   test("assigns delayed manager work to the hiring manager", () => {
     expect(ownerForCandidate({ status: "Submitted", nextAction: "Await decision maker review" })).toEqual({ type: "Hiring Manager", label: "Hiring Manager" });
   });

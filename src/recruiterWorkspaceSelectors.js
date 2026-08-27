@@ -155,6 +155,20 @@ function priorityFor(task) {
   return 4;
 }
 
+export function compareWorkspaceTasks(a = {}, b = {}) {
+  const scoreDifference = Number(b.priorityScore || 0) - Number(a.priorityScore || 0);
+  if (scoreDifference) return scoreDifference;
+  const priorityDifference = Number(a.priority ?? 99) - Number(b.priority ?? 99);
+  if (priorityDifference) return priorityDifference;
+  const waitingDifference = Number(b.daysWaiting || 0) - Number(a.daysWaiting || 0);
+  if (waitingDifference) return waitingDifference;
+  const leftId = text(a.id);
+  const rightId = text(b.id);
+  if (leftId < rightId) return -1;
+  if (leftId > rightId) return 1;
+  return 0;
+}
+
 export function scoreWorkspaceTask(task = {}) {
   const reasons = [];
   let score = 0;
@@ -216,7 +230,7 @@ export function buildCandidateWorkspaceTasks(tracker = [], options = {}) {
     };
     const scored = scoreWorkspaceTask(task);
     return { ...task, reason: reasonForTask(item, owner, risk, now), priority: priorityFor(task), priorityScore: scored.score, priorityReasons: scored.reasons };
-  }).sort((a, b) => b.priorityScore - a.priorityScore || a.priority - b.priority || (b.daysWaiting || 0) - (a.daysWaiting || 0));
+  }).sort(compareWorkspaceTasks);
 }
 
 export function buildRequisitionWorkspaceTasks(requisitions = [], tracker = [], options = {}) {
@@ -268,7 +282,7 @@ export function buildRequisitionWorkspaceTasks(requisitions = [], tracker = [], 
     };
     const scored = scoreWorkspaceTask(task);
     return [{ ...task, priorityScore: scored.score, priorityReasons: scored.reasons }];
-  }).sort((a, b) => b.priorityScore - a.priorityScore || a.priority - b.priority || (b.daysWaiting || 0) - (a.daysWaiting || 0));
+  }).sort(compareWorkspaceTasks);
 }
 
 function healthStatus(percent) {
@@ -407,7 +421,7 @@ export function buildRecruiterWorkspaceModel({ tracker = [], requisitions = [], 
   const candidateTasks = buildCandidateWorkspaceTasks(tracker, { now, rules: normalizedRules });
   const requisitionTasks = buildRequisitionWorkspaceTasks(requisitions, tracker, { now, rules: normalizedRules });
   const calendarTasks = buildCalendarQueueTasks(calendarEvents, now);
-  const tasks = [...candidateTasks, ...requisitionTasks, ...calendarTasks].sort((a, b) => b.priorityScore - a.priorityScore || a.priority - b.priority || (b.daysWaiting || 0) - (a.daysWaiting || 0));
+  const tasks = [...candidateTasks, ...requisitionTasks, ...calendarTasks].sort(compareWorkspaceTasks);
   const countFilter = (filter) => tasks.filter((task) => task.filters.includes(filter)).length;
   const reportReadiness = buildWorkspaceReportReadiness({ tracker, requisitions, sites, tasks, calendarEvents, now });
   const health = buildWorkspaceHealth({ tracker, tasks, requisitions });

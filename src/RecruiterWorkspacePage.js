@@ -21,6 +21,7 @@ import { HomeCalendarWidget } from "./HomeCalendarWidget";
 const FILTERS = ["Do Now", "Candidate Rescue", "Waiting on Others", "Offers", "Onboarding", "Recruiting Needed", "Stuck"];
 const EMPTY_LIST = Object.freeze([]);
 const EMPTY_RULES = Object.freeze({});
+export const RECRUITER_QUEUE_PAGE_SIZE = 20;
 const FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
   "[href]",
@@ -29,6 +30,25 @@ const FOCUSABLE_SELECTOR = [
   "textarea:not([disabled])",
   "[tabindex]:not([tabindex='-1'])",
 ].join(",");
+
+export function paginateRecruiterQueue(items = [], requestedPage = 1, pageSize = RECRUITER_QUEUE_PAGE_SIZE) {
+  const safeItems = Array.isArray(items) ? items : [];
+  const safePageSize = Number.isInteger(pageSize) && pageSize > 0 ? pageSize : RECRUITER_QUEUE_PAGE_SIZE;
+  const totalItems = safeItems.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / safePageSize));
+  const numericPage = Number.isInteger(requestedPage) ? requestedPage : Number.parseInt(requestedPage, 10);
+  const page = Math.min(totalPages, Math.max(1, Number.isFinite(numericPage) ? numericPage : 1));
+  const startIndex = (page - 1) * safePageSize;
+  return {
+    items: safeItems.slice(startIndex, startIndex + safePageSize),
+    page,
+    pageSize: safePageSize,
+    totalItems,
+    totalPages,
+    start: totalItems ? startIndex + 1 : 0,
+    end: Math.min(totalItems, startIndex + safePageSize),
+  };
+}
 
 function moveTabSelection(event, options, selected, refs, onSelect) {
   const currentIndex = options.indexOf(selected);
@@ -245,6 +265,22 @@ function ActionCenterCommunicationActionConfirmation({ review, processing, theme
   );
 }
 
+function QueuePagination({ pagination, label, onPageChange, theme }) {
+  if (!pagination.totalItems) return null;
+  return (
+    <nav aria-label={`${label} pagination`} style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 10 }}>
+      <span aria-live="polite" style={{ color: theme.muted, fontSize: 11 }}>
+        Showing {pagination.start}-{pagination.end} of {pagination.totalItems} in canonical order
+      </span>
+      {pagination.totalPages > 1 ? <div style={{ display: "flex", gap: 7, alignItems: "center" }}>
+        <button type="button" disabled={pagination.page === 1} onClick={() => onPageChange(pagination.page - 1)} aria-label={`Previous ${label} page`} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panel, color: theme.text, padding: "7px 10px", fontWeight: 850, cursor: pagination.page === 1 ? "not-allowed" : "pointer", opacity: pagination.page === 1 ? 0.55 : 1 }}>Previous</button>
+        <span style={{ color: theme.text, fontSize: 11, fontWeight: 850 }}>Page {pagination.page} of {pagination.totalPages}</span>
+        <button type="button" disabled={pagination.page === pagination.totalPages} onClick={() => onPageChange(pagination.page + 1)} aria-label={`Next ${label} page`} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panel, color: theme.text, padding: "7px 10px", fontWeight: 850, cursor: pagination.page === pagination.totalPages ? "not-allowed" : "pointer", opacity: pagination.page === pagination.totalPages ? 0.55 : 1 }}>Next</button>
+      </div> : null}
+    </nav>
+  );
+}
+
 function ActionCenterCommunicationPreviewDialog({ preview, theme, onClose, controlledActionsAuthorized, prefilledEmailDraftAuthorized, actionReview, actionResult, actionProcessing, onRequestAction, onCancelAction, onConfirmAction }) {
   const dialogRef = useRef(null);
   const closeButtonRef = useRef(null);
@@ -316,6 +352,8 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
   const [actionCenterCommunicationActionResult, setActionCenterCommunicationActionResult] = useState(null);
   const [actionCenterCommunicationActionProcessing, setActionCenterCommunicationActionProcessing] = useState(false);
   const [actionCenterNow, setActionCenterNow] = useState(() => new Date());
+  const [actionCenterPage, setActionCenterPage] = useState(1);
+  const [workQueuePage, setWorkQueuePage] = useState(1);
   const actionCenterFilterRefs = useRef([]);
   const workQueueFilterRefs = useRef([]);
   const actionCenterReviewButtonRefs = useRef(new Map());
@@ -377,6 +415,15 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
     };
   }), [actionCenter.items, onOpenActionCenterCandidate, onOpenActionCenterRequisition, onOpenActionCenterFacility, onOpenCalendarEvent, onOpenWeeklyCleanup]);
   const actionCenterItems = useMemo(() => filterRecruiterActionCenter(navigableActionCenterItems, actionCenterFilter), [navigableActionCenterItems, actionCenterFilter]);
+  const actionCenterPagination = useMemo(() => paginateRecruiterQueue(actionCenterItems, actionCenterPage), [actionCenterItems, actionCenterPage]);
+  useEffect(() => {
+    if (actionCenterPagination.page !== actionCenterPage) setActionCenterPage(actionCenterPagination.page);
+  }, [actionCenterPagination.page, actionCenterPage]);
+  useEffect(() => {
+    if (!actionCenterNavigation?.valid || !actionCenterNavigation.itemId) return;
+    const itemIndex = actionCenterItems.findIndex((item) => item.id === actionCenterNavigation.itemId);
+    if (itemIndex >= 0) setActionCenterPage(Math.floor(itemIndex / RECRUITER_QUEUE_PAGE_SIZE) + 1);
+  }, [actionCenterNavigation, actionCenterItems]);
   const actionCenterDetailCandidate = navigableActionCenterItems.find((item) => item.id === actionCenterDetailId) || null;
   const actionCenterDetail = actionCenterDetailCandidate
     && (actionCenterFilter === ACTION_CENTER_CATEGORIES.all || actionCenterDetailCandidate.category === actionCenterFilter)
@@ -421,6 +468,7 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
   };
   const selectActionCenterFilter = (filter) => {
     setActionCenterFilter(filter);
+    setActionCenterPage(1);
     setActionCenterDetailId("");
     closeActionCenterCommunicationPreview(false);
     onActionCenterNavigationChange({ filter, itemId: "" });
@@ -568,8 +616,26 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
   const filteredTasks = useMemo(() => activeFilter === "Urgent"
     ? model.tasks.filter((task) => task.isOverdue || ["High", "Critical"].includes(task.riskLevel))
     : model.tasks.filter((task) => task.filters.includes(activeFilter)), [model.tasks, activeFilter]);
+  const workQueuePagination = useMemo(() => paginateRecruiterQueue(filteredTasks, workQueuePage), [filteredTasks, workQueuePage]);
+  useEffect(() => {
+    if (workQueuePagination.page !== workQueuePage) setWorkQueuePage(workQueuePagination.page);
+  }, [workQueuePagination.page, workQueuePage]);
   const taskCount = (filter) => model.tasks.filter((task) => task.filters.includes(filter)).length;
-  const setQueueFilter = (filter) => setActiveFilter(filter);
+  const setQueueFilter = (filter) => {
+    setActiveFilter(filter);
+    setWorkQueuePage(1);
+    setActionTaskId("");
+  };
+  const changeActionCenterPage = (page) => {
+    setActionCenterPage(page);
+    setActionCenterDetailId("");
+    closeActionCenterCommunicationPreview(false);
+    onActionCenterNavigationChange({ filter: actionCenterFilter, itemId: "" });
+  };
+  const changeWorkQueuePage = (page) => {
+    setWorkQueuePage(page);
+    setActionTaskId("");
+  };
   const actionCenterFilterIndex = Math.max(0, ACTION_CENTER_FILTERS.indexOf(actionCenterFilter));
   const workQueueFilterIndex = Math.max(0, FILTERS.indexOf(activeFilter));
   const actionTask = model.tasks.find((task) => task.id === actionTaskId) || null;
@@ -635,39 +701,46 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
             {focusMode ? <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "repeat(4, minmax(0, 1fr))", gap: 8, marginTop: 12 }}>{[["Shift", model.focusTask.shift || "Not listed"], ["Employment", model.focusTask.employmentType || "Not listed"], ["Schedule", model.focusTask.schedule || "Not listed"], ["Credentials / Pay", [model.focusTask.requiredCredentials, model.focusTask.pay].filter(Boolean).join(" · ") || "Review requisition"]].map(([label, value]) => <div key={label} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: 9, background: theme.panelAlt }}><span style={{ color: theme.muted, fontSize: 10, fontWeight: 900 }}>{label}</span><strong style={{ display: "block", fontSize: 12, marginTop: 3 }}>{value}</strong></div>)}</div> : null}
           </WorkspaceCard> : null}
 
-          {!focusMode ? <WorkspaceCard theme={theme} title="Recruiter Action Center" subtitle="Choose a priority, review why it needs attention, then open the exact record.">
-            <div role="tablist" aria-label="Action Center filters" style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 12 }}>
-              {ACTION_CENTER_FILTERS.map((filter, index) => <button key={filter} ref={(node) => { actionCenterFilterRefs.current[index] = node; }} id={`action-center-filter-${index}`} type="button" role="tab" aria-selected={actionCenterFilter === filter} aria-controls="action-center-items-panel" tabIndex={actionCenterFilter === filter ? 0 : -1} onKeyDown={(event) => moveTabSelection(event, ACTION_CENTER_FILTERS, filter, actionCenterFilterRefs, selectActionCenterFilter)} onClick={() => selectActionCenterFilter(filter)} style={{ border: `1px solid ${actionCenterFilter === filter ? theme.primary2 : theme.borderSoft}`, borderRadius: 6, background: actionCenterFilter === filter ? theme.primary2 : theme.panelAlt, color: actionCenterFilter === filter ? "#fff" : theme.text, padding: "7px 10px", fontWeight: 850, cursor: "pointer" }}>{filter} <span aria-label={`${actionCenter.counts[filter]} items`}>{actionCenter.counts[filter]}</span></button>)}
-            </div>
-            {actionCenterRouteError ? <div role="alert" style={{ border: `1px solid ${theme.red}`, borderRadius: 6, padding: 10, marginBottom: 10, background: theme.redBg, color: theme.text, fontWeight: 850 }}>{actionCenterRouteError}</div> : null}
-            <div id="action-center-items-panel" role="tabpanel" aria-labelledby={`action-center-filter-${actionCenterFilterIndex}`} aria-label={`${actionCenterFilter} Action Center items`} tabIndex={0} style={{ display: "grid", gap: 8 }}>
-              {actionCenterItems.length ? actionCenterItems.map((item) => <ActionCenterRow key={item.id} item={item} theme={theme} narrow={isNarrow} onReview={selectActionCenterDetail} onOpen={openActionCenterItem} reviewButtonRef={(node) => { if (node) actionCenterReviewButtonRefs.current.set(item.id, node); else actionCenterReviewButtonRefs.current.delete(item.id); }} />) : <div role="status" style={{ border: `1px dashed ${theme.borderSoft}`, borderRadius: 8, padding: 20, color: theme.muted, textAlign: "center" }}>No {actionCenterFilter === ACTION_CENTER_CATEGORIES.all ? "Action Center" : actionCenterFilter.toLowerCase()} items need attention right now.</div>}
-              {actionCenterDetail ? <ActionCenterDetail item={actionCenterDetail} theme={theme} onClose={closeActionCenterDetail} onOpen={openActionCenterItem} onPreviewCommunication={openActionCenterCommunicationPreview} detailRef={actionCenterDetailRef} previewButtonRef={actionCenterPreviewButtonRef} /> : null}
-            </div>
-            {actionCenterCommunicationPreview ? <ActionCenterCommunicationPreviewDialog
-              preview={actionCenterCommunicationPreview}
-              theme={theme}
-              controlledActionsAuthorized={controlledCommunicationActionsAuthorized}
-              prefilledEmailDraftAuthorized={prefilledEmailDraftAuthorized}
-              actionReview={actionCenterCommunicationActionReview}
-              actionResult={actionCenterCommunicationActionResult}
-              actionProcessing={actionCenterCommunicationActionProcessing}
-              onClose={closeActionCenterCommunicationPreview}
-              onRequestAction={requestActionCenterCommunicationAction}
-              onCancelAction={cancelActionCenterCommunicationAction}
-              onConfirmAction={confirmActionCenterCommunicationAction}
-            /> : null}
-          </WorkspaceCard> : null}
+          <WorkspaceCard theme={theme} title="Recruiter Action Center" subtitle="Canonical priorities and operational work are consolidated here without changing their source logic or counts.">
+            {!focusMode ? <>
+              <h3 style={{ margin: "0 0 8px", color: theme.text, fontSize: 13 }}>Priority review</h3>
+              <div role="tablist" aria-label="Action Center filters" style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 12 }}>
+                {ACTION_CENTER_FILTERS.map((filter, index) => <button key={filter} ref={(node) => { actionCenterFilterRefs.current[index] = node; }} id={`action-center-filter-${index}`} type="button" role="tab" aria-selected={actionCenterFilter === filter} aria-controls="action-center-items-panel" tabIndex={actionCenterFilter === filter ? 0 : -1} onKeyDown={(event) => moveTabSelection(event, ACTION_CENTER_FILTERS, filter, actionCenterFilterRefs, selectActionCenterFilter)} onClick={() => selectActionCenterFilter(filter)} style={{ border: `1px solid ${actionCenterFilter === filter ? theme.primary2 : theme.borderSoft}`, borderRadius: 6, background: actionCenterFilter === filter ? theme.primary2 : theme.panelAlt, color: actionCenterFilter === filter ? "#fff" : theme.text, padding: "7px 10px", fontWeight: 850, cursor: "pointer" }}>{filter} <span aria-label={`${actionCenter.counts[filter]} items`}>{actionCenter.counts[filter]}</span></button>)}
+              </div>
+              {actionCenterRouteError ? <div role="alert" style={{ border: `1px solid ${theme.red}`, borderRadius: 6, padding: 10, marginBottom: 10, background: theme.redBg, color: theme.text, fontWeight: 850 }}>{actionCenterRouteError}</div> : null}
+              <div id="action-center-items-panel" role="tabpanel" aria-labelledby={`action-center-filter-${actionCenterFilterIndex}`} aria-label={`${actionCenterFilter} Action Center items`} tabIndex={0} style={{ display: "grid", gap: 8 }}>
+                {actionCenterPagination.items.length ? actionCenterPagination.items.map((item) => <ActionCenterRow key={item.id} item={item} theme={theme} narrow={isNarrow} onReview={selectActionCenterDetail} onOpen={openActionCenterItem} reviewButtonRef={(node) => { if (node) actionCenterReviewButtonRefs.current.set(item.id, node); else actionCenterReviewButtonRefs.current.delete(item.id); }} />) : <div role="status" style={{ border: `1px dashed ${theme.borderSoft}`, borderRadius: 8, padding: 20, color: theme.muted, textAlign: "center" }}>No {actionCenterFilter === ACTION_CENTER_CATEGORIES.all ? "Action Center" : actionCenterFilter.toLowerCase()} items need attention right now.</div>}
+                {actionCenterDetail ? <ActionCenterDetail item={actionCenterDetail} theme={theme} onClose={closeActionCenterDetail} onOpen={openActionCenterItem} onPreviewCommunication={openActionCenterCommunicationPreview} detailRef={actionCenterDetailRef} previewButtonRef={actionCenterPreviewButtonRef} /> : null}
+              </div>
+              <QueuePagination pagination={actionCenterPagination} label="Action Center priorities" onPageChange={changeActionCenterPage} theme={theme} />
+              {actionCenterCommunicationPreview ? <ActionCenterCommunicationPreviewDialog
+                preview={actionCenterCommunicationPreview}
+                theme={theme}
+                controlledActionsAuthorized={controlledCommunicationActionsAuthorized}
+                prefilledEmailDraftAuthorized={prefilledEmailDraftAuthorized}
+                actionReview={actionCenterCommunicationActionReview}
+                actionResult={actionCenterCommunicationActionResult}
+                actionProcessing={actionCenterCommunicationActionProcessing}
+                onClose={closeActionCenterCommunicationPreview}
+                onRequestAction={requestActionCenterCommunicationAction}
+                onCancelAction={cancelActionCenterCommunicationAction}
+                onConfirmAction={confirmActionCenterCommunicationAction}
+              /> : null}
+            </> : null}
 
-          <WorkspaceCard theme={theme} title="My Work Queue" subtitle="Every item explains its source, owner, timing, and recommended next step.">
+            <section aria-labelledby="operational-work-heading" style={{ borderTop: focusMode ? 0 : `1px solid ${theme.borderSoft}`, marginTop: focusMode ? 0 : 16, paddingTop: focusMode ? 0 : 16 }}>
+              <h3 id="operational-work-heading" style={{ margin: "0 0 4px", color: theme.text, fontSize: 13 }}>Operational work</h3>
+              <p style={{ margin: "0 0 10px", color: theme.muted, fontSize: 11 }}>The former My Work Queue is now part of the Action Center. Existing task actions and canonical filter counts are preserved.</p>
             <div role="tablist" aria-label="Work queue filters" style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 12 }}>
               {FILTERS.map((filter, index) => <button key={filter} ref={(node) => { workQueueFilterRefs.current[index] = node; }} id={`work-queue-filter-${index}`} type="button" role="tab" aria-selected={activeFilter === filter} aria-controls="work-queue-items-panel" tabIndex={activeFilter === filter ? 0 : -1} onKeyDown={(event) => moveTabSelection(event, FILTERS, filter, workQueueFilterRefs, setQueueFilter)} onClick={() => setQueueFilter(filter)} style={{ border: `1px solid ${activeFilter === filter ? theme.primary2 : theme.borderSoft}`, borderRadius: 6, background: activeFilter === filter ? theme.primary2 : theme.panelAlt, color: activeFilter === filter ? "#fff" : theme.text, padding: "7px 10px", fontWeight: 850, cursor: "pointer" }}>{filter} <span aria-label={`${taskCount(filter)} items`}>{taskCount(filter)}</span></button>)}
             </div>
             {activeFilter === "Urgent" ? <div style={{ color: theme.primary2, fontSize: 12, fontWeight: 900, marginBottom: 10 }}>Showing: Urgent Actions</div> : null}
             <div id="work-queue-items-panel" role="tabpanel" aria-labelledby={`work-queue-filter-${workQueueFilterIndex}`} aria-label={`${activeFilter} work queue items`} tabIndex={0} style={{ display: "grid", gap: 8 }}>
-              {filteredTasks.length ? filteredTasks.map((task) => <QueueRow key={task.id} task={task} theme={theme} narrow={isNarrow} onOpenCandidate={onOpenCandidate} onOpenRequisition={onOpenRequisition} onOpenCalendarEvent={onOpenCalendarEvent} onOpenActions={(selectedTask) => setActionTaskId(selectedTask.id)} />) : <EmptyQueue filter={activeFilter} waitingCount={model.snapshot.waiting} focusTask={model.focusTask} theme={theme} />}
+              {workQueuePagination.items.length ? workQueuePagination.items.map((task) => <QueueRow key={task.id} task={task} theme={theme} narrow={isNarrow} onOpenCandidate={onOpenCandidate} onOpenRequisition={onOpenRequisition} onOpenCalendarEvent={onOpenCalendarEvent} onOpenActions={(selectedTask) => setActionTaskId(selectedTask.id)} />) : <EmptyQueue filter={activeFilter} waitingCount={model.snapshot.waiting} focusTask={model.focusTask} theme={theme} />}
               {actionTask ? <WorkspaceTaskActionPanel task={actionTask} theme={theme} onClose={() => setActionTaskId("")} onApply={onTaskAction} onScheduleCalendar={onScheduleCalendar} /> : null}
             </div>
+              <QueuePagination pagination={workQueuePagination} label="operational work" onPageChange={changeWorkQueuePage} theme={theme} />
+            </section>
           </WorkspaceCard>
 
           {!focusMode ? <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "repeat(3, minmax(0, 1fr))", gap: 10 }}>
