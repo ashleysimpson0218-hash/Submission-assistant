@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { RecruiterWorkspacePage } from "./RecruiterWorkspacePage";
+import { paginateRecruiterQueue, RECRUITER_QUEUE_PAGE_SIZE, RecruiterWorkspacePage } from "./RecruiterWorkspacePage";
 import { FacilityPositionSetupPage, actionCenterNavigationState, activeActionCenterCandidateTargetForSelection, clearedActionCenterTargets, resolveActionCenterCandidateTarget, resolveActionCenterSetupTarget } from "./App";
 import { ACTION_CENTER_CATEGORIES, buildActionCenterItemId } from "./actionCenterSelectors";
 
@@ -40,6 +40,117 @@ beforeEach(() => {
 
 afterEach(() => {
   jest.useRealTimers();
+});
+
+test("paginates large queues without changing canonical order or totals", () => {
+  const items = Array.from({ length: 45 }, (_, index) => ({ id: `item-${String(index + 1).padStart(2, "0")}` }));
+  expect(paginateRecruiterQueue(items, 2)).toMatchObject({
+    page: 2,
+    pageSize: RECRUITER_QUEUE_PAGE_SIZE,
+    totalItems: 45,
+    totalPages: 3,
+    start: 21,
+    end: 40,
+  });
+  expect(paginateRecruiterQueue(items, 2).items.map((item) => item.id)).toEqual(items.slice(20, 40).map((item) => item.id));
+  expect(paginateRecruiterQueue(items, 99)).toMatchObject({ page: 3, start: 41, end: 45 });
+  expect(paginateRecruiterQueue([], -1)).toMatchObject({ page: 1, totalItems: 0, totalPages: 1, start: 0, end: 0 });
+});
+
+test("consolidates operational work into the Action Center and pages a large queue using full canonical counts", () => {
+  const tracker = Array.from({ length: 45 }, (_, index) => {
+    const number = String(index + 1).padStart(2, "0");
+    return {
+      id: `candidate-${number}`,
+      candidate: `Synthetic Candidate ${number}`,
+      status: "Recruiter Review",
+      nextAction: "Complete candidate review",
+      lastActionAt: "2026-07-22T11:00:00.000Z",
+      candidateNotes: "Synthetic",
+      currentOwner: "Recruiter",
+    };
+  });
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={tracker}
+    requisitions={[]}
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+  />);
+
+  expect(screen.getAllByRole("heading", { name: "Recruiter Action Center" })).toHaveLength(1);
+  expect(screen.queryByRole("heading", { name: "My Work Queue" })).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Operational work" })).toBeInTheDocument();
+  expect(screen.getByText(/former My Work Queue is now part of the Action Center/i)).toBeInTheDocument();
+
+  const queueTabs = screen.getByRole("tablist", { name: "Work queue filters" });
+  const doNowTab = within(queueTabs).getByRole("tab", { name: /Do Now/i });
+  expect(within(doNowTab).getByLabelText("45 items")).toBeInTheDocument();
+  expect(screen.getByText("Synthetic Candidate 01")).toBeInTheDocument();
+  expect(screen.queryByText("Synthetic Candidate 21")).not.toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: "Open Candidate" })).toHaveLength(RECRUITER_QUEUE_PAGE_SIZE);
+
+  const pagination = screen.getByRole("navigation", { name: "operational work pagination" });
+  expect(within(pagination).getByText("Showing 1-20 of 45 in canonical order")).toBeInTheDocument();
+  fireEvent.click(within(pagination).getByRole("button", { name: "Next operational work page" }));
+  expect(screen.queryByText("Synthetic Candidate 01")).not.toBeInTheDocument();
+  expect(screen.getByText("Synthetic Candidate 21")).toBeInTheDocument();
+  expect(within(pagination).getByText("Page 2 of 3")).toBeInTheDocument();
+
+  fireEvent.click(within(queueTabs).getByRole("tab", { name: /Waiting on Others/i }));
+  expect(screen.getByText("No waiting on others items need attention right now.")).toBeInTheDocument();
+  expect(screen.queryByRole("navigation", { name: "operational work pagination" })).not.toBeInTheDocument();
+});
+
+test("pages canonical Action Center priorities and restores a durable item on its exact page", () => {
+  const facilityReadinessRows = Array.from({ length: 25 }, (_, index) => {
+    const number = String(index + 1).padStart(2, "0");
+    return {
+      id: `facility-${number}`,
+      facilityId: `facility-${number}`,
+      facilityName: `Synthetic Facility ${number}`,
+      region: "Synthetic Region",
+      noOpeningsPolicy: "Ask Weekly",
+      readiness: "Needs Review",
+      noOpeningOutcome: {
+        applies: true,
+        outcomeLabel: "Weekly Decision Needed",
+        reason: `Synthetic weekly decision ${number}`,
+      },
+    };
+  });
+  const selectedFacilityId = "facility-25";
+  const selectedItemId = buildActionCenterItemId({
+    category: ACTION_CENTER_CATEGORIES.askWeekly,
+    sourceType: "reporting",
+    sourceId: selectedFacilityId,
+    facilityId: selectedFacilityId,
+    issueCode: "ask-weekly-decision",
+  });
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={[]}
+    requisitions={[]}
+    sites={[]}
+    facilityReadinessRows={facilityReadinessRows}
+    actionCenterNavigation={{ present: true, valid: true, version: "1", filter: ACTION_CENTER_CATEGORIES.askWeekly, itemId: selectedItemId }}
+    onActionCenterNavigationChange={jest.fn()}
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+  />);
+
+  const filters = screen.getByRole("tablist", { name: "Action Center filters" });
+  expect(within(filters).getByRole("tab", { name: /Ask Weekly Decision/i })).toHaveTextContent("25");
+  const pagination = screen.getByRole("navigation", { name: "Action Center priorities pagination" });
+  expect(within(pagination).getByText("Page 2 of 2")).toBeInTheDocument();
+  expect(within(pagination).getByText("Showing 21-25 of 25 in canonical order")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Weekly no-opening decision needed for Synthetic Facility 25" })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: /Action details/i })).toHaveTextContent("Synthetic Facility 25");
+  expect(screen.getAllByRole("button", { name: /Review Weekly no-opening decision needed/i })).toHaveLength(5);
 });
 
 test("renders the recruiter command center and filters its shared queue", () => {
@@ -165,6 +276,35 @@ test("opens explicit task actions without invoking communication behavior", () =
   fireEvent.click(screen.getByRole("button", { name: "Mark Not At Risk" }));
   expect(onTaskAction).toHaveBeenCalledWith(expect.objectContaining({ sourceId: "candidate-risk" }), "not-at-risk", expect.objectContaining({ note: "Candidate confirmed interest." }));
   expect(screen.queryByText(/Send Email|Send Text|Copy/i)).not.toBeInTheDocument();
+});
+
+test("selects and applies actions to the exact requisition-specific operational task", () => {
+  const onTaskAction = jest.fn(() => true);
+  const tracker = [
+    { id: "candidate-shared", candidate: "Synthetic Shared Candidate", requisitionId: "req-one", status: "Recruiter Review", nextAction: "Review req one", lastActionAt: "2026-07-21T12:00:00.000Z", candidateNotes: "Synthetic" },
+    { id: "candidate-shared", candidate: "Synthetic Shared Candidate", requisitionId: "req-two", status: "Recruiter Review", nextAction: "Review req two", lastActionAt: "2026-07-21T12:00:00.000Z", candidateNotes: "Synthetic" },
+  ];
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={tracker}
+    requisitions={[]}
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+    onTaskAction={onTaskAction}
+  />);
+
+  const actionButtons = screen.getAllByRole("button", { name: "More actions for Synthetic Shared Candidate" });
+  expect(actionButtons).toHaveLength(2);
+  fireEvent.click(actionButtons[1]);
+  fireEvent.click(screen.getByRole("button", { name: "Mark Resolved" }));
+  expect(onTaskAction).toHaveBeenCalledTimes(1);
+  expect(onTaskAction).toHaveBeenCalledWith(expect.objectContaining({
+    id: "candidate:candidate-shared:requisition:req-two",
+    sourceId: "candidate-shared",
+    requisitionId: "req-two",
+  }), "resolve", expect.any(Object));
 });
 
 test("Focus Mode minimizes nonurgent workspace content", () => {

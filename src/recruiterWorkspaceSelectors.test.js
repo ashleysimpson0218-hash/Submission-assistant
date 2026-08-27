@@ -4,6 +4,7 @@ import {
   buildWorkspaceReportReadiness,
   buildWrapUpSummary,
   candidateRiskForWorkspace,
+  compareWorkspaceTasks,
   ownerForCandidate,
   scoreWorkspaceTask,
 } from "./recruiterWorkspaceSelectors";
@@ -11,6 +12,62 @@ import {
 const NOW = new Date("2026-07-22T12:00:00.000Z");
 
 describe("recruiter workspace selectors", () => {
+  test("uses stable task identity as the final deterministic ordering rule", () => {
+    const tasks = [
+      { id: "candidate:z", priorityScore: 40, priority: 3, daysWaiting: 2 },
+      { id: "candidate:a", priorityScore: 40, priority: 3, daysWaiting: 2 },
+      { id: "candidate:m", priorityScore: 40, priority: 3, daysWaiting: 2 },
+    ];
+    const expected = ["candidate:a", "candidate:m", "candidate:z"];
+    expect([...tasks].sort(compareWorkspaceTasks).map((task) => task.id)).toEqual(expected);
+    expect([...tasks].reverse().sort(compareWorkspaceTasks).map((task) => task.id)).toEqual(expected);
+  });
+
+  test("uses locale-independent code-point ordering for mixed stable identities", () => {
+    const tasks = [
+      { id: "candidate:a", priorityScore: 40, priority: 3, daysWaiting: 2 },
+      { id: "candidate:_", priorityScore: 40, priority: 3, daysWaiting: 2 },
+      { id: "candidate:%2F", priorityScore: 40, priority: 3, daysWaiting: 2 },
+      { id: "candidate:A", priorityScore: 40, priority: 3, daysWaiting: 2 },
+      { id: "candidate:-", priorityScore: 40, priority: 3, daysWaiting: 2 },
+    ];
+    const expected = ["candidate:%2F", "candidate:-", "candidate:A", "candidate:_", "candidate:a"];
+    expect([...tasks].sort(compareWorkspaceTasks).map((task) => task.id)).toEqual(expected);
+    expect([...tasks].reverse().sort(compareWorkspaceTasks).map((task) => task.id)).toEqual(expected);
+  });
+
+  test("binds operational candidate task identity to the exact requisition", () => {
+    const tracker = [
+      { id: "candidate-shared", candidate: "Synthetic Shared Candidate", requisitionId: "req-one", status: "Recruiter Review", nextAction: "Review req one" },
+      { id: "candidate-shared", candidate: "Synthetic Shared Candidate", requisitionId: "req-two", status: "Recruiter Review", nextAction: "Review req two" },
+    ];
+    const tasks = buildCandidateWorkspaceTasks(tracker, { now: NOW });
+    expect(tasks).toHaveLength(2);
+    expect(new Set(tasks.map((task) => task.id)).size).toBe(2);
+    expect(tasks.find((task) => task.requisitionId === "req-one")).toMatchObject({
+      id: "candidate:candidate-shared:requisition:req-one",
+      sourceId: "candidate-shared",
+    });
+    expect(tasks.find((task) => task.requisitionId === "req-two")).toMatchObject({
+      id: "candidate:candidate-shared:requisition:req-two",
+      sourceId: "candidate-shared",
+    });
+    expect(buildCandidateWorkspaceTasks([...tracker].reverse(), { now: NOW }).map((task) => task.id)).toEqual(tasks.map((task) => task.id));
+  });
+
+  test("fails closed instead of using candidate names as operational task identity", () => {
+    expect(buildCandidateWorkspaceTasks([
+      { candidate: "Synthetic Missing Identity", requisitionId: "req-one", status: "Recruiter Review", nextAction: "Review candidate" },
+    ], { now: NOW })).toEqual([]);
+  });
+
+  test("fails closed when operational records have the same candidate and requisition identity", () => {
+    expect(buildCandidateWorkspaceTasks([
+      { id: "candidate-duplicate", candidate: "Synthetic Duplicate One", requisitionId: "req-one", status: "Recruiter Review", nextAction: "Review one" },
+      { id: "candidate-duplicate", candidate: "Synthetic Duplicate Two", requisitionId: "req-one", status: "Recruiter Review", nextAction: "Review two" },
+    ], { now: NOW })).toEqual([]);
+  });
+
   test("assigns delayed manager work to the hiring manager", () => {
     expect(ownerForCandidate({ status: "Submitted", nextAction: "Await decision maker review" })).toEqual({ type: "Hiring Manager", label: "Hiring Manager" });
   });
