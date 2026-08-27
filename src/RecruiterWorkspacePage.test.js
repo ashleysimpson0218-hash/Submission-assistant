@@ -65,6 +65,35 @@ test("renders the recruiter command center and filters its shared queue", () => 
   expect(candidate).toEqual(source);
 });
 
+test("supports arrow, Home, and End keyboard navigation for both filter tablists", () => {
+  render(<RecruiterWorkspacePage theme={theme} tracker={[]} requisitions={[]} onOpenCandidate={jest.fn()} onOpenRequisition={jest.fn()} onOpenWeeklyCleanup={jest.fn()} onOpenReports={jest.fn()} />);
+
+  const actionCenterTabs = screen.getByRole("tablist", { name: "Action Center filters" });
+  const allTab = within(actionCenterTabs).getByRole("tab", { name: /^All /i });
+  allTab.focus();
+  fireEvent.keyDown(allTab, { key: "ArrowRight" });
+  act(() => jest.advanceTimersByTime(20));
+  const followUpTab = within(actionCenterTabs).getByRole("tab", { name: /Follow-up Due/i });
+  expect(followUpTab).toHaveFocus();
+  expect(followUpTab).toHaveAttribute("aria-selected", "true");
+  expect(followUpTab).toHaveAttribute("aria-controls", "action-center-items-panel");
+  fireEvent.keyDown(followUpTab, { key: "End" });
+  act(() => jest.advanceTimersByTime(20));
+  expect(within(actionCenterTabs).getByRole("tab", { name: /Data Blockers/i })).toHaveFocus();
+
+  const queueTabs = screen.getByRole("tablist", { name: "Work queue filters" });
+  const doNowTab = within(queueTabs).getByRole("tab", { name: /Do Now/i });
+  doNowTab.focus();
+  fireEvent.keyDown(doNowTab, { key: "End" });
+  act(() => jest.advanceTimersByTime(20));
+  const stuckTab = within(queueTabs).getByRole("tab", { name: /Stuck/i });
+  expect(stuckTab).toHaveFocus();
+  expect(stuckTab).toHaveAttribute("aria-selected", "true");
+  fireEvent.keyDown(stuckTab, { key: "Home" });
+  act(() => jest.advanceTimersByTime(20));
+  expect(doNowTab).toHaveFocus();
+});
+
 test("keeps the existing My Work Queue candidate opener independent from strict Action Center navigation", () => {
   const onOpenCandidate = jest.fn();
   const onOpenActionCenterCandidate = jest.fn();
@@ -265,8 +294,10 @@ test("opens a read-only detail preview and navigates with the exact candidate an
     onWorkspaceEvent={onWorkspaceEvent}
   />);
 
-  fireEvent.click(screen.getByRole("button", { name: /Review details for Recruiter follow-up due for Synthetic Exact Candidate/i }));
+  const reviewButton = screen.getByRole("button", { name: /Review Recruiter follow-up due for Synthetic Exact Candidate/i });
+  fireEvent.click(reviewButton);
   const details = screen.getByRole("region", { name: /Action details for Recruiter follow-up due for Synthetic Exact Candidate/i });
+  expect(details).toHaveFocus();
   expect(within(details).getByText("candidate-exact")).toBeInTheDocument();
   expect(within(details).getByText("req-exact")).toBeInTheDocument();
   expect(within(details).getByText(/Read-only preview/i)).toBeInTheDocument();
@@ -275,6 +306,10 @@ test("opens a read-only detail preview and navigates with the exact candidate an
   expect(onOpenCandidate).toHaveBeenCalledWith("candidate-exact", "req-exact", expect.objectContaining({ candidateId: "candidate-exact", requisitionId: "req-exact" }));
   expect(onTaskAction).not.toHaveBeenCalled();
   expect(onWorkspaceEvent).not.toHaveBeenCalled();
+  fireEvent.keyDown(details, { key: "Escape" });
+  act(() => jest.advanceTimersByTime(20));
+  expect(screen.queryByRole("region", { name: /Action details for Recruiter follow-up due/i })).not.toBeInTheDocument();
+  expect(reviewButton).toHaveFocus();
 });
 
 test("moves Manager Feedback from pending to overdue without remounting", () => {
@@ -444,7 +479,7 @@ test("shows Candidate Ready work without exposing a send or status action", () =
   />);
   const filters = screen.getByRole("tablist", { name: "Action Center filters" });
   fireEvent.click(within(filters).getByRole("tab", { name: /Candidate Ready/i }));
-  const panel = screen.getByRole("tabpanel", { name: /Candidate Ready Action Center items/i });
+  const panel = screen.getByRole("tabpanel", { name: /Candidate Ready/i });
   expect(within(panel).getByText(/Candidate Ready submission pending for Synthetic Ready Candidate/i)).toBeInTheDocument();
   expect(within(panel).queryByRole("button", { name: /Send|Mark Sent|Complete/i })).not.toBeInTheDocument();
 });
@@ -482,9 +517,11 @@ test("opens an exact read-only candidate follow-up communication preview", () =>
     onWorkspaceEvent={onWorkspaceEvent}
   />);
 
-  fireEvent.click(screen.getByRole("button", { name: /Review details for Recruiter follow-up due for Synthetic Preview Candidate/i }));
-  fireEvent.click(screen.getByRole("button", { name: "Preview Communication" }));
+  fireEvent.click(screen.getByRole("button", { name: /Review Recruiter follow-up due for Synthetic Preview Candidate/i }));
+  const previewButton = screen.getByRole("button", { name: "Review Communication" });
+  fireEvent.click(previewButton);
   const dialog = screen.getByRole("dialog", { name: "Candidate Follow-Up Preview" });
+  expect(within(dialog).getByRole("button", { name: "Close Candidate Follow-Up Preview" })).toHaveFocus();
   expect(within(dialog).getByText("candidate-preview-follow-up")).toBeInTheDocument();
   expect(within(dialog).getByText("req-preview-follow-up")).toBeInTheDocument();
   expect(within(dialog).getByText("candidate@example.test")).toBeInTheDocument();
@@ -493,6 +530,10 @@ test("opens an exact read-only candidate follow-up communication preview", () =>
   expect(within(dialog).queryByRole("button", { name: /Copy|Open|Send|Save|Complete|Approve/i })).not.toBeInTheDocument();
   expect(onTaskAction).not.toHaveBeenCalled();
   expect(onWorkspaceEvent).not.toHaveBeenCalled();
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  act(() => jest.advanceTimersByTime(20));
+  expect(screen.queryByRole("dialog", { name: "Candidate Follow-Up Preview" })).not.toBeInTheDocument();
+  expect(previewButton).toHaveFocus();
 });
 
 test("publishes stable Action Center filter and selected-item navigation", () => {
@@ -529,7 +570,7 @@ test("publishes stable Action Center filter and selected-item navigation", () =>
     filter: ACTION_CENTER_CATEGORIES.followUp,
     itemId: "",
   });
-  fireEvent.click(screen.getByRole("button", { name: /Review details for Recruiter follow-up due for Synthetic Route Candidate/i }));
+  fireEvent.click(screen.getByRole("button", { name: /Review Recruiter follow-up due for Synthetic Route Candidate/i }));
   expect(onActionCenterNavigationChange).toHaveBeenLastCalledWith({
     filter: ACTION_CENTER_CATEGORIES.followUp,
     itemId: buildActionCenterItemId({
@@ -647,8 +688,8 @@ function controlledFollowUpProps(overrides = {}) {
 }
 
 function openControlledFollowUpPreview() {
-  fireEvent.click(screen.getByRole("button", { name: /Review details for Recruiter follow-up due for Synthetic Controlled Candidate/i }));
-  fireEvent.click(screen.getByRole("button", { name: "Preview Communication" }));
+  fireEvent.click(screen.getByRole("button", { name: /Review Recruiter follow-up due for Synthetic Controlled Candidate/i }));
+  fireEvent.click(screen.getByRole("button", { name: "Review Communication" }));
   return screen.getByRole("dialog", { name: "Candidate Follow-Up Preview" });
 }
 
@@ -657,17 +698,21 @@ test("requires confirmation before copying approved content and reports cancella
   render(<RecruiterWorkspacePage {...controlledFollowUpProps({ onCopyApprovedCommunication })} />);
 
   const previewDialog = openControlledFollowUpPreview();
-  fireEvent.click(within(previewDialog).getByRole("button", { name: "Copy Approved Subject" }));
+  const copySubjectButton = within(previewDialog).getByRole("button", { name: "Copy Approved Subject" });
+  fireEvent.click(copySubjectButton);
   expect(onCopyApprovedCommunication).not.toHaveBeenCalled();
   const cancellation = screen.getByRole("alertdialog", { name: "Confirm Copy Approved Subject" });
+  expect(within(cancellation).getByRole("button", { name: "Confirm Copy Approved Subject" })).toHaveFocus();
   expect(within(cancellation).getByText("candidate-controlled-follow-up")).toBeInTheDocument();
   expect(within(cancellation).getByText("req-controlled-follow-up")).toBeInTheDocument();
   expect(within(cancellation).getByText("facility-controlled-follow-up")).toBeInTheDocument();
-  fireEvent.click(within(cancellation).getByRole("button", { name: "Cancel" }));
+  fireEvent.keyDown(cancellation, { key: "Escape" });
+  act(() => jest.advanceTimersByTime(20));
   expect(onCopyApprovedCommunication).not.toHaveBeenCalled();
   expect(screen.getByRole("status")).toHaveTextContent("Nothing was copied, opened, sent, or changed");
+  expect(copySubjectButton).toHaveFocus();
 
-  fireEvent.click(within(previewDialog).getByRole("button", { name: "Copy Approved Subject" }));
+  fireEvent.click(copySubjectButton);
   const confirmation = screen.getByRole("alertdialog", { name: "Confirm Copy Approved Subject" });
   fireEvent.click(within(confirmation).getByRole("button", { name: "Confirm Copy Approved Subject" }));
   await waitFor(() => expect(onCopyApprovedCommunication).toHaveBeenCalledTimes(1));
@@ -799,8 +844,8 @@ test("previews manager feedback with the canonical facility recipient", () => {
     onOpenReports={jest.fn()}
   />);
 
-  fireEvent.click(screen.getByRole("button", { name: /Review details for Manager feedback overdue for Synthetic Feedback Candidate/i }));
-  fireEvent.click(screen.getByRole("button", { name: "Preview Communication" }));
+  fireEvent.click(screen.getByRole("button", { name: /Review Manager feedback overdue for Synthetic Feedback Candidate/i }));
+  fireEvent.click(screen.getByRole("button", { name: "Review Communication" }));
   const dialog = screen.getByRole("dialog", { name: "Manager Feedback Preview" });
   expect(within(dialog).getByText("manager@example.test")).toBeInTheDocument();
   expect(within(dialog).getByText("Feedback | Synthetic Feedback Candidate")).toBeInTheDocument();
@@ -834,8 +879,8 @@ test("previews the exact saved Candidate Ready package without operational contr
 
   const filters = screen.getByRole("tablist", { name: "Action Center filters" });
   fireEvent.click(within(filters).getByRole("tab", { name: /Candidate Ready/i }));
-  fireEvent.click(screen.getByRole("button", { name: /Review details for Candidate Ready submission pending for Synthetic Ready Preview/i }));
-  fireEvent.click(screen.getByRole("button", { name: "Preview Communication" }));
+  fireEvent.click(screen.getByRole("button", { name: /Review Candidate Ready submission pending for Synthetic Ready Preview/i }));
+  fireEvent.click(screen.getByRole("button", { name: "Review Communication" }));
   const dialog = screen.getByRole("dialog", { name: "Candidate Ready Preview" });
   expect(within(dialog).getByText("Saved facility body")).toBeInTheDocument();
   expect(within(dialog).getByText("Saved candidate body")).toBeInTheDocument();

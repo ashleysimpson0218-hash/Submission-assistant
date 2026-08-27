@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   ACTION_CENTER_CATEGORIES,
   ACTION_CENTER_FILTERS,
@@ -21,6 +21,47 @@ import { HomeCalendarWidget } from "./HomeCalendarWidget";
 const FILTERS = ["Do Now", "Candidate Rescue", "Waiting on Others", "Offers", "Onboarding", "Recruiting Needed", "Stuck"];
 const EMPTY_LIST = Object.freeze([]);
 const EMPTY_RULES = Object.freeze({});
+const FOCUSABLE_SELECTOR = [
+  "button:not([disabled])",
+  "[href]",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])",
+].join(",");
+
+function moveTabSelection(event, options, selected, refs, onSelect) {
+  const currentIndex = options.indexOf(selected);
+  if (currentIndex < 0) return;
+  let nextIndex = currentIndex;
+  if (["ArrowRight", "ArrowDown"].includes(event.key)) nextIndex = (currentIndex + 1) % options.length;
+  else if (["ArrowLeft", "ArrowUp"].includes(event.key)) nextIndex = (currentIndex - 1 + options.length) % options.length;
+  else if (event.key === "Home") nextIndex = 0;
+  else if (event.key === "End") nextIndex = options.length - 1;
+  else return;
+  event.preventDefault();
+  onSelect(options[nextIndex]);
+  refs.current[nextIndex]?.focus();
+}
+
+function trapDialogFocus(event, container) {
+  if (event.key !== "Tab" || !container) return;
+  const focusable = Array.from(container.querySelectorAll(FOCUSABLE_SELECTOR));
+  if (!focusable.length) {
+    event.preventDefault();
+    container.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
 
 function riskColor(level, theme) {
   if (level === "Critical" || level === "High") return { color: theme.red, background: theme.redBg };
@@ -109,27 +150,31 @@ function EmptyQueue({ filter, waitingCount, focusTask, theme }) {
   return <div style={{ border: `1px dashed ${theme.borderSoft}`, borderRadius: 8, padding: 20, color: theme.muted, textAlign: "center" }}>{message}</div>;
 }
 
-function ActionCenterRow({ item, theme, narrow, onReview, onOpen }) {
+function ActionCenterRow({ item, theme, narrow, onReview, onOpen, reviewButtonRef }) {
   const colors = riskColor(item.riskLevel, theme);
+  const titleId = useId();
+  const explanationId = useId();
   return (
-    <article style={{ display: "grid", gridTemplateColumns: narrow ? "1fr" : "minmax(210px, 1.1fr) minmax(260px, 1.7fr) 110px auto auto", gap: 10, alignItems: "center", border: `1px solid ${theme.borderSoft}`, borderLeft: `4px solid ${colors.color}`, borderRadius: 7, padding: 11, background: theme.panel }}>
+    <article aria-labelledby={titleId} aria-describedby={explanationId} style={{ display: "grid", gridTemplateColumns: narrow ? "1fr" : "minmax(210px, 1.1fr) minmax(260px, 1.7fr) 110px auto auto", gap: 10, alignItems: "center", border: `1px solid ${theme.borderSoft}`, borderLeft: `4px solid ${colors.color}`, borderRadius: 7, padding: 11, background: theme.panel }}>
       <div>
-        <strong style={{ display: "block" }}>{item.title}</strong>
+        <strong id={titleId} style={{ display: "block" }}>{item.title}</strong>
         <span style={{ color: theme.muted, fontSize: 11 }}>{[item.context.requisition, item.context.facility].filter(Boolean).join(" | ") || item.sourceType}</span>
       </div>
       <div>
         <span style={{ display: "block", color: theme.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>Why this needs attention</span>
-        <strong style={{ display: "block", fontSize: 12, lineHeight: 1.4 }}>{item.explanation}</strong>
+        <strong id={explanationId} style={{ display: "block", fontSize: 12, lineHeight: 1.4 }}>{item.explanation}</strong>
         <span style={{ display: "block", color: theme.primary2, fontSize: 11, fontWeight: 850, marginTop: 4 }}>Next: {item.recommendedAction}</span>
       </div>
-      <span style={{ justifySelf: narrow ? "start" : "center", borderRadius: 999, padding: "4px 8px", color: colors.color, background: colors.background, fontSize: 11, fontWeight: 900 }}>{item.riskLevel}</span>
-      <button type="button" aria-label={`Review details for ${item.title}`} onClick={() => onReview(item.id)} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panelAlt, color: theme.text, padding: "8px 10px", fontWeight: 850, cursor: "pointer" }}>Review Details</button>
+      <span aria-label={`${item.riskLevel} priority`} style={{ justifySelf: narrow ? "start" : "center", borderRadius: 999, padding: "4px 8px", color: colors.color, background: colors.background, fontSize: 11, fontWeight: 900 }}>{item.riskLevel}</span>
+      <button ref={reviewButtonRef} type="button" aria-label={`Review ${item.title}`} onClick={() => onReview(item.id)} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panelAlt, color: theme.text, padding: "8px 10px", fontWeight: 850, cursor: "pointer" }}>Review</button>
       <button type="button" disabled={Boolean(item.destination.disabled)} title={item.destination.reason || ""} onClick={() => onOpen(item)} style={{ border: `1px solid ${theme.primary2}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "8px 10px", fontWeight: 900, cursor: item.destination.disabled ? "not-allowed" : "pointer", opacity: item.destination.disabled ? 0.55 : 1 }}>{item.destination.label}</button>
     </article>
   );
 }
 
-function ActionCenterDetail({ item, theme, onClose, onOpen, onPreviewCommunication }) {
+function ActionCenterDetail({ item, theme, onClose, onOpen, onPreviewCommunication, detailRef, previewButtonRef }) {
+  const titleId = useId();
+  const explanationId = useId();
   const context = [
     ["Candidate", item.context.candidate],
     ["Candidate ID", item.context.candidateId],
@@ -143,9 +188,9 @@ function ActionCenterDetail({ item, theme, onClose, onOpen, onPreviewCommunicati
     ["Due", item.dueAt],
   ].filter(([, value]) => value);
   return (
-    <section aria-label={`Action details for ${item.title}`} style={{ border: `2px solid ${theme.primary2}`, borderRadius: 8, padding: 12, background: theme.blueBg || theme.panelAlt, display: "grid", gap: 10 }}>
+    <section ref={detailRef} tabIndex={-1} aria-label={`Action details for ${item.title}`} aria-describedby={explanationId} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); onClose(); } }} style={{ border: `2px solid ${theme.primary2}`, borderRadius: 8, padding: 12, background: theme.blueBg || theme.panelAlt, display: "grid", gap: 10, outline: "none" }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start" }}>
-        <div><strong>{item.title}</strong><div style={{ color: theme.muted, fontSize: 11, marginTop: 3 }}>{item.explanation}</div></div>
+        <div><h3 id={titleId} style={{ margin: 0, fontSize: 15 }}>{item.title}</h3><div id={explanationId} style={{ color: theme.muted, fontSize: 11, marginTop: 3 }}>{item.explanation}</div></div>
         <button type="button" onClick={onClose} aria-label="Close Action Center details" style={{ border: 0, background: "transparent", color: theme.text, cursor: "pointer", fontWeight: 950 }}>×</button>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 7 }}>
@@ -157,7 +202,7 @@ function ActionCenterDetail({ item, theme, onClose, onOpen, onPreviewCommunicati
       </div>
       {item.destination.disabled ? <div role="status" style={{ color: theme.red, fontSize: 12, fontWeight: 850 }}>{item.destination.reason}</div> : null}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {actionCenterItemSupportsCommunicationPreview(item) ? <button type="button" onClick={() => onPreviewCommunication(item)} style={{ border: 0, borderRadius: 6, background: theme.primary2, color: "#fff", padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Preview Communication</button> : null}
+        {actionCenterItemSupportsCommunicationPreview(item) ? <button ref={previewButtonRef} type="button" onClick={() => onPreviewCommunication(item)} style={{ border: 0, borderRadius: 6, background: theme.primary2, color: "#fff", padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Review Communication</button> : null}
         <button type="button" disabled={Boolean(item.destination.disabled)} title={item.destination.reason || ""} onClick={() => onOpen(item)} style={{ border: `1px solid ${theme.primary2}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "8px 11px", fontWeight: 900, cursor: item.destination.disabled ? "not-allowed" : "pointer", opacity: item.destination.disabled ? 0.55 : 1 }}>{item.destination.label}</button>
       </div>
     </section>
@@ -165,6 +210,12 @@ function ActionCenterDetail({ item, theme, onClose, onOpen, onPreviewCommunicati
 }
 
 function ActionCenterCommunicationActionConfirmation({ review, processing, theme, onCancel, onConfirm }) {
+  const dialogRef = useRef(null);
+  const confirmButtonRef = useRef(null);
+  const titleId = useId();
+  useEffect(() => {
+    if (review) confirmButtonRef.current?.focus();
+  }, [review]);
   if (!review) return null;
   const actionLabel = review.actionType === ACTION_CENTER_COMMUNICATION_ACTIONS.copySubject
     ? "Copy Approved Subject"
@@ -172,9 +223,9 @@ function ActionCenterCommunicationActionConfirmation({ review, processing, theme
       ? "Copy Approved Body"
       : "Open Prefilled Email Draft";
   return (
-    <section role="alertdialog" aria-modal="true" aria-label={`Confirm ${actionLabel}`} onClick={(event) => event.stopPropagation()} style={{ position: "fixed", inset: 0, zIndex: 160, background: "rgba(16, 10, 43, 0.7)", display: "grid", placeItems: "center", padding: 16 }}>
+    <section ref={dialogRef} role="alertdialog" aria-modal="true" aria-label={`Confirm ${actionLabel}`} aria-labelledby={titleId} tabIndex={-1} onKeyDown={(event) => { if (event.key === "Escape" && !processing) { event.preventDefault(); event.stopPropagation(); onCancel(); return; } trapDialogFocus(event, dialogRef.current); }} onClick={(event) => event.stopPropagation()} style={{ position: "fixed", inset: 0, zIndex: 160, background: "rgba(16, 10, 43, 0.7)", display: "grid", placeItems: "center", padding: 16 }}>
       <div style={{ width: "min(620px, 100%)", border: `2px solid ${theme.primary2}`, borderRadius: 10, background: theme.panel, color: theme.text, padding: 16, boxShadow: theme.shadow, display: "grid", gap: 12 }}>
-        <div><div style={{ color: theme.primary2, fontSize: 11, fontWeight: 950, textTransform: "uppercase" }}>Recruiter confirmation required</div><h3 style={{ margin: "4px 0" }}>{actionLabel}</h3><p style={{ margin: 0, color: theme.muted, fontSize: 12 }}>{review.effectDescription}</p></div>
+        <div><div style={{ color: theme.primary2, fontSize: 11, fontWeight: 950, textTransform: "uppercase" }}>Recruiter confirmation required</div><h3 id={titleId} style={{ margin: "4px 0" }}>Confirm {actionLabel}</h3><p style={{ margin: 0, color: theme.muted, fontSize: 12 }}>{review.effectDescription}</p></div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 7 }}>
           {[
             ["Candidate", review.context.candidate, review.context.candidateId],
@@ -187,7 +238,7 @@ function ActionCenterCommunicationActionConfirmation({ review, processing, theme
         <div style={{ color: theme.muted, fontSize: 11 }}>WelcomeFlow will revalidate the exact candidate, requisition, facility, recipients, and approved content when you confirm. It will not send an email or change any record.</div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
           <button type="button" disabled={processing} onClick={onCancel} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panel, color: theme.text, padding: "8px 11px", fontWeight: 850, cursor: processing ? "not-allowed" : "pointer" }}>Cancel</button>
-          <button type="button" disabled={processing} onClick={onConfirm} style={{ border: 0, borderRadius: 6, background: theme.primary2, color: "#fff", padding: "8px 11px", fontWeight: 900, cursor: processing ? "not-allowed" : "pointer" }}>{processing ? "Revalidating…" : `Confirm ${actionLabel}`}</button>
+          <button ref={confirmButtonRef} type="button" disabled={processing} onClick={onConfirm} style={{ border: 0, borderRadius: 6, background: theme.primary2, color: "#fff", padding: "8px 11px", fontWeight: 900, cursor: processing ? "not-allowed" : "pointer" }}>{processing ? "Revalidating…" : `Confirm ${actionLabel}`}</button>
         </div>
       </div>
     </section>
@@ -195,6 +246,12 @@ function ActionCenterCommunicationActionConfirmation({ review, processing, theme
 }
 
 function ActionCenterCommunicationPreviewDialog({ preview, theme, onClose, controlledActionsAuthorized, prefilledEmailDraftAuthorized, actionReview, actionResult, actionProcessing, onRequestAction, onCancelAction, onConfirmAction }) {
+  const dialogRef = useRef(null);
+  const closeButtonRef = useRef(null);
+  const titleId = useId();
+  useEffect(() => {
+    closeButtonRef.current?.focus();
+  }, []);
   const context = [
     ["Candidate", preview.context.candidate],
     ["Candidate ID", preview.context.candidateId],
@@ -206,11 +263,11 @@ function ActionCenterCommunicationPreviewDialog({ preview, theme, onClose, contr
     ["Region", preview.context.region],
   ].filter(([, value]) => value);
   return (
-    <div role="dialog" aria-modal="true" aria-label={preview.title} onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 140, background: "rgba(16, 10, 43, 0.62)", display: "grid", placeItems: "center", padding: 16 }}>
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onKeyDown={(event) => { if (event.key === "Escape" && !actionReview) { event.preventDefault(); onClose(); return; } trapDialogFocus(event, dialogRef.current); }} onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 140, background: "rgba(16, 10, 43, 0.62)", display: "grid", placeItems: "center", padding: 16 }}>
       <div onClick={(event) => event.stopPropagation()} style={{ width: "min(980px, 100%)", maxHeight: "92vh", overflow: "auto", border: `1px solid ${theme.borderSoft}`, borderRadius: 10, background: theme.panel, color: theme.text, boxShadow: theme.shadow, display: "grid" }}>
         <header style={{ position: "sticky", top: 0, zIndex: 1, borderBottom: `1px solid ${theme.borderSoft}`, padding: 14, background: theme.panel, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-          <div><div style={{ color: theme.primary2, fontSize: 11, fontWeight: 950, textTransform: "uppercase" }}>{controlledActionsAuthorized ? "Controlled communication preview" : "Read-only communication preview"}</div><h2 style={{ margin: "4px 0", fontSize: 19 }}>{preview.title}</h2><div style={{ color: theme.muted, fontSize: 12 }}>{controlledActionsAuthorized ? "Nothing is sent automatically. Every copy or draft action requires confirmation and changes no WelcomeFlow record." : "Nothing can be copied, opened, sent, saved, or marked complete from this preview."}</div></div>
-          <button type="button" onClick={onClose} aria-label={`Close ${preview.title}`} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panelAlt, color: theme.text, padding: "7px 10px", fontWeight: 900, cursor: "pointer" }}>Close</button>
+          <div><div style={{ color: theme.primary2, fontSize: 11, fontWeight: 950, textTransform: "uppercase" }}>{controlledActionsAuthorized ? "Controlled communication preview" : "Read-only communication preview"}</div><h2 id={titleId} style={{ margin: "4px 0", fontSize: 19 }}>{preview.title}</h2><div style={{ color: theme.muted, fontSize: 12 }}>{controlledActionsAuthorized ? "Nothing is sent automatically. Every copy or draft action requires confirmation and changes no WelcomeFlow record." : "Nothing can be copied, opened, sent, saved, or marked complete from this preview."}</div></div>
+          <button ref={closeButtonRef} type="button" onClick={onClose} aria-label={`Close ${preview.title}`} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panelAlt, color: theme.text, padding: "7px 10px", fontWeight: 900, cursor: "pointer" }}>Close</button>
         </header>
         <div style={{ padding: 14, display: "grid", gap: 12 }}>
           <section aria-label="Resolved communication context" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 7 }}>
@@ -230,9 +287,9 @@ function ActionCenterCommunicationPreviewDialog({ preview, theme, onClose, contr
               {entry.subject ? <div><strong>Subject:</strong> <span style={{ color: theme.muted }}>{entry.subject}</span></div> : null}
               <pre style={{ margin: 0, whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "Inter, Arial, sans-serif", fontSize: 12.5, lineHeight: 1.55, border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panelAlt, padding: 11 }}>{entry.body || "No preview content available."}</pre>
               {controlledActionsAuthorized && preview.canReview && entry.channel === "Email" ? <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button type="button" onClick={() => onRequestAction(ACTION_CENTER_COMMUNICATION_ACTIONS.copySubject, entry.key)} disabled={!entry.subject} style={{ border: `1px solid ${theme.primary2}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "7px 10px", fontWeight: 850, cursor: entry.subject ? "pointer" : "not-allowed" }}>Copy Approved Subject</button>
-                <button type="button" onClick={() => onRequestAction(ACTION_CENTER_COMMUNICATION_ACTIONS.copyBody, entry.key)} disabled={!entry.body} style={{ border: `1px solid ${theme.primary2}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "7px 10px", fontWeight: 850, cursor: entry.body ? "pointer" : "not-allowed" }}>Copy Approved Body</button>
-                {prefilledEmailDraftAuthorized ? <button type="button" onClick={() => onRequestAction(ACTION_CENTER_COMMUNICATION_ACTIONS.openEmailDraft, entry.key)} style={{ border: 0, borderRadius: 6, background: theme.primary2, color: "#fff", padding: "7px 10px", fontWeight: 900, cursor: "pointer" }}>Open Prefilled Email Draft</button> : <span style={{ alignSelf: "center", color: theme.muted, fontSize: 11 }}>Prefilled email drafts are not authorized in this runtime.</span>}
+                <button type="button" onClick={(event) => onRequestAction(ACTION_CENTER_COMMUNICATION_ACTIONS.copySubject, entry.key, event.currentTarget)} disabled={!entry.subject} style={{ border: `1px solid ${theme.primary2}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "7px 10px", fontWeight: 850, cursor: entry.subject ? "pointer" : "not-allowed" }}>Copy Approved Subject</button>
+                <button type="button" onClick={(event) => onRequestAction(ACTION_CENTER_COMMUNICATION_ACTIONS.copyBody, entry.key, event.currentTarget)} disabled={!entry.body} style={{ border: `1px solid ${theme.primary2}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "7px 10px", fontWeight: 850, cursor: entry.body ? "pointer" : "not-allowed" }}>Copy Approved Body</button>
+                {prefilledEmailDraftAuthorized ? <button type="button" onClick={(event) => onRequestAction(ACTION_CENTER_COMMUNICATION_ACTIONS.openEmailDraft, entry.key, event.currentTarget)} style={{ border: 0, borderRadius: 6, background: theme.primary2, color: "#fff", padding: "7px 10px", fontWeight: 900, cursor: "pointer" }}>Open Prefilled Email Draft</button> : <span style={{ alignSelf: "center", color: theme.muted, fontSize: 11 }}>Prefilled email drafts are not authorized in this runtime.</span>}
               </div> : null}
             </div>
           </section>)}
@@ -259,6 +316,14 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
   const [actionCenterCommunicationActionResult, setActionCenterCommunicationActionResult] = useState(null);
   const [actionCenterCommunicationActionProcessing, setActionCenterCommunicationActionProcessing] = useState(false);
   const [actionCenterNow, setActionCenterNow] = useState(() => new Date());
+  const actionCenterFilterRefs = useRef([]);
+  const workQueueFilterRefs = useRef([]);
+  const actionCenterReviewButtonRefs = useRef(new Map());
+  const actionCenterDetailRef = useRef(null);
+  const actionCenterPreviewButtonRef = useRef(null);
+  const actionCenterLastReviewedItemIdRef = useRef("");
+  const controlledActionTriggerRef = useRef(null);
+  const previousControlledActionReviewRef = useRef(null);
   const completeActionCenterRequisitions = Array.isArray(actionCenterRequisitions) ? actionCenterRequisitions : requisitions;
   const model = useMemo(() => buildRecruiterWorkspaceModel({ tracker, requisitions, sites, history, calendarEvents, rules: workflowRules }), [tracker, requisitions, sites, history, calendarEvents, workflowRules]);
   const actionCenter = useMemo(() => buildRecruiterActionCenter({ tracker, requisitions: completeActionCenterRequisitions, sites, history, calendarEvents, facilityReadinessRows, workflowRules, now: actionCenterNow }), [tracker, completeActionCenterRequisitions, sites, history, calendarEvents, facilityReadinessRows, workflowRules, actionCenterNow]);
@@ -322,6 +387,16 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
     : actionCenterNavigation?.present && actionCenterNavigation.itemId && !actionCenterDetail
       ? "The selected Action Center item is unavailable or does not belong to this filter. No other record was opened."
       : "";
+  const focusedActionCenterDetailId = actionCenterDetail?.id || "";
+  useEffect(() => {
+    if (focusedActionCenterDetailId) actionCenterDetailRef.current?.focus();
+  }, [focusedActionCenterDetailId]);
+  useEffect(() => {
+    if (previousControlledActionReviewRef.current && !actionCenterCommunicationActionReview) {
+      controlledActionTriggerRef.current?.focus?.();
+    }
+    previousControlledActionReviewRef.current = actionCenterCommunicationActionReview;
+  }, [actionCenterCommunicationActionReview]);
   const actionCenterCommunicationItem = navigableActionCenterItems.find((item) => item.id === actionCenterCommunicationPreviewId) || null;
   const actionCenterCommunicationPreview = useMemo(() => actionCenterCommunicationItem ? buildActionCenterCommunicationPreview({
     item: actionCenterCommunicationItem,
@@ -337,29 +412,34 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
     setActionCenterCommunicationActionProcessing(false);
     setActionCenterCommunicationPreviewId(item.id);
   };
-  const closeActionCenterCommunicationPreview = () => {
+  const closeActionCenterCommunicationPreview = (restoreFocus = true) => {
     setActionCenterCommunicationPreviewId("");
     setActionCenterCommunicationActionReview(null);
     setActionCenterCommunicationActionResult(null);
     setActionCenterCommunicationActionProcessing(false);
+    if (restoreFocus) actionCenterPreviewButtonRef.current?.focus();
   };
   const selectActionCenterFilter = (filter) => {
     setActionCenterFilter(filter);
     setActionCenterDetailId("");
-    closeActionCenterCommunicationPreview();
+    closeActionCenterCommunicationPreview(false);
     onActionCenterNavigationChange({ filter, itemId: "" });
   };
   const selectActionCenterDetail = (itemId) => {
+    actionCenterLastReviewedItemIdRef.current = itemId;
     setActionCenterDetailId(itemId);
-    closeActionCenterCommunicationPreview();
+    closeActionCenterCommunicationPreview(false);
     onActionCenterNavigationChange({ filter: actionCenterFilter, itemId });
   };
   const closeActionCenterDetail = () => {
+    const itemId = actionCenterDetailId || actionCenterLastReviewedItemIdRef.current;
     setActionCenterDetailId("");
-    closeActionCenterCommunicationPreview();
+    closeActionCenterCommunicationPreview(false);
     onActionCenterNavigationChange({ filter: actionCenterFilter, itemId: "" });
+    actionCenterReviewButtonRefs.current.get(itemId)?.focus();
   };
-  const requestActionCenterCommunicationAction = (actionType, documentKey) => {
+  const requestActionCenterCommunicationAction = (actionType, documentKey, trigger = null) => {
+    controlledActionTriggerRef.current = trigger || document.activeElement;
     setActionCenterCommunicationActionResult(null);
     const prepared = prepareActionCenterCommunicationAction({
       preview: actionCenterCommunicationPreview,
@@ -381,6 +461,7 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
       status: "cancelled",
       message: "Action cancelled. Nothing was copied, opened, sent, or changed.",
     });
+    controlledActionTriggerRef.current?.focus?.();
   };
   const confirmActionCenterCommunicationAction = async () => {
     if (actionCenterCommunicationActionProcessing || !actionCenterCommunicationActionReview) return;
@@ -473,6 +554,7 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
       });
     } finally {
       setActionCenterCommunicationActionProcessing(false);
+      controlledActionTriggerRef.current?.focus?.();
     }
   };
   const openActionCenterItem = (item) => {
@@ -488,6 +570,8 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
     : model.tasks.filter((task) => task.filters.includes(activeFilter)), [model.tasks, activeFilter]);
   const taskCount = (filter) => model.tasks.filter((task) => task.filters.includes(filter)).length;
   const setQueueFilter = (filter) => setActiveFilter(filter);
+  const actionCenterFilterIndex = Math.max(0, ACTION_CENTER_FILTERS.indexOf(actionCenterFilter));
+  const workQueueFilterIndex = Math.max(0, FILTERS.indexOf(activeFilter));
   const actionTask = model.tasks.find((task) => task.id === actionTaskId) || null;
   const planItems = [
     { label: "Rescue candidates at risk", value: model.plan.rescue, detail: "High or critical risk", tone: model.plan.rescue ? "High" : "Low", filter: "Candidate Rescue" },
@@ -551,14 +635,14 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
             {focusMode ? <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "repeat(4, minmax(0, 1fr))", gap: 8, marginTop: 12 }}>{[["Shift", model.focusTask.shift || "Not listed"], ["Employment", model.focusTask.employmentType || "Not listed"], ["Schedule", model.focusTask.schedule || "Not listed"], ["Credentials / Pay", [model.focusTask.requiredCredentials, model.focusTask.pay].filter(Boolean).join(" · ") || "Review requisition"]].map(([label, value]) => <div key={label} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: 9, background: theme.panelAlt }}><span style={{ color: theme.muted, fontSize: 10, fontWeight: 900 }}>{label}</span><strong style={{ display: "block", fontSize: 12, marginTop: 3 }}>{value}</strong></div>)}</div> : null}
           </WorkspaceCard> : null}
 
-          {!focusMode ? <WorkspaceCard theme={theme} title="Recruiter Action Center" subtitle="Read-only priorities explain what needs attention, why it matters, and the exact record to review.">
+          {!focusMode ? <WorkspaceCard theme={theme} title="Recruiter Action Center" subtitle="Choose a priority, review why it needs attention, then open the exact record.">
             <div role="tablist" aria-label="Action Center filters" style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 12 }}>
-              {ACTION_CENTER_FILTERS.map((filter) => <button key={filter} type="button" role="tab" aria-selected={actionCenterFilter === filter} onClick={() => selectActionCenterFilter(filter)} style={{ border: `1px solid ${actionCenterFilter === filter ? theme.primary2 : theme.borderSoft}`, borderRadius: 6, background: actionCenterFilter === filter ? theme.primary2 : theme.panelAlt, color: actionCenterFilter === filter ? "#fff" : theme.text, padding: "7px 10px", fontWeight: 850, cursor: "pointer" }}>{filter} <span aria-label={`${actionCenter.counts[filter]} items`}>{actionCenter.counts[filter]}</span></button>)}
+              {ACTION_CENTER_FILTERS.map((filter, index) => <button key={filter} ref={(node) => { actionCenterFilterRefs.current[index] = node; }} id={`action-center-filter-${index}`} type="button" role="tab" aria-selected={actionCenterFilter === filter} aria-controls="action-center-items-panel" tabIndex={actionCenterFilter === filter ? 0 : -1} onKeyDown={(event) => moveTabSelection(event, ACTION_CENTER_FILTERS, filter, actionCenterFilterRefs, selectActionCenterFilter)} onClick={() => selectActionCenterFilter(filter)} style={{ border: `1px solid ${actionCenterFilter === filter ? theme.primary2 : theme.borderSoft}`, borderRadius: 6, background: actionCenterFilter === filter ? theme.primary2 : theme.panelAlt, color: actionCenterFilter === filter ? "#fff" : theme.text, padding: "7px 10px", fontWeight: 850, cursor: "pointer" }}>{filter} <span aria-label={`${actionCenter.counts[filter]} items`}>{actionCenter.counts[filter]}</span></button>)}
             </div>
             {actionCenterRouteError ? <div role="alert" style={{ border: `1px solid ${theme.red}`, borderRadius: 6, padding: 10, marginBottom: 10, background: theme.redBg, color: theme.text, fontWeight: 850 }}>{actionCenterRouteError}</div> : null}
-            <div role="tabpanel" aria-label={`${actionCenterFilter} Action Center items`} style={{ display: "grid", gap: 8 }}>
-              {actionCenterItems.length ? actionCenterItems.map((item) => <ActionCenterRow key={item.id} item={item} theme={theme} narrow={isNarrow} onReview={selectActionCenterDetail} onOpen={openActionCenterItem} />) : <div style={{ border: `1px dashed ${theme.borderSoft}`, borderRadius: 8, padding: 20, color: theme.muted, textAlign: "center" }}>No {actionCenterFilter === ACTION_CENTER_CATEGORIES.all ? "Action Center" : actionCenterFilter.toLowerCase()} items need attention right now.</div>}
-              {actionCenterDetail ? <ActionCenterDetail item={actionCenterDetail} theme={theme} onClose={closeActionCenterDetail} onOpen={openActionCenterItem} onPreviewCommunication={openActionCenterCommunicationPreview} /> : null}
+            <div id="action-center-items-panel" role="tabpanel" aria-labelledby={`action-center-filter-${actionCenterFilterIndex}`} aria-label={`${actionCenterFilter} Action Center items`} tabIndex={0} style={{ display: "grid", gap: 8 }}>
+              {actionCenterItems.length ? actionCenterItems.map((item) => <ActionCenterRow key={item.id} item={item} theme={theme} narrow={isNarrow} onReview={selectActionCenterDetail} onOpen={openActionCenterItem} reviewButtonRef={(node) => { if (node) actionCenterReviewButtonRefs.current.set(item.id, node); else actionCenterReviewButtonRefs.current.delete(item.id); }} />) : <div role="status" style={{ border: `1px dashed ${theme.borderSoft}`, borderRadius: 8, padding: 20, color: theme.muted, textAlign: "center" }}>No {actionCenterFilter === ACTION_CENTER_CATEGORIES.all ? "Action Center" : actionCenterFilter.toLowerCase()} items need attention right now.</div>}
+              {actionCenterDetail ? <ActionCenterDetail item={actionCenterDetail} theme={theme} onClose={closeActionCenterDetail} onOpen={openActionCenterItem} onPreviewCommunication={openActionCenterCommunicationPreview} detailRef={actionCenterDetailRef} previewButtonRef={actionCenterPreviewButtonRef} /> : null}
             </div>
             {actionCenterCommunicationPreview ? <ActionCenterCommunicationPreviewDialog
               preview={actionCenterCommunicationPreview}
@@ -577,10 +661,10 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
 
           <WorkspaceCard theme={theme} title="My Work Queue" subtitle="Every item explains its source, owner, timing, and recommended next step.">
             <div role="tablist" aria-label="Work queue filters" style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 12 }}>
-              {FILTERS.map((filter) => <button key={filter} type="button" role="tab" aria-selected={activeFilter === filter} onClick={() => setQueueFilter(filter)} style={{ border: `1px solid ${activeFilter === filter ? theme.primary2 : theme.borderSoft}`, borderRadius: 6, background: activeFilter === filter ? theme.primary2 : theme.panelAlt, color: activeFilter === filter ? "#fff" : theme.text, padding: "7px 10px", fontWeight: 850, cursor: "pointer" }}>{filter} <span aria-label={`${taskCount(filter)} items`}>{taskCount(filter)}</span></button>)}
+              {FILTERS.map((filter, index) => <button key={filter} ref={(node) => { workQueueFilterRefs.current[index] = node; }} id={`work-queue-filter-${index}`} type="button" role="tab" aria-selected={activeFilter === filter} aria-controls="work-queue-items-panel" tabIndex={activeFilter === filter ? 0 : -1} onKeyDown={(event) => moveTabSelection(event, FILTERS, filter, workQueueFilterRefs, setQueueFilter)} onClick={() => setQueueFilter(filter)} style={{ border: `1px solid ${activeFilter === filter ? theme.primary2 : theme.borderSoft}`, borderRadius: 6, background: activeFilter === filter ? theme.primary2 : theme.panelAlt, color: activeFilter === filter ? "#fff" : theme.text, padding: "7px 10px", fontWeight: 850, cursor: "pointer" }}>{filter} <span aria-label={`${taskCount(filter)} items`}>{taskCount(filter)}</span></button>)}
             </div>
             {activeFilter === "Urgent" ? <div style={{ color: theme.primary2, fontSize: 12, fontWeight: 900, marginBottom: 10 }}>Showing: Urgent Actions</div> : null}
-            <div role="tabpanel" style={{ display: "grid", gap: 8 }}>
+            <div id="work-queue-items-panel" role="tabpanel" aria-labelledby={`work-queue-filter-${workQueueFilterIndex}`} aria-label={`${activeFilter} work queue items`} tabIndex={0} style={{ display: "grid", gap: 8 }}>
               {filteredTasks.length ? filteredTasks.map((task) => <QueueRow key={task.id} task={task} theme={theme} narrow={isNarrow} onOpenCandidate={onOpenCandidate} onOpenRequisition={onOpenRequisition} onOpenCalendarEvent={onOpenCalendarEvent} onOpenActions={(selectedTask) => setActionTaskId(selectedTask.id)} />) : <EmptyQueue filter={activeFilter} waitingCount={model.snapshot.waiting} focusTask={model.focusTask} theme={theme} />}
               {actionTask ? <WorkspaceTaskActionPanel task={actionTask} theme={theme} onClose={() => setActionTaskId("")} onApply={onTaskAction} onScheduleCalendar={onScheduleCalendar} /> : null}
             </div>
