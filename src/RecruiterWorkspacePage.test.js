@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { paginateRecruiterQueue, RECRUITER_QUEUE_PAGE_SIZE, RecruiterWorkspacePage } from "./RecruiterWorkspacePage";
 import { FacilityPositionSetupPage, actionCenterNavigationState, activeActionCenterCandidateTargetForSelection, clearedActionCenterTargets, resolveActionCenterCandidateTarget, resolveActionCenterSetupTarget } from "./App";
-import { ACTION_CENTER_CATEGORIES, buildActionCenterItemId } from "./actionCenterSelectors";
+import { ACTION_CENTER_CATEGORIES, ACTION_CENTER_FILTERS, buildActionCenterItemId } from "./actionCenterSelectors";
 
 const theme = {
   panel: "#fff", panelAlt: "#f7f4ff", borderSoft: "#ddd", shadow: "none", text: "#17112f", muted: "#6b6680",
@@ -41,6 +41,16 @@ beforeEach(() => {
 afterEach(() => {
   jest.useRealTimers();
 });
+
+function openActionCenterCategories() {
+  const button = screen.queryByRole("button", { name: "View all categories" });
+  if (button) fireEvent.click(button);
+  return screen.getByRole("tablist", { name: "Action Center filters" });
+}
+
+function enterBulkSelectionMode() {
+  fireEvent.click(screen.getByRole("button", { name: "Select multiple" }));
+}
 
 test("paginates large queues without changing canonical order or totals", () => {
   const items = Array.from({ length: 45 }, (_, index) => ({ id: `item-${String(index + 1).padStart(2, "0")}` }));
@@ -83,8 +93,9 @@ test("consolidates operational work into the Action Center and pages a large que
   expect(screen.getAllByRole("heading", { name: "Recruiter Action Center" })).toHaveLength(1);
   expect(screen.queryByRole("heading", { name: "My Work Queue" })).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Operational work" })).toBeInTheDocument();
-  expect(screen.getByText(/former My Work Queue is now part of the Action Center/i)).toBeInTheDocument();
+  expect(screen.getByText(/Nothing was removed or reclassified/i)).toBeInTheDocument();
 
+  fireEvent.click(screen.getByText("More queue filters"));
   const queueTabs = screen.getByRole("tablist", { name: "Work queue filters" });
   const doNowTab = within(queueTabs).getByRole("tab", { name: /Do Now/i });
   expect(within(doNowTab).getByLabelText("45 items")).toBeInTheDocument();
@@ -130,6 +141,7 @@ test("previews exact bulk records, requires confirmation, and reports partial fa
     onBulkTaskAction={onBulkTaskAction}
   />);
 
+  enterBulkSelectionMode();
   fireEvent.click(screen.getByRole("checkbox", { name: "Select Synthetic Bulk One on requisition req-bulk-one for a bulk action" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Select Synthetic Bulk Two on requisition req-bulk-two for a bulk action" }));
   fireEvent.click(screen.getByRole("button", { name: "Preview affected records" }));
@@ -170,6 +182,7 @@ test("cancels bulk preview without applying an action or exposing communication 
     onOpenReports={jest.fn()}
     onBulkTaskAction={onBulkTaskAction}
   />);
+  enterBulkSelectionMode();
   fireEvent.click(screen.getByRole("checkbox", { name: /Select Synthetic Cancel on requisition req-cancel/i }));
   const previewButton = screen.getByRole("button", { name: "Preview affected records" });
   fireEvent.click(previewButton);
@@ -221,7 +234,7 @@ test("pages canonical Action Center priorities and restores a durable item on it
     onOpenReports={jest.fn()}
   />);
 
-  const filters = screen.getByRole("tablist", { name: "Action Center filters" });
+  const filters = openActionCenterCategories();
   expect(within(filters).getByRole("tab", { name: /Ask Weekly Decision/i })).toHaveTextContent("25");
   const pagination = screen.getByRole("navigation", { name: "Action Center priorities pagination" });
   expect(within(pagination).getByText("Page 2 of 2")).toBeInTheDocument();
@@ -245,9 +258,9 @@ test("renders the recruiter command center and filters its shared queue", () => 
     onOpenReports={jest.fn()}
   />);
 
-  expect(screen.getByRole("heading", { name: /Recruiter Workspace/i })).toBeInTheDocument();
-  expect(screen.getByText(/Your command center for today’s recruiting priorities/i)).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("tab", { name: /Waiting on Others/i }));
+  expect(screen.getByRole("heading", { name: /Recruiter Work/i })).toBeInTheDocument();
+  expect(screen.getByText(/See what needs action/i)).toBeInTheDocument();
+  fireEvent.click(within(screen.getByRole("tablist", { name: "Primary work filters" })).getByRole("tab", { name: /Waiting on Others/i }));
   expect(screen.getAllByText("Synthetic Candidate").length).toBeGreaterThan(0);
   expect(screen.getAllByText("Hiring Manager").length).toBeGreaterThan(0);
   expect(screen.getByText(/The next recorded step is controlled by Hiring Manager/i)).toBeInTheDocument();
@@ -257,7 +270,7 @@ test("renders the recruiter command center and filters its shared queue", () => 
 test("supports arrow, Home, and End keyboard navigation for both filter tablists", () => {
   render(<RecruiterWorkspacePage theme={theme} tracker={[]} requisitions={[]} onOpenCandidate={jest.fn()} onOpenRequisition={jest.fn()} onOpenWeeklyCleanup={jest.fn()} onOpenReports={jest.fn()} />);
 
-  const actionCenterTabs = screen.getByRole("tablist", { name: "Action Center filters" });
+  const actionCenterTabs = openActionCenterCategories();
   const allTab = within(actionCenterTabs).getByRole("tab", { name: /^All /i });
   allTab.focus();
   fireEvent.keyDown(allTab, { key: "ArrowRight" });
@@ -270,6 +283,8 @@ test("supports arrow, Home, and End keyboard navigation for both filter tablists
   act(() => jest.advanceTimersByTime(20));
   expect(within(actionCenterTabs).getByRole("tab", { name: /Data Blockers/i })).toHaveFocus();
 
+  fireEvent.click(within(screen.getByRole("tablist", { name: "Primary work filters" })).getByRole("tab", { name: /^Mine/i }));
+  fireEvent.click(screen.getByText("More queue filters"));
   const queueTabs = screen.getByRole("tablist", { name: "Work queue filters" });
   const doNowTab = within(queueTabs).getByRole("tab", { name: /Do Now/i });
   doNowTab.focus();
@@ -317,7 +332,7 @@ test("keeps Hiring Manager ownership when an aged record uses the higher-priorit
     onOpenReports={jest.fn()}
   />);
 
-  fireEvent.click(screen.getByRole("tab", { name: /Waiting on Others/i }));
+  fireEvent.click(within(screen.getByRole("tablist", { name: "Primary work filters" })).getByRole("tab", { name: /Waiting on Others/i }));
   expect(screen.getAllByText("Synthetic Aged Candidate").length).toBeGreaterThan(0);
   expect(screen.getAllByText("Hiring Manager").length).toBeGreaterThan(0);
   expect(screen.getByText(/days without recorded activity|facility review has not produced a recorded next step/i)).toBeInTheDocument();
@@ -328,7 +343,44 @@ test("keeps Hiring Manager ownership when an aged record uses the higher-priorit
 test("shows useful empty-state language", () => {
   render(<RecruiterWorkspacePage theme={theme} tracker={[]} requisitions={[]} onOpenCandidate={jest.fn()} onOpenRequisition={jest.fn()} onOpenWeeklyCleanup={jest.fn()} onOpenReports={jest.fn()} />);
   expect(screen.getByText("You have no urgent recruiter-owned tasks.")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "View health details" }));
   expect(screen.getAllByText("Not enough data")).toHaveLength(5);
+});
+
+test("uses the four-module Work-page hierarchy while keeping advanced controls discoverable", () => {
+  render(<RecruiterWorkspacePage
+    theme={theme}
+    tracker={[{ id: "candidate-disclosure", candidate: "Synthetic Disclosure", requisitionId: "req-disclosure", status: "Recruiter Review", nextAction: "Review candidate", candidateNotes: "Synthetic", currentOwner: "Recruiter" }]}
+    requisitions={[{ id: "req-disclosure", status: "Active", facilityId: "facility-disclosure", positionTitle: "RN" }]}
+    sites={[{ id: "facility-disclosure", siteName: "Synthetic Facility", status: "Active" }]}
+    onOpenCandidate={jest.fn()}
+    onOpenRequisition={jest.fn()}
+    onOpenWeeklyCleanup={jest.fn()}
+    onOpenReports={jest.fn()}
+  />);
+
+  expect(screen.getByRole("heading", { name: "Needs Action" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Today & Scheduled" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Pipeline Health" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Handoff Awareness" })).toBeInTheDocument();
+  const primary = screen.getByRole("tablist", { name: "Primary work filters" });
+  ["Mine", "Due Today", "Scheduled", "Waiting on Others", "At Risk", "All Categories"].forEach((label) => {
+    expect(within(primary).getByRole("tab", { name: new RegExp(label, "i") })).toBeInTheDocument();
+  });
+  expect(screen.queryByRole("tablist", { name: "Action Center filters" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Pipeline health details" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Handoff detail" })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Safe bulk actions")).not.toBeInTheDocument();
+  expect(screen.queryByRole("checkbox", { name: /Select Synthetic Disclosure/i })).not.toBeInTheDocument();
+
+  const categories = openActionCenterCategories();
+  ACTION_CENTER_FILTERS.forEach((filter) => expect(within(categories).getByRole("tab", { name: new RegExp(filter, "i") })).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "Hide category filters" }));
+  expect(screen.queryByRole("tablist", { name: "Action Center filters" })).not.toBeInTheDocument();
+
+  enterBulkSelectionMode();
+  expect(screen.getByLabelText("Safe bulk actions")).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: /Select Synthetic Disclosure/i })).toBeInTheDocument();
 });
 
 test("opens explicit task actions without invoking communication behavior", () => {
@@ -397,6 +449,7 @@ test("Focus Mode minimizes nonurgent workspace content", () => {
     onOpenReports={jest.fn()}
     onWorkspaceEvent={onWorkspaceEvent}
   />);
+  fireEvent.click(screen.getByText("View recruiting focus: Synthetic LPN"));
   fireEvent.click(screen.getByRole("button", { name: "Start Focus Session" }));
   expect(screen.getByText("Focus Mode keeps the priority requisition and essential work visible.")).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Recruiting Focus Session" })).toBeInTheDocument();
@@ -419,6 +472,7 @@ test("shows report-readiness issues and an end-of-day summary", () => {
     onOpenReports={jest.fn()}
     onWorkspaceEvent={onWorkspaceEvent}
   />);
+  fireEvent.click(screen.getByRole("button", { name: "View health details" }));
   fireEvent.click(screen.getByRole("button", { name: "Review Missing Items" }));
   expect(screen.getByRole("region", { name: "Weekly report readiness issues" })).toBeInTheDocument();
   expect(screen.getAllByText("Candidate notes are missing").length).toBeGreaterThan(0);
@@ -462,7 +516,7 @@ test("renders the read-only Action Center with the approved category filters and
   />);
 
   expect(screen.getByRole("heading", { name: "Recruiter Action Center" })).toBeInTheDocument();
-  const filters = screen.getByRole("tablist", { name: "Action Center filters" });
+  const filters = openActionCenterCategories();
   expect(within(filters).getByRole("tab", { name: /All/i })).toBeInTheDocument();
   expect(within(filters).getByRole("tab", { name: /Follow-up Due/i })).toBeInTheDocument();
   expect(within(filters).getByRole("tab", { name: /Manager Feedback/i })).toBeInTheDocument();
@@ -512,6 +566,7 @@ test("opens a read-only detail preview and navigates with the exact candidate an
     onWorkspaceEvent={onWorkspaceEvent}
   />);
 
+  openActionCenterCategories();
   const reviewButton = screen.getByRole("button", { name: /Review Recruiter follow-up due for Synthetic Exact Candidate/i });
   fireEvent.click(reviewButton);
   const details = screen.getByRole("region", { name: /Action details for Recruiter follow-up due for Synthetic Exact Candidate/i });
@@ -556,6 +611,7 @@ test("moves Manager Feedback from pending to overdue without remounting", () => 
     onOpenWeeklyCleanup={jest.fn()}
     onOpenReports={jest.fn()}
   />);
+  openActionCenterCategories();
   expect(screen.getByText("Manager feedback pending for Synthetic Live Feedback Candidate")).toBeInTheDocument();
   act(() => {
     jest.advanceTimersByTime(1000);
@@ -576,7 +632,7 @@ test("routes missing facility contact review with the exact facility context", (
     onOpenWeeklyCleanup={jest.fn()}
     onOpenReports={jest.fn()}
   />);
-  const filters = screen.getByRole("tablist", { name: "Action Center filters" });
+  const filters = openActionCenterCategories();
   fireEvent.click(within(filters).getByRole("tab", { name: /Facility Contact/i }));
   expect(screen.getByText("Facility contact is missing")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Open Facility" }));
@@ -595,7 +651,7 @@ test("fails closed when a facility destination has no facility handler", () => {
     onOpenWeeklyCleanup={jest.fn()}
     onOpenReports={jest.fn()}
   />);
-  const filters = screen.getByRole("tablist", { name: "Action Center filters" });
+  const filters = openActionCenterCategories();
   fireEvent.click(within(filters).getByRole("tab", { name: /Facility Contact/i }));
   const unavailable = screen.getByRole("button", { name: "Target unavailable" });
   expect(unavailable).toBeDisabled();
@@ -629,7 +685,7 @@ test("opens the canonical Ask Weekly decision in Weekly Reporting", () => {
     onOpenWeeklyCleanup={onOpenWeeklyCleanup}
     onOpenReports={jest.fn()}
   />);
-  const filters = screen.getByRole("tablist", { name: "Action Center filters" });
+  const filters = openActionCenterCategories();
   fireEvent.click(within(filters).getByRole("tab", { name: /Ask Weekly Decision/i }));
   expect(screen.getByText("Weekly no-opening decision needed for Synthetic Ask Weekly Facility")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Open Weekly Reporting" }));
@@ -665,6 +721,7 @@ test("refreshes the Action Center clock when source data changes", () => {
     onOpenReports: jest.fn(),
   };
   const view = render(<RecruiterWorkspacePage {...common} tracker={[baseCandidate]} />);
+  openActionCenterCategories();
   expect(screen.getByText("Manager feedback pending for Synthetic Clock Candidate")).toBeInTheDocument();
 
   act(() => jest.setSystemTime(new Date("2026-07-22T14:00:00.000Z")));
@@ -695,7 +752,7 @@ test("shows Candidate Ready work without exposing a send or status action", () =
     onOpenWeeklyCleanup={jest.fn()}
     onOpenReports={jest.fn()}
   />);
-  const filters = screen.getByRole("tablist", { name: "Action Center filters" });
+  const filters = openActionCenterCategories();
   fireEvent.click(within(filters).getByRole("tab", { name: /Candidate Ready/i }));
   const panel = screen.getByRole("tabpanel", { name: /Candidate Ready/i });
   expect(within(panel).getByText(/Candidate Ready submission pending for Synthetic Ready Candidate/i)).toBeInTheDocument();
@@ -735,6 +792,7 @@ test("opens an exact read-only candidate follow-up communication preview", () =>
     onWorkspaceEvent={onWorkspaceEvent}
   />);
 
+  openActionCenterCategories();
   fireEvent.click(screen.getByRole("button", { name: /Review Recruiter follow-up due for Synthetic Preview Candidate/i }));
   const previewButton = screen.getByRole("button", { name: "Review Communication" });
   fireEvent.click(previewButton);
@@ -782,7 +840,7 @@ test("publishes stable Action Center filter and selected-item navigation", () =>
     onOpenReports={jest.fn()}
   />);
 
-  const filters = screen.getByRole("tablist", { name: "Action Center filters" });
+  const filters = openActionCenterCategories();
   fireEvent.click(within(filters).getByRole("tab", { name: /Follow-up Due/i }));
   expect(onActionCenterNavigationChange).toHaveBeenLastCalledWith({
     filter: ACTION_CENTER_CATEGORIES.followUp,
@@ -906,6 +964,7 @@ function controlledFollowUpProps(overrides = {}) {
 }
 
 function openControlledFollowUpPreview() {
+  openActionCenterCategories();
   fireEvent.click(screen.getByRole("button", { name: /Review Recruiter follow-up due for Synthetic Controlled Candidate/i }));
   fireEvent.click(screen.getByRole("button", { name: "Review Communication" }));
   return screen.getByRole("dialog", { name: "Candidate Follow-Up Preview" });
@@ -1062,6 +1121,7 @@ test("previews manager feedback with the canonical facility recipient", () => {
     onOpenReports={jest.fn()}
   />);
 
+  openActionCenterCategories();
   fireEvent.click(screen.getByRole("button", { name: /Review Manager feedback overdue for Synthetic Feedback Candidate/i }));
   fireEvent.click(screen.getByRole("button", { name: "Review Communication" }));
   const dialog = screen.getByRole("dialog", { name: "Manager Feedback Preview" });
@@ -1095,7 +1155,7 @@ test("previews the exact saved Candidate Ready package without operational contr
     onOpenReports={jest.fn()}
   />);
 
-  const filters = screen.getByRole("tablist", { name: "Action Center filters" });
+  const filters = openActionCenterCategories();
   fireEvent.click(within(filters).getByRole("tab", { name: /Candidate Ready/i }));
   fireEvent.click(screen.getByRole("button", { name: /Review Candidate Ready submission pending for Synthetic Ready Preview/i }));
   fireEvent.click(screen.getByRole("button", { name: "Review Communication" }));
@@ -1110,7 +1170,7 @@ test("previews the exact saved Candidate Ready package without operational contr
 
 test("renders a clear Action Center empty state", () => {
   render(<RecruiterWorkspacePage theme={theme} tracker={[]} requisitions={[]} sites={[]} onOpenCandidate={jest.fn()} onOpenRequisition={jest.fn()} onOpenWeeklyCleanup={jest.fn()} onOpenReports={jest.fn()} />);
-  const filters = screen.getByRole("tablist", { name: "Action Center filters" });
+  const filters = openActionCenterCategories();
   fireEvent.click(within(filters).getByRole("tab", { name: /Manager Feedback/i }));
   expect(screen.getByText("No manager feedback items need attention right now.")).toBeInTheDocument();
 });
@@ -1195,6 +1255,7 @@ test("keeps Action Center navigation separate while both candidate paths preserv
     onOpenReports={jest.fn()}
   />);
 
+  openActionCenterCategories();
   const [actionCenterOpen, workQueueOpen] = screen.getAllByRole("button", { name: "Open Candidate" });
   fireEvent.click(actionCenterOpen);
   expect(onOpenActionCenterCandidate).toHaveBeenCalledWith(
@@ -1243,7 +1304,7 @@ test("uses the complete Action Center requisition collection to expose a missing
     onOpenReports={jest.fn()}
   />);
 
-  const filters = screen.getByRole("tablist", { name: "Action Center filters" });
+  const filters = openActionCenterCategories();
   fireEvent.click(within(filters).getByRole("tab", { name: /Candidate \/ Requisition Info/i }));
   expect(screen.getByText("Req Number or Unique ID is missing")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Open Requisition" }));
@@ -1295,6 +1356,7 @@ test("disables an unavailable requisition target instead of opening a generic se
     onOpenWeeklyCleanup={jest.fn()}
     onOpenReports={jest.fn()}
   />);
+  openActionCenterCategories();
   const unavailable = screen.getByRole("button", { name: "Target unavailable" });
   expect(unavailable).toBeDisabled();
   fireEvent.click(unavailable);

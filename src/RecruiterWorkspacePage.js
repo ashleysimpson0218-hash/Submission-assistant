@@ -21,6 +21,7 @@ import {
   prepareWorkspaceBulkTaskReview,
 } from "./recruiterWorkspaceActions";
 import { HomeCalendarWidget } from "./HomeCalendarWidget";
+import { buildWorkPagePresentation, filterWorkPageTasks, PRIMARY_WORK_FILTERS } from "./workPagePresentation";
 
 const FILTERS = ["Do Now", "Candidate Rescue", "Waiting on Others", "Offers", "Onboarding", "Recruiting Needed", "Stuck"];
 const EMPTY_LIST = Object.freeze([]);
@@ -120,13 +121,13 @@ function CountButton({ label, value, detail, tone, onClick, theme }) {
   );
 }
 
-function QueueRow({ task, theme, narrow, selected = false, onToggleSelection = null, onOpenCandidate, onOpenRequisition, onOpenCalendarEvent, onOpenActions }) {
+function QueueRow({ task, theme, narrow, selectionMode = false, selected = false, onToggleSelection = null, onOpenCandidate, onOpenRequisition, onOpenCalendarEvent, onOpenActions }) {
   const colors = riskColor(task.riskLevel, theme);
   const primaryAction = task.sourceType === "candidate" ? onOpenCandidate : task.sourceType === "calendar" ? onOpenCalendarEvent : onOpenRequisition;
   const primaryLabel = task.sourceType === "candidate" ? "Open Candidate" : task.sourceType === "calendar" ? "View Event" : "Open Requisition";
   return (
-    <article style={{ display: "grid", gridTemplateColumns: narrow ? "1fr" : "28px minmax(190px, 1.2fr) minmax(210px, 1.5fr) 110px 125px 95px auto auto", gap: 10, alignItems: "center", border: `1px solid ${theme.borderSoft}`, borderLeft: `4px solid ${colors.color}`, borderRadius: 7, padding: 11, background: theme.panel }}>
-      {task.sourceType === "candidate" ? <input type="checkbox" checked={selected} onChange={() => onToggleSelection?.(task)} aria-label={`Select ${task.candidateName} on requisition ${task.requisitionId || "unassigned"} for a bulk action`} /> : narrow ? null : <span aria-hidden="true" />}
+    <article style={{ display: "grid", gridTemplateColumns: narrow ? "1fr" : `${selectionMode ? "28px " : ""}minmax(190px, 1.2fr) minmax(210px, 1.5fr) 110px 125px 95px auto auto`, gap: 10, alignItems: "center", border: `1px solid ${theme.borderSoft}`, borderLeft: `4px solid ${colors.color}`, borderRadius: 7, padding: 11, background: theme.panel }}>
+      {selectionMode ? task.sourceType === "candidate" ? <input type="checkbox" checked={selected} onChange={() => onToggleSelection?.(task)} aria-label={`Select ${task.candidateName} on requisition ${task.requisitionId || "unassigned"} for a bulk action`} /> : narrow ? null : <span aria-hidden="true" /> : null}
       <div><strong style={{ display: "block" }}>{task.candidateName}</strong><span style={{ color: theme.muted, fontSize: 11 }}>{task.position} · {task.facilityName}</span></div>
       <div><span style={{ display: "block", color: theme.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>Why this is here</span><strong style={{ display: "block", fontSize: 12, lineHeight: 1.4 }}>{task.reason}</strong><span style={{ display: "block", color: theme.primary2, fontSize: 11, fontWeight: 850, marginTop: 4 }}>Next: {task.recommendedAction}</span></div>
       <span style={{ justifySelf: narrow ? "start" : "center", borderRadius: 999, padding: "4px 8px", color: colors.color, background: colors.background, fontSize: 11, fontWeight: 900 }}>{task.riskLevel}</span>
@@ -165,7 +166,7 @@ function WorkspaceTaskActionPanel({ task, theme, onClose, onApply, onScheduleCal
 }
 
 function EmptyQueue({ filter, waitingCount, focusTask, theme }) {
-  const message = filter === "Do Now"
+  const message = ["Mine", "Do Now"].includes(filter)
     ? "You have no urgent recruiter-owned tasks."
     : filter === "Waiting on Others" && waitingCount
       ? `${waitingCount} items are waiting on other owners.`
@@ -390,7 +391,7 @@ function ActionCenterCommunicationPreviewDialog({ preview, theme, onClose, contr
 }
 
 export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EMPTY_LIST, actionCenterRequisitions = null, sites = EMPTY_LIST, history = EMPTY_LIST, calendarEvents = EMPTY_LIST, facilityReadinessRows = EMPTY_LIST, workflowRules = EMPTY_RULES, communicationSettings = EMPTY_RULES, controlledCommunicationActionsAuthorized = false, prefilledEmailDraftAuthorized = false, actionCenterNavigation = null, onActionCenterNavigationChange = () => {}, onCopyApprovedCommunication = null, onOpenPrefilledEmailDraft = null, onRecordControlledCommunicationAction = null, theme, isNarrow = false, isMedium = false, recruiterName = "Recruiter", onOpenCandidate, onOpenActionCenterCandidate = onOpenCandidate, onOpenRequisition, onOpenActionCenterRequisition = onOpenRequisition, onOpenFacility = null, onOpenActionCenterFacility = onOpenFacility, onOpenCalendar = () => {}, onOpenCalendarEvent = () => {}, onAddCalendarEvent = () => {}, onScheduleCalendar = () => {}, onOpenWeeklyCleanup, onOpenReports, onTaskAction = () => true, onBulkTaskAction = null, onWorkspaceEvent = () => true }) {
-  const [activeFilter, setActiveFilter] = useState("Do Now");
+  const [activeFilter, setActiveFilter] = useState("Mine");
   const [actionTaskId, setActionTaskId] = useState("");
   const [focusMode, setFocusMode] = useState(false);
   const [focusStartedAt, setFocusStartedAt] = useState("");
@@ -412,6 +413,11 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
   const [bulkReview, setBulkReview] = useState(null);
   const [bulkProcessing, setBulkProcessing] = useState(false);
   const [bulkResult, setBulkResult] = useState(null);
+  const [bulkSelectionMode, setBulkSelectionMode] = useState(false);
+  const [categoryFiltersOpen, setCategoryFiltersOpen] = useState(() => Boolean(actionCenterNavigation?.present));
+  const [scheduleExpanded, setScheduleExpanded] = useState(false);
+  const [pipelineExpanded, setPipelineExpanded] = useState(false);
+  const [handoffExpanded, setHandoffExpanded] = useState(false);
   const actionCenterFilterRefs = useRef([]);
   const workQueueFilterRefs = useRef([]);
   const actionCenterReviewButtonRefs = useRef(new Map());
@@ -429,6 +435,8 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
     if (!actionCenterNavigation?.present) return;
     if (!actionCenterNavigation.valid) {
       setActionCenterFilter(ACTION_CENTER_CATEGORIES.all);
+      setActiveFilter("All Categories");
+      setCategoryFiltersOpen(true);
       setActionCenterDetailId("");
       setActionCenterCommunicationPreviewId("");
       setActionCenterCommunicationActionReview(null);
@@ -436,6 +444,8 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
       return;
     }
     setActionCenterFilter(actionCenterNavigation.filter);
+    setActiveFilter("All Categories");
+    setCategoryFiltersOpen(true);
     setActionCenterDetailId(actionCenterNavigation.itemId);
     setActionCenterCommunicationPreviewId("");
     setActionCenterCommunicationActionReview(null);
@@ -677,9 +687,11 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
     else if (item.destination.type === "calendar" && typeof onOpenCalendarEvent === "function") onOpenCalendarEvent(item.destination.id);
     else if (item.destination.type === "reporting" && typeof onOpenWeeklyCleanup === "function") onOpenWeeklyCleanup(item);
   };
-  const filteredTasks = useMemo(() => activeFilter === "Urgent"
-    ? model.tasks.filter((task) => task.isOverdue || ["High", "Critical"].includes(task.riskLevel))
-    : model.tasks.filter((task) => task.filters.includes(activeFilter)), [model.tasks, activeFilter]);
+  const filteredTasks = useMemo(() => {
+    if (PRIMARY_WORK_FILTERS.includes(activeFilter)) return filterWorkPageTasks(model.tasks, activeFilter, actionCenterNow);
+    if (activeFilter === "Urgent") return model.tasks.filter((task) => task.isOverdue || ["High", "Critical"].includes(task.riskLevel));
+    return model.tasks.filter((task) => task.filters.includes(activeFilter));
+  }, [model.tasks, activeFilter, actionCenterNow]);
   const workQueuePagination = useMemo(() => paginateRecruiterQueue(filteredTasks, workQueuePage), [filteredTasks, workQueuePage]);
   useEffect(() => {
     const eligibleIds = new Set(model.tasks.filter((task) => task.sourceType === "candidate").map((task) => task.id));
@@ -688,7 +700,15 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
   useEffect(() => {
     if (workQueuePagination.page !== workQueuePage) setWorkQueuePage(workQueuePagination.page);
   }, [workQueuePagination.page, workQueuePage]);
-  const taskCount = (filter) => model.tasks.filter((task) => task.filters.includes(filter)).length;
+  const workPagePresentation = useMemo(() => buildWorkPagePresentation({
+    tasks: model.tasks,
+    actionCenterCount: actionCenter.counts[ACTION_CENTER_CATEGORIES.all],
+    reportReadiness: model.reportReadiness.percent,
+    now: actionCenterNow,
+  }), [model.tasks, actionCenter.counts, model.reportReadiness.percent, actionCenterNow]);
+  const taskCount = (filter) => PRIMARY_WORK_FILTERS.includes(filter)
+    ? workPagePresentation.counts[filter]
+    : model.tasks.filter((task) => task.filters.includes(filter)).length;
   const setQueueFilter = (filter) => {
     setActiveFilter(filter);
     setWorkQueuePage(1);
@@ -696,6 +716,8 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
     setSelectedBulkTaskIds([]);
     setBulkReview(null);
     setBulkResult(null);
+    setBulkSelectionMode(false);
+    if (filter === "All Categories") setCategoryFiltersOpen(true);
   };
   const changeActionCenterPage = (page) => {
     setActionCenterPage(page);
@@ -756,13 +778,6 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
       setBulkProcessing(false);
     }
   };
-  const planItems = [
-    { label: "Rescue candidates at risk", value: model.plan.rescue, detail: "High or critical risk", tone: model.plan.rescue ? "High" : "Low", filter: "Candidate Rescue" },
-    { label: "Follow up on overdue decisions", value: model.plan.overdueDecisions, detail: "Waiting on another owner", tone: model.plan.overdueDecisions ? "Medium" : "Low", filter: "Waiting on Others" },
-    { label: "Complete submissions", value: model.plan.submissions, detail: "Recruiter-owned next steps", tone: model.plan.submissions ? "Medium" : "Low", filter: "Do Now" },
-    { label: "Check in on new hires", value: model.plan.newHireCheckIns, detail: "Offer and onboarding care", tone: model.plan.newHireCheckIns ? "Medium" : "Low", filter: "Onboarding" },
-    { label: "Protect recruiting time", value: `${model.plan.focusMinutes}m`, detail: model.focusTask ? "Priority requisition identified" : "No sourcing gap detected", tone: model.focusTask ? "Medium" : "Low", filter: "Recruiting Needed" },
-  ];
   const healthLabels = {
     candidateFollowUp: "Candidate Follow-Up",
     hiringManagerResponse: "Hiring Manager Response",
@@ -793,7 +808,7 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
   return (
     <div style={{ display: "grid", gap: 14 }}>
       <header style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <div><h1 style={{ margin: 0, color: theme.text, fontSize: 24, fontWeight: 950 }}>⚡ Recruiter Workspace</h1><p style={{ margin: "4px 0 0", color: theme.muted, fontSize: 12 }}>{focusMode ? "Focus Mode keeps the priority requisition and essential work visible." : "Your command center for today’s recruiting priorities"}</p></div>
+        <div><h1 style={{ margin: 0, color: theme.text, fontSize: 24, fontWeight: 950 }}>Recruiter Work</h1><p style={{ margin: "4px 0 0", color: theme.muted, fontSize: 12 }}>{focusMode ? "Focus Mode keeps the priority requisition and essential work visible." : "See what needs action, what is scheduled, and where work is waiting."}</p></div>
         <div style={{ display: "flex", gap: 8 }}>
           {focusMode ? <button type="button" onClick={finishFocusSession} style={{ border: 0, borderRadius: 6, background: theme.primary2, color: "#fff", padding: "9px 12px", fontWeight: 850, cursor: "pointer" }}>Finish Focus Session</button> : <button type="button" onClick={() => setWrapUpOpen(true)} style={{ border: `1px solid ${theme.primary2}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "9px 12px", fontWeight: 850, cursor: "pointer" }}>Wrap Up My Day</button>}
           {focusMode ? <button type="button" onClick={() => { setFocusStartedAt(""); setFocusMode(false); }} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panel, color: theme.text, padding: "9px 12px", fontWeight: 850, cursor: "pointer" }}>Exit Without Completing</button> : null}
@@ -801,26 +816,37 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
         </div>
       </header>
 
-      <div style={{ display: "grid", gridTemplateColumns: focusMode || isMedium ? "1fr" : "minmax(0, 1fr) 280px", gap: 14, alignItems: "start" }}>
-        <main style={{ display: "grid", gap: 14 }}>
-          {!focusMode ? <WorkspaceCard theme={theme} title="Today’s Plan" subtitle={`Good morning, ${recruiterName}. A focused plan based on current workflow records.`}>
-            <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "repeat(2, minmax(0, 1fr))" : "repeat(5, minmax(0, 1fr))", gap: 8 }}>
-              {planItems.map((item) => <CountButton key={item.label} {...item} onClick={() => setQueueFilter(item.filter)} theme={theme} />)}
-            </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
-              <button type="button" onClick={() => setQueueFilter("Do Now")} style={{ border: 0, borderRadius: 6, background: theme.primary2, color: "#fff", padding: "9px 14px", fontWeight: 900, cursor: "pointer" }}>Start My Day</button>
-              <button type="button" onClick={() => setQueueFilter("Waiting on Others")} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panel, color: theme.text, padding: "9px 14px", fontWeight: 900, cursor: "pointer" }}>Review Waiting Items</button>
-            </div>
-          </WorkspaceCard> : null}
+      {!focusMode ? <section aria-label="Work page overview" style={{ display: "grid", gridTemplateColumns: isNarrow ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))", gap: 8 }}>
+        <CountButton label="Needs Action" value={workPagePresentation.counts.Mine} detail="Recruiter-owned work" tone={workPagePresentation.counts["At Risk"] ? "Medium" : "Low"} onClick={() => setQueueFilter("Mine")} theme={theme} />
+        <CountButton label="Today & Scheduled" value={workPagePresentation.counts.Scheduled} detail={`${workPagePresentation.counts["Due Today"]} due today`} tone={workPagePresentation.counts["Due Today"] ? "Medium" : "Low"} onClick={() => { setQueueFilter("Scheduled"); setScheduleExpanded(true); }} theme={theme} />
+        <CountButton label="Pipeline Health" value={workPagePresentation.activeCandidateWork} detail={`${workPagePresentation.slaExceptions} SLA exceptions`} tone={workPagePresentation.slaExceptions ? "Medium" : "Low"} onClick={() => setPipelineExpanded(true)} theme={theme} />
+        <CountButton label="Handoff Awareness" value={workPagePresentation.handoffs} detail={`${workPagePresentation.stalledHandoffs} stalled or at risk`} tone={workPagePresentation.stalledHandoffs ? "High" : "Low"} onClick={() => { setQueueFilter("Waiting on Others"); setHandoffExpanded(true); }} theme={theme} />
+      </section> : null}
 
-          {model.focusTask ? <WorkspaceCard theme={theme} title={focusMode ? "Recruiting Focus Session" : "Recruiting Focus"} subtitle="The current highest-priority requisition based on openings, candidate coverage, and days without submissions.">
+      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 14, alignItems: "start" }}>
+        <main style={{ display: "grid", gap: 14 }}>
+          {focusMode && model.focusTask ? <WorkspaceCard theme={theme} title="Recruiting Focus Session" subtitle="The current highest-priority requisition based on openings, candidate coverage, and days without submissions.">
             <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "1.4fr repeat(3, minmax(90px, 0.7fr)) auto", gap: 10, alignItems: "center" }}><div><strong style={{ display: "block" }}>{model.focusTask.position}</strong><span style={{ color: theme.muted, fontSize: 12 }}>{model.focusTask.facilityName}</span><span style={{ display: "block", color: theme.red, fontSize: 11, marginTop: 4 }}>{model.focusTask.riskReason}</span><span style={{ display: "block", color: theme.muted, fontSize: 10, marginTop: 4 }}>Priority {model.focusTask.priorityScore}: {model.focusTask.priorityReasons.join(" · ")}</span></div><div><strong>{model.focusTask.openings}</strong><span style={{ display: "block", color: theme.muted, fontSize: 11 }}>Openings</span></div><div><strong>{model.focusTask.activeCandidateCount}</strong><span style={{ display: "block", color: theme.muted, fontSize: 11 }}>Active candidates</span></div><div><strong>{model.focusTask.daysWaiting ?? "—"}</strong><span style={{ display: "block", color: theme.muted, fontSize: 11 }}>Days without submission</span></div>{focusMode ? <strong style={{ color: theme.primary2, fontSize: 12 }}>Focus session active</strong> : <button type="button" onClick={startFocusSession} style={{ border: 0, borderRadius: 6, background: theme.primary2, color: "#fff", padding: "9px 12px", fontWeight: 900, cursor: "pointer" }}>Start Focus Session</button>}</div>
             {focusMode ? <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "repeat(4, minmax(0, 1fr))", gap: 8, marginTop: 12 }}>{[["Shift", model.focusTask.shift || "Not listed"], ["Employment", model.focusTask.employmentType || "Not listed"], ["Schedule", model.focusTask.schedule || "Not listed"], ["Credentials / Pay", [model.focusTask.requiredCredentials, model.focusTask.pay].filter(Boolean).join(" · ") || "Review requisition"]].map(([label, value]) => <div key={label} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: 9, background: theme.panelAlt }}><span style={{ color: theme.muted, fontSize: 10, fontWeight: 900 }}>{label}</span><strong style={{ display: "block", fontSize: 12, marginTop: 3 }}>{value}</strong></div>)}</div> : null}
           </WorkspaceCard> : null}
 
-          <WorkspaceCard theme={theme} title="Recruiter Action Center" subtitle="Canonical priorities and operational work are consolidated here without changing their source logic or counts.">
+          <WorkspaceCard theme={theme} title="Needs Action" subtitle={`Good morning, ${recruiterName}. Recruiter-owned work is primary; every canonical category remains available.`}>
             {!focusMode ? <>
-              <h3 style={{ margin: "0 0 8px", color: theme.text, fontSize: 13 }}>Priority review</h3>
+              {model.focusTask ? <details style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 8, padding: 10, marginBottom: 14, background: theme.panelAlt }}>
+                <summary style={{ color: theme.primary2, fontSize: 12, fontWeight: 900, cursor: "pointer" }}>View recruiting focus: {model.focusTask.position}</summary>
+                <p style={{ margin: "7px 0 10px", color: theme.muted, fontSize: 11 }}>The highest-priority requisition based on openings, candidate coverage, and days without submissions.</p>
+                <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "1.4fr repeat(3, minmax(90px, 0.7fr)) auto", gap: 10, alignItems: "center" }}><div><strong style={{ display: "block" }}>{model.focusTask.position}</strong><span style={{ color: theme.muted, fontSize: 12 }}>{model.focusTask.facilityName}</span><span style={{ display: "block", color: theme.red, fontSize: 11, marginTop: 4 }}>{model.focusTask.riskReason}</span><span style={{ display: "block", color: theme.muted, fontSize: 10, marginTop: 4 }}>Priority {model.focusTask.priorityScore}: {model.focusTask.priorityReasons.join(" · ")}</span></div><div><strong>{model.focusTask.openings}</strong><span style={{ display: "block", color: theme.muted, fontSize: 11 }}>Openings</span></div><div><strong>{model.focusTask.activeCandidateCount}</strong><span style={{ display: "block", color: theme.muted, fontSize: 11 }}>Active candidates</span></div><div><strong>{model.focusTask.daysWaiting ?? "—"}</strong><span style={{ display: "block", color: theme.muted, fontSize: 11 }}>Days without submission</span></div><button type="button" onClick={startFocusSession} style={{ border: 0, borderRadius: 6, background: theme.primary2, color: "#fff", padding: "9px 12px", fontWeight: 900, cursor: "pointer" }}>Start Focus Session</button></div>
+              </details> : null}
+              <h3 style={{ margin: "0 0 4px", color: theme.text, fontSize: 13 }}>Recruiter Action Center</h3>
+              <p style={{ margin: "0 0 10px", color: theme.muted, fontSize: 11 }}>Start with the work lens that matches your day. Canonical records and counts are unchanged.</p>
+              <div role="tablist" aria-label="Primary work filters" style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 10 }}>
+                {PRIMARY_WORK_FILTERS.map((filter) => <button key={filter} id={`primary-work-filter-${filter.toLowerCase().replace(/\s+/g, "-")}`} type="button" role="tab" aria-selected={activeFilter === filter} aria-controls={filter === "All Categories" ? "action-center-items-panel" : "work-queue-items-panel"} onClick={() => setQueueFilter(filter)} style={{ border: `1px solid ${activeFilter === filter ? theme.primary2 : theme.borderSoft}`, borderRadius: 999, background: activeFilter === filter ? theme.primary2 : theme.panelAlt, color: activeFilter === filter ? "#fff" : theme.text, padding: "7px 11px", fontWeight: 850, cursor: "pointer" }}>{filter} <span aria-label={`${taskCount(filter)} items`}>{taskCount(filter)}</span></button>)}
+              </div>
+              <button type="button" aria-expanded={categoryFiltersOpen} aria-controls="canonical-category-controls" onClick={() => { if (categoryFiltersOpen) { setCategoryFiltersOpen(false); setQueueFilter("Mine"); } else { setCategoryFiltersOpen(true); setQueueFilter("All Categories"); } }} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "7px 10px", fontWeight: 900, cursor: "pointer", marginBottom: categoryFiltersOpen ? 10 : 0 }}>{categoryFiltersOpen ? "Hide category filters" : "View all categories"}</button>
+            </> : null}
+
+            {!focusMode && categoryFiltersOpen ? <section id="canonical-category-controls" aria-label="All Action Center categories" style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 8, padding: 10, marginTop: 10, background: theme.panelAlt }}>
+              <h4 style={{ margin: "0 0 8px", color: theme.text, fontSize: 12 }}>All categories</h4>
               <div role="tablist" aria-label="Action Center filters" style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 12 }}>
                 {ACTION_CENTER_FILTERS.map((filter, index) => <button key={filter} ref={(node) => { actionCenterFilterRefs.current[index] = node; }} id={`action-center-filter-${index}`} type="button" role="tab" aria-selected={actionCenterFilter === filter} aria-controls="action-center-items-panel" tabIndex={actionCenterFilter === filter ? 0 : -1} onKeyDown={(event) => moveTabSelection(event, ACTION_CENTER_FILTERS, filter, actionCenterFilterRefs, selectActionCenterFilter)} onClick={() => selectActionCenterFilter(filter)} style={{ border: `1px solid ${actionCenterFilter === filter ? theme.primary2 : theme.borderSoft}`, borderRadius: 6, background: actionCenterFilter === filter ? theme.primary2 : theme.panelAlt, color: actionCenterFilter === filter ? "#fff" : theme.text, padding: "7px 10px", fontWeight: 850, cursor: "pointer" }}>{filter} <span aria-label={`${actionCenter.counts[filter]} items`}>{actionCenter.counts[filter]}</span></button>)}
               </div>
@@ -843,19 +869,22 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
                 onCancelAction={cancelActionCenterCommunicationAction}
                 onConfirmAction={confirmActionCenterCommunicationAction}
               /> : null}
-            </> : null}
+            </section> : null}
 
             <section aria-labelledby="operational-work-heading" style={{ borderTop: focusMode ? 0 : `1px solid ${theme.borderSoft}`, marginTop: focusMode ? 0 : 16, paddingTop: focusMode ? 0 : 16 }}>
               <h3 id="operational-work-heading" style={{ margin: "0 0 4px", color: theme.text, fontSize: 13 }}>Operational work</h3>
-              <p style={{ margin: "0 0 10px", color: theme.muted, fontSize: 11 }}>The former My Work Queue is now part of the Action Center. Existing task actions and canonical filter counts are preserved.</p>
-            <div role="tablist" aria-label="Work queue filters" style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 12 }}>
-              {FILTERS.map((filter, index) => <button key={filter} ref={(node) => { workQueueFilterRefs.current[index] = node; }} id={`work-queue-filter-${index}`} type="button" role="tab" aria-selected={activeFilter === filter} aria-controls="work-queue-items-panel" tabIndex={activeFilter === filter ? 0 : -1} onKeyDown={(event) => moveTabSelection(event, FILTERS, filter, workQueueFilterRefs, setQueueFilter)} onClick={() => setQueueFilter(filter)} style={{ border: `1px solid ${activeFilter === filter ? theme.primary2 : theme.borderSoft}`, borderRadius: 6, background: activeFilter === filter ? theme.primary2 : theme.panelAlt, color: activeFilter === filter ? "#fff" : theme.text, padding: "7px 10px", fontWeight: 850, cursor: "pointer" }}>{filter} <span aria-label={`${taskCount(filter)} items`}>{taskCount(filter)}</span></button>)}
-            </div>
-            <section aria-label="Safe bulk actions" style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 8, padding: 10, marginBottom: 12, background: theme.panelAlt }}>
+              <p style={{ margin: "0 0 10px", color: theme.muted, fontSize: 11 }}>Showing {activeFilter.toLowerCase()} work from the existing operational queue. Nothing was removed or reclassified.</p>
+            <details style={{ marginBottom: 12 }}>
+              <summary style={{ color: theme.primary2, fontSize: 11, fontWeight: 900, cursor: "pointer" }}>More queue filters</summary>
+              <div role="tablist" aria-label="Work queue filters" style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 8 }}>
+                {FILTERS.map((filter, index) => <button key={filter} ref={(node) => { workQueueFilterRefs.current[index] = node; }} id={`work-queue-filter-${index}`} type="button" role="tab" aria-selected={activeFilter === filter} aria-controls="work-queue-items-panel" tabIndex={activeFilter === filter ? 0 : -1} onKeyDown={(event) => moveTabSelection(event, FILTERS, filter, workQueueFilterRefs, setQueueFilter)} onClick={() => setQueueFilter(filter)} style={{ border: `1px solid ${activeFilter === filter ? theme.primary2 : theme.borderSoft}`, borderRadius: 6, background: activeFilter === filter ? theme.primary2 : theme.panelAlt, color: activeFilter === filter ? "#fff" : theme.text, padding: "7px 10px", fontWeight: 850, cursor: "pointer" }}>{filter} <span aria-label={`${taskCount(filter)} items`}>{taskCount(filter)}</span></button>)}
+              </div>
+            </details>
+            {!bulkSelectionMode ? <button type="button" onClick={() => setBulkSelectionMode(true)} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: "7px 10px", marginBottom: 12, background: theme.panel, color: theme.primary2, fontWeight: 900, cursor: "pointer" }}>Select multiple</button> : <section aria-label="Safe bulk actions" style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 8, padding: 10, marginBottom: 12, background: theme.panelAlt }}>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <strong style={{ fontSize: 12 }}>{selectedBulkTaskIds.length} selected</strong>
                 <button type="button" onClick={selectCurrentBulkPage} disabled={!workQueuePagination.items.some((task) => task.sourceType === "candidate")} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: "6px 9px", background: theme.panel, color: theme.text }}>Select current page</button>
-                <button type="button" onClick={() => { setSelectedBulkTaskIds([]); setBulkReview(null); setBulkResult(null); }} disabled={!selectedBulkTaskIds.length} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: "6px 9px", background: theme.panel, color: theme.text }}>Clear selection</button>
+                <button type="button" onClick={() => { setSelectedBulkTaskIds([]); setBulkReview(null); setBulkResult(null); setBulkSelectionMode(false); }} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: "6px 9px", background: theme.panel, color: theme.text }}>Exit selection mode</button>
                 <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 11, fontWeight: 800 }}>Internal action<select value={bulkAction} onChange={(event) => { setBulkAction(event.target.value); setBulkReview(null); setBulkResult(null); }} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: 6, background: theme.panel, color: theme.text }}>
                   <option value={WORKSPACE_TASK_ACTIONS.SNOOZE}>Snooze 1 day</option>
                   <option value={WORKSPACE_TASK_ACTIONS.REASSIGN}>Change owner</option>
@@ -866,11 +895,11 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
                 <button ref={bulkActionTriggerRef} type="button" onClick={previewBulkAction} disabled={!selectedBulkTaskIds.length || typeof onBulkTaskAction !== "function"} style={{ border: 0, borderRadius: 6, padding: "7px 10px", background: theme.primary2, color: "#fff", fontWeight: 900, opacity: selectedBulkTaskIds.length && typeof onBulkTaskAction === "function" ? 1 : 0.55 }}>Preview affected records</button>
               </div>
               <p style={{ margin: "7px 0 0", color: theme.muted, fontSize: 10 }}>Limited to {WORKSPACE_BULK_ACTION_LIMIT} exact candidate/requisition tasks. Every record is revalidated after confirmation. No communication is sent and no Paycom integration is used.</p>
-            </section>
+            </section>}
             {bulkResult ? <WorkspaceBulkActionResult result={bulkResult} theme={theme} onClose={() => setBulkResult(null)} /> : null}
             {activeFilter === "Urgent" ? <div style={{ color: theme.primary2, fontSize: 12, fontWeight: 900, marginBottom: 10 }}>Showing: Urgent Actions</div> : null}
-            <div id="work-queue-items-panel" role="tabpanel" aria-labelledby={`work-queue-filter-${workQueueFilterIndex}`} aria-label={`${activeFilter} work queue items`} tabIndex={0} style={{ display: "grid", gap: 8 }}>
-              {workQueuePagination.items.length ? workQueuePagination.items.map((task) => <QueueRow key={task.id} task={task} theme={theme} narrow={isNarrow} selected={selectedBulkTaskIds.includes(task.id)} onToggleSelection={toggleBulkTask} onOpenCandidate={onOpenCandidate} onOpenRequisition={onOpenRequisition} onOpenCalendarEvent={onOpenCalendarEvent} onOpenActions={(selectedTask) => setActionTaskId(selectedTask.id)} />) : <EmptyQueue filter={activeFilter} waitingCount={model.snapshot.waiting} focusTask={model.focusTask} theme={theme} />}
+            <div id="work-queue-items-panel" role="tabpanel" aria-labelledby={PRIMARY_WORK_FILTERS.includes(activeFilter) ? `primary-work-filter-${activeFilter.toLowerCase().replace(/\s+/g, "-")}` : `work-queue-filter-${workQueueFilterIndex}`} aria-label={`${activeFilter} work queue items`} tabIndex={0} style={{ display: "grid", gap: 8 }}>
+              {workQueuePagination.items.length ? workQueuePagination.items.map((task) => <QueueRow key={task.id} task={task} theme={theme} narrow={isNarrow} selectionMode={bulkSelectionMode} selected={selectedBulkTaskIds.includes(task.id)} onToggleSelection={toggleBulkTask} onOpenCandidate={onOpenCandidate} onOpenRequisition={onOpenRequisition} onOpenCalendarEvent={onOpenCalendarEvent} onOpenActions={(selectedTask) => setActionTaskId(selectedTask.id)} />) : <EmptyQueue filter={activeFilter} waitingCount={model.snapshot.waiting} focusTask={model.focusTask} theme={theme} />}
               {actionTask ? <WorkspaceTaskActionPanel task={actionTask} theme={theme} onClose={() => setActionTaskId("")} onApply={onTaskAction} onScheduleCalendar={onScheduleCalendar} /> : null}
             </div>
               <QueuePagination pagination={workQueuePagination} label="operational work" onPageChange={changeWorkQueuePage} theme={theme} />
@@ -878,51 +907,39 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
             {bulkReview ? <WorkspaceBulkActionReview review={bulkReview} processing={bulkProcessing} theme={theme} onCancel={() => { setBulkReview(null); setBulkResult({ cancelled: true, succeeded: 0, failed: 0, results: [{ taskId: "cancelled", candidateName: "Bulk action", requisitionId: "", ok: false, message: "Cancelled. No records changed." }] }); }} onConfirm={confirmBulkAction} /> : null}
           </WorkspaceCard>
 
-          {!focusMode ? <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "repeat(3, minmax(0, 1fr))", gap: 10 }}>
-            <WorkspaceCard theme={theme} title="Candidate Rescue" subtitle="Candidates with confirmed high or critical disengagement signals."><strong style={{ color: model.snapshot.risks ? theme.red : theme.green, fontSize: 26 }}>{model.snapshot.risks}</strong><button type="button" onClick={() => setQueueFilter("Candidate Rescue")} style={{ display: "block", marginTop: 8, border: 0, background: "transparent", color: theme.primary2, fontWeight: 900, cursor: "pointer", padding: 0 }}>Review rescue items →</button></WorkspaceCard>
-            <WorkspaceCard theme={theme} title="Waiting on Others" subtitle="The next step is owned outside recruiting."><strong style={{ color: model.snapshot.waiting ? theme.amber : theme.green, fontSize: 26 }}>{model.snapshot.waiting}</strong><button type="button" onClick={() => setQueueFilter("Waiting on Others")} style={{ display: "block", marginTop: 8, border: 0, background: "transparent", color: theme.primary2, fontWeight: 900, cursor: "pointer", padding: 0 }}>Review blocked work →</button></WorkspaceCard>
-            <WorkspaceCard theme={theme} title="New Hire Watch" subtitle="Offers, background, credentialing, orientation, and liaison-owned steps."><strong style={{ color: model.snapshot.newHires ? theme.amber : theme.green, fontSize: 26 }}>{model.snapshot.newHires}</strong><button type="button" onClick={() => setQueueFilter("Onboarding")} style={{ display: "block", marginTop: 8, border: 0, background: "transparent", color: theme.primary2, fontWeight: 900, cursor: "pointer", padding: 0 }}>Review new hires →</button></WorkspaceCard>
-          </div> : null}
-
-          {!focusMode ? <WorkspaceCard theme={theme} title="Weekly Report Readiness" subtitle="Derived from the same current candidate, requisition, ownership, and facility records used by the work queue." action={<button type="button" onClick={onOpenWeeklyCleanup} style={{ border: `1px solid ${theme.primary2}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "7px 10px", fontWeight: 900, cursor: "pointer" }}>Open Weekly Cleanup</button>}>
-            <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "140px 1fr", gap: 14, alignItems: "center" }}>
-              <div><strong style={{ display: "block", fontSize: 32, color: healthColor(model.health.reportingReadiness.status, theme) }}>{model.reportReadiness.percent == null ? "—" : `${model.reportReadiness.percent}%`}</strong><span style={{ color: theme.muted, fontSize: 11 }}>{model.reportReadiness.autoComplete} checks complete · {model.reportReadiness.requiresReview} need review</span></div>
-              <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "repeat(2, minmax(0, 1fr))", gap: 5, color: theme.muted, fontSize: 12 }}>
-                {[["Missing notes", model.reportReadiness.missingNotes], ["Missing risk explanations", model.reportReadiness.missingRiskExplanations], ["Missing start dates", model.reportReadiness.missingStartDates], ["Facility conflicts", model.reportReadiness.facilityIssues], ["Requisition issues", model.reportReadiness.requisitionIssues], ["Unresolved ownership", model.reportReadiness.unresolvedOwnership], ["Unclassified outcomes", model.reportReadiness.unclassifiedOutcomes], ["Calendar outcomes", model.reportReadiness.calendarEventsMissingOutcomes]].map(([label, count]) => <span key={label}>{label}: <strong style={{ color: count ? theme.amber : theme.green }}>{count}</strong></span>)}
-              </div>
+          {!focusMode ? <WorkspaceCard theme={theme} title="Today & Scheduled" subtitle="Date-bound recruiter activity stays visible without crowding the action queue." action={<button type="button" onClick={onOpenCalendar} style={{ border: `1px solid ${theme.primary2}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "7px 10px", fontWeight: 900, cursor: "pointer" }}>Open Calendar</button>}>
+            <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "repeat(2, minmax(0, 1fr))" : "repeat(3, minmax(0, 1fr))", gap: 8 }}>
+              {[["Due today", workPagePresentation.counts["Due Today"]], ["Scheduled", workPagePresentation.counts.Scheduled], ["Missing outcomes", model.reportReadiness.calendarEventsMissingOutcomes]].map(([label, value]) => <div key={label} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 7, padding: 10, background: theme.panelAlt }}><strong style={{ display: "block", color: theme.primary2, fontSize: 20 }}>{value}</strong><span style={{ color: theme.muted, fontSize: 11 }}>{label}</span></div>)}
             </div>
-            <button type="button" onClick={() => setReadinessExpanded((value) => !value)} style={{ marginTop: 12, border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panelAlt, color: theme.primary2, padding: "7px 10px", fontWeight: 900, cursor: "pointer" }}>{readinessExpanded ? "Hide Missing Items" : "Review Missing Items"}</button>
-            {readinessExpanded ? <div role="region" aria-label="Weekly report readiness issues" style={{ display: "grid", gap: 6, marginTop: 10 }}>
-              {model.reportReadiness.issues.length ? model.reportReadiness.issues.slice(0, 12).map((issue, index) => <div key={`${issue.code}:${issue.sourceId}:${index}`} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: 8, background: theme.panelAlt, display: "flex", justifyContent: "space-between", gap: 10, fontSize: 11 }}><span><strong>{issue.label}</strong><span style={{ display: "block", color: theme.muted }}>{issue.sourceType} · {issue.code}</span></span><span style={{ color: theme.primary2, fontWeight: 850 }}>{issue.fixLocation}</span></div>) : <div style={{ color: theme.green, fontWeight: 850 }}>No report-readiness gaps were found.</div>}
-              {model.reportReadiness.issues.length > 12 ? <span style={{ color: theme.muted, fontSize: 11 }}>Showing 12 of {model.reportReadiness.issues.length} items. Open Weekly Cleanup for the full review.</span> : null}
+            <button type="button" aria-expanded={scheduleExpanded} onClick={() => setScheduleExpanded((value) => !value)} style={{ marginTop: 10, border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "7px 10px", fontWeight: 900, cursor: "pointer" }}>{scheduleExpanded ? "Hide schedule details" : "View schedule details"}</button>
+            {scheduleExpanded ? <div style={{ marginTop: 10 }}><HomeCalendarWidget events={calendarEvents} theme={theme} onAddEvent={onAddCalendarEvent} onOpenCalendar={onOpenCalendar} onOpenEvent={(event) => onOpenCalendarEvent(event.id)} /></div> : null}
+          </WorkspaceCard> : null}
+
+          {!focusMode ? <WorkspaceCard theme={theme} title="Pipeline Health" subtitle="Compact signals only. Detailed readiness and health remain one step deeper." action={<button type="button" onClick={onOpenReports} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panel, color: theme.text, padding: "7px 10px", fontWeight: 900, cursor: "pointer" }}>Open Reports</button>}>
+            <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))", gap: 8 }}>
+              {[["Active candidate work", workPagePresentation.activeCandidateWork], ["At-risk records", workPagePresentation.counts["At Risk"]], ["SLA exceptions", workPagePresentation.slaExceptions], ["Report ready", model.snapshot.reportReady == null ? "—" : `${model.snapshot.reportReady}%`]].map(([label, value]) => <div key={label} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 7, padding: 10, background: theme.panelAlt }}><strong style={{ display: "block", color: theme.primary2, fontSize: 20 }}>{value}</strong><span style={{ color: theme.muted, fontSize: 11 }}>{label}</span></div>)}
+            </div>
+            <button type="button" aria-expanded={pipelineExpanded} onClick={() => setPipelineExpanded((value) => !value)} style={{ marginTop: 10, border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "7px 10px", fontWeight: 900, cursor: "pointer" }}>{pipelineExpanded ? "Hide health details" : "View health details"}</button>
+            {pipelineExpanded ? <div role="region" aria-label="Pipeline health details" style={{ display: "grid", gap: 12, marginTop: 12 }}>
+              <section aria-label="Honest Status" style={{ display: "grid", gap: 10 }}>
+                {Object.entries(model.health).map(([key, health]) => { const color = healthColor(health.status, theme); return <div key={key}><div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12 }}><strong>{healthLabels[key]}</strong><span style={{ color, fontWeight: 900 }}>{health.status}</span></div><div style={{ height: 4, borderRadius: 999, background: theme.panelAlt, overflow: "hidden", marginTop: 6 }}><span style={{ display: "block", width: `${health.percent == null ? 0 : health.percent}%`, height: "100%", background: color }} /></div>{health.percent == null ? <span style={{ color: theme.muted, fontSize: 10 }}>No applicable records</span> : null}</div>; })}
+              </section>
+              <section aria-label="Weekly Report Readiness" style={{ borderTop: `1px solid ${theme.borderSoft}`, paddingTop: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}><div><strong>Weekly Report Readiness</strong><span style={{ display: "block", color: theme.muted, fontSize: 11 }}>{model.reportReadiness.autoComplete} checks complete · {model.reportReadiness.requiresReview} need review</span></div><button type="button" onClick={onOpenWeeklyCleanup} style={{ border: `1px solid ${theme.primary2}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "7px 10px", fontWeight: 900, cursor: "pointer" }}>Open Weekly Cleanup</button></div>
+                <button type="button" onClick={() => setReadinessExpanded((value) => !value)} style={{ marginTop: 10, border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panelAlt, color: theme.primary2, padding: "7px 10px", fontWeight: 900, cursor: "pointer" }}>{readinessExpanded ? "Hide Missing Items" : "Review Missing Items"}</button>
+                {readinessExpanded ? <div role="region" aria-label="Weekly report readiness issues" style={{ display: "grid", gap: 6, marginTop: 10 }}>{model.reportReadiness.issues.length ? model.reportReadiness.issues.slice(0, 12).map((issue, index) => <div key={`${issue.code}:${issue.sourceId}:${index}`} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: 8, background: theme.panelAlt, display: "flex", justifyContent: "space-between", gap: 10, fontSize: 11 }}><span><strong>{issue.label}</strong><span style={{ display: "block", color: theme.muted }}>{issue.sourceType} · {issue.code}</span></span><span style={{ color: theme.primary2, fontWeight: 850 }}>{issue.fixLocation}</span></div>) : <div style={{ color: theme.green, fontWeight: 850 }}>No report-readiness gaps were found.</div>}</div> : null}
+              </section>
             </div> : null}
           </WorkspaceCard> : null}
+
+          {!focusMode ? <WorkspaceCard theme={theme} title="Handoff Awareness" subtitle="Manager, HR, onboarding, credentialing, candidate, and partner-owned work. Healthy handoffs stay compact.">
+            <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))", gap: 8 }}>
+              {[["Waiting on others", workPagePresentation.handoffs], ["Stalled handoffs", workPagePresentation.stalledHandoffs], ["Offer activity", taskCount("Offers")], ["Onboarding activity", taskCount("Onboarding")]].map(([label, value]) => <div key={label} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 7, padding: 10, background: theme.panelAlt }}><strong style={{ display: "block", color: value ? theme.amber : theme.green, fontSize: 20 }}>{value}</strong><span style={{ color: theme.muted, fontSize: 11 }}>{label}</span></div>)}
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}><button type="button" onClick={() => setQueueFilter("Waiting on Others")} style={{ border: 0, borderRadius: 6, background: theme.primary2, color: "#fff", padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>Review handoff exceptions</button><button type="button" aria-expanded={handoffExpanded} onClick={() => setHandoffExpanded((value) => !value)} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "8px 11px", fontWeight: 900, cursor: "pointer" }}>{handoffExpanded ? "Hide handoff detail" : "View handoff detail"}</button></div>
+            {handoffExpanded ? <div role="region" aria-label="Handoff detail" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}><button type="button" onClick={() => setQueueFilter("Offers")} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panelAlt, color: theme.text, padding: "7px 10px", fontWeight: 850 }}>Review Offers</button><button type="button" onClick={() => setQueueFilter("Onboarding")} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panelAlt, color: theme.text, padding: "7px 10px", fontWeight: 850 }}>Review Onboarding</button><span style={{ alignSelf: "center", color: theme.muted, fontSize: 11 }}>Offer and onboarding remain reportable even when another owner controls the next step.</span></div> : null}
+          </WorkspaceCard> : null}
         </main>
-
-        {!focusMode ? <aside style={{ display: "grid", gap: 14 }}>
-          <WorkspaceCard theme={theme} title="Today Snapshot" subtitle="Select a metric to filter the queue.">
-            <div style={{ display: "grid", gap: 7 }}>
-              {[
-                ["Urgent Actions", model.snapshot.urgent, "Urgent"],
-                ["Waiting on Others", model.snapshot.waiting, "Waiting on Others"],
-                ["Candidate Risks", model.snapshot.risks, "Candidate Rescue"],
-                ["New Hire Check-ins", model.snapshot.newHires, "Onboarding"],
-                ["Recruiting Goal", `${model.snapshot.recruitingGoal}%`, "Recruiting Needed"],
-                ["Report Ready", model.snapshot.reportReady == null ? "—" : `${model.snapshot.reportReady}%`, null],
-              ].map(([label, value, filter]) => <button key={label} type="button" onClick={() => filter ? setQueueFilter(filter) : onOpenWeeklyCleanup()} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panelAlt, color: theme.text, padding: 10, display: "flex", justifyContent: "space-between", gap: 10, cursor: "pointer", font: "inherit", textAlign: "left" }}><span style={{ fontWeight: 800 }}>{label}</span><strong style={{ color: theme.primary2 }}>{value}</strong></button>)}
-            </div>
-          </WorkspaceCard>
-
-          <WorkspaceCard theme={theme} title="Honest Status" subtitle="Separate health signals; no combined score.">
-            <div style={{ display: "grid", gap: 12 }}>
-              {Object.entries(model.health).map(([key, health]) => {
-                const color = healthColor(health.status, theme);
-                return <div key={key}><div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12 }}><strong>{healthLabels[key]}</strong><span style={{ color, fontWeight: 900 }}>{health.status}</span></div><div style={{ height: 4, borderRadius: 999, background: theme.panelAlt, overflow: "hidden", marginTop: 6 }}><span style={{ display: "block", width: `${health.percent == null ? 0 : health.percent}%`, height: "100%", background: color }} /></div>{health.percent == null ? <span style={{ color: theme.muted, fontSize: 10 }}>No applicable records</span> : null}</div>;
-              })}
-            </div>
-          </WorkspaceCard>
-          <HomeCalendarWidget events={calendarEvents} theme={theme} onAddEvent={onAddCalendarEvent} onOpenCalendar={onOpenCalendar} onOpenEvent={(event) => onOpenCalendarEvent(event.id)} />
-        </aside> : null}
       </div>
       {wrapUpOpen ? <section role="dialog" aria-modal="false" aria-label="Wrap Up My Day" style={{ border: `2px solid ${theme.primary2}`, borderRadius: 10, padding: 16, background: theme.panel, boxShadow: theme.shadow }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start" }}><div><h2 style={{ margin: 0, color: theme.text, fontSize: 18 }}>Wrap Up My Day</h2><p style={{ margin: "4px 0 0", color: theme.muted, fontSize: 12 }}>A final check that urgent work, outside dependencies, and tomorrow’s follow-ups are visible.</p></div><button type="button" onClick={() => setWrapUpOpen(false)} aria-label="Close Wrap Up My Day" style={{ border: 0, background: "transparent", color: theme.text, fontWeight: 950, cursor: "pointer" }}>×</button></div>

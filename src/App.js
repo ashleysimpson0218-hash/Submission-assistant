@@ -16103,6 +16103,18 @@ function rowifyCandidate(item = {}) {
     setAcceptanceVerifying(false);
   }
 
+  const manualPriorityNoteCard = (
+    <Card compact title="Add Manual Priority Note" subtitle="Catch quick recruiter thoughts and send them to Today's Focus or a future task list.">
+      <div style={{ display: "grid", gap: 10, gridTemplateColumns: queueCompact ? "1fr" : "1.2fr 130px 190px 150px 160px auto", alignItems: "end" }}>
+        <Field label="Manual Priority Note"><TextInput value={queueNoteDraft} onChange={(event) => setQueueNoteDraft(event.target.value)} placeholder="Example: Call candidate today before 2 PM" /></Field>
+        {manualQueueTargetField(true)}
+        <Field label="Urgency Status"><SelectInput value={queueUrgencyDraft} onChange={(event) => setQueueUrgencyDraft(event.target.value)} options={["High", "Medium", "Low"]} /></Field>
+        <Field label="Add Today Or Future"><TextInput type="date" value={queueDueDateDraft} onChange={(event) => setQueueDueDateDraft(event.target.value)} /></Field>
+        <Button primary onClick={addManualQueueItem} disabled={!queueNoteDraft.trim()}>{queueDueDateDraft && queueDueDateDraft > todayIso() ? "Schedule Note" : "Add To Today"}</Button>
+      </div>
+    </Card>
+  );
+
   return (
     <div style={pageStyle}>
       {showLogoIntro ? (
@@ -20475,17 +20487,13 @@ function rowifyCandidate(item = {}) {
         ) : null}
 
         {!["workspace", "account"].includes(activePage) ? (
-          <Card compact title="Add Manual Priority Note" subtitle="Catch quick recruiter thoughts and send them to Today's Focus or a future task list.">
-            <div style={{ display: "grid", gap: 10, gridTemplateColumns: queueCompact ? "1fr" : "1.2fr 130px 190px 150px 160px auto", alignItems: "end" }}>
-              <Field label="Manual Priority Note"><TextInput value={queueNoteDraft} onChange={(event) => setQueueNoteDraft(event.target.value)} placeholder="Example: Call candidate today before 2 PM" /></Field>
-              {manualQueueTargetField(true)}
-              <Field label="Urgency Status"><SelectInput value={queueUrgencyDraft} onChange={(event) => setQueueUrgencyDraft(event.target.value)} options={["High", "Medium", "Low"]} /></Field>
-              <Field label="Add Today Or Future"><TextInput type="date" value={queueDueDateDraft} onChange={(event) => setQueueDueDateDraft(event.target.value)} /></Field>
-              <Button primary onClick={addManualQueueItem} disabled={!queueNoteDraft.trim()}>{queueDueDateDraft && queueDueDateDraft > todayIso() ? "Schedule Note" : "Add To Today"}</Button>
-            </div>
-          </Card>
+          activePage === "home" ? (
+            <details style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 10, background: THEME.panel }}>
+              <summary style={{ color: THEME.primary2, fontSize: 12, fontWeight: 900, cursor: "pointer" }}>Add manual priority note</summary>
+              <div style={{ marginTop: 10 }}>{manualPriorityNoteCard}</div>
+            </details>
+          ) : manualPriorityNoteCard
         ) : null}
-
         {communicationPreviewFlowEnabled && communicationPreviewOpen && communicationPreview ? <CommunicationPreviewModal preview={communicationPreview} outOfDate={communicationPreviewOutOfDate} onClose={() => setCommunicationPreviewOpen(false)} onRefresh={refreshCommunicationPreview} confirmationEnabled={reviewedCandidateReadyConfirmationEnabled} confirmationProcessing={candidateReadyConfirmationProcessing} onConfirm={confirmReviewedCandidateReady} /> : null}
         {candidateReadyConfirmationResult ? <CandidateReadyConfirmationResult record={candidateReadyConfirmationResult} onViewPackage={() => setSavedSubmissionPackage(candidateReadyConfirmationResult.reviewedSubmissionPackage)} onOpenCandidate={() => { setSelectedId(candidateReadyConfirmationResult.id); setCandidateReadyConfirmationResult(null); setTrackerPanelOpen(false); setActivePage("candidates"); }} onReturnWorkspace={() => { setCandidateReadyConfirmationResult(null); setActivePage("home"); }} /> : null}
         {savedSubmissionPackage ? <SavedSubmissionPackageModal packageData={savedSubmissionPackage} onClose={() => setSavedSubmissionPackage(null)} /> : null}
