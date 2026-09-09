@@ -27,6 +27,7 @@ const FILTERS = ["Do Now", "Candidate Rescue", "Waiting on Others", "Offers", "O
 const EMPTY_LIST = Object.freeze([]);
 const EMPTY_RULES = Object.freeze({});
 export const RECRUITER_QUEUE_PAGE_SIZE = 20;
+export const RECRUITER_WORK_INITIAL_ITEM_LIMIT = 5;
 const FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
   "[href]",
@@ -414,6 +415,7 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
   const [bulkProcessing, setBulkProcessing] = useState(false);
   const [bulkResult, setBulkResult] = useState(null);
   const [bulkSelectionMode, setBulkSelectionMode] = useState(false);
+  const [operationalWorkExpanded, setOperationalWorkExpanded] = useState(false);
   const [categoryFiltersOpen, setCategoryFiltersOpen] = useState(() => Boolean(actionCenterNavigation?.present));
   const [scheduleExpanded, setScheduleExpanded] = useState(false);
   const [pipelineExpanded, setPipelineExpanded] = useState(false);
@@ -692,7 +694,11 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
     if (activeFilter === "Urgent") return model.tasks.filter((task) => task.isOverdue || ["High", "Critical"].includes(task.riskLevel));
     return model.tasks.filter((task) => task.filters.includes(activeFilter));
   }, [model.tasks, activeFilter, actionCenterNow]);
-  const workQueuePagination = useMemo(() => paginateRecruiterQueue(filteredTasks, workQueuePage), [filteredTasks, workQueuePage]);
+  const exposedOperationalTasks = useMemo(
+    () => operationalWorkExpanded ? filteredTasks : filteredTasks.slice(0, RECRUITER_WORK_INITIAL_ITEM_LIMIT),
+    [filteredTasks, operationalWorkExpanded],
+  );
+  const workQueuePagination = useMemo(() => paginateRecruiterQueue(exposedOperationalTasks, workQueuePage), [exposedOperationalTasks, workQueuePage]);
   useEffect(() => {
     const eligibleIds = new Set(model.tasks.filter((task) => task.sourceType === "candidate").map((task) => task.id));
     setSelectedBulkTaskIds((current) => current.filter((id) => eligibleIds.has(id)));
@@ -873,14 +879,17 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
 
             <section aria-labelledby="operational-work-heading" style={{ borderTop: focusMode ? 0 : `1px solid ${theme.borderSoft}`, marginTop: focusMode ? 0 : 16, paddingTop: focusMode ? 0 : 16 }}>
               <h3 id="operational-work-heading" style={{ margin: "0 0 4px", color: theme.text, fontSize: 13 }}>Operational work</h3>
-              <p style={{ margin: "0 0 10px", color: theme.muted, fontSize: 11 }}>Showing {activeFilter.toLowerCase()} work from the existing operational queue. Nothing was removed or reclassified.</p>
+              <p style={{ margin: "0 0 10px", color: theme.muted, fontSize: 11 }}>{operationalWorkExpanded ? `Showing all ${activeFilter.toLowerCase()} work` : `Showing the first ${Math.min(RECRUITER_WORK_INITIAL_ITEM_LIMIT, filteredTasks.length)} ${activeFilter.toLowerCase()} priorities`} from the existing operational queue. Nothing was removed or reclassified.</p>
             <details style={{ marginBottom: 12 }}>
               <summary style={{ color: theme.primary2, fontSize: 11, fontWeight: 900, cursor: "pointer" }}>More queue filters</summary>
               <div role="tablist" aria-label="Work queue filters" style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 8 }}>
                 {FILTERS.map((filter, index) => <button key={filter} ref={(node) => { workQueueFilterRefs.current[index] = node; }} id={`work-queue-filter-${index}`} type="button" role="tab" aria-selected={activeFilter === filter} aria-controls="work-queue-items-panel" tabIndex={activeFilter === filter ? 0 : -1} onKeyDown={(event) => moveTabSelection(event, FILTERS, filter, workQueueFilterRefs, setQueueFilter)} onClick={() => setQueueFilter(filter)} style={{ border: `1px solid ${activeFilter === filter ? theme.primary2 : theme.borderSoft}`, borderRadius: 6, background: activeFilter === filter ? theme.primary2 : theme.panelAlt, color: activeFilter === filter ? "#fff" : theme.text, padding: "7px 10px", fontWeight: 850, cursor: "pointer" }}>{filter} <span aria-label={`${taskCount(filter)} items`}>{taskCount(filter)}</span></button>)}
               </div>
             </details>
-            {!bulkSelectionMode ? <button type="button" onClick={() => setBulkSelectionMode(true)} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: "7px 10px", marginBottom: 12, background: theme.panel, color: theme.primary2, fontWeight: 900, cursor: "pointer" }}>Select multiple</button> : <section aria-label="Safe bulk actions" style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 8, padding: 10, marginBottom: 12, background: theme.panelAlt }}>
+            {!bulkSelectionMode ? <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+              {filteredTasks.length > RECRUITER_WORK_INITIAL_ITEM_LIMIT ? <button type="button" aria-expanded={operationalWorkExpanded} onClick={() => { setOperationalWorkExpanded((value) => !value); setWorkQueuePage(1); setActionTaskId(""); }} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: "7px 10px", background: theme.panel, color: theme.primary2, fontWeight: 900, cursor: "pointer" }}>{operationalWorkExpanded ? "Show priority five" : `View all operational work (${filteredTasks.length})`}</button> : null}
+              <button type="button" onClick={() => { setOperationalWorkExpanded(true); setWorkQueuePage(1); setBulkSelectionMode(true); }} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: "7px 10px", background: theme.panel, color: theme.primary2, fontWeight: 900, cursor: "pointer" }}>Select multiple</button>
+            </div> : <section aria-label="Safe bulk actions" style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 8, padding: 10, marginBottom: 12, background: theme.panelAlt }}>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <strong style={{ fontSize: 12 }}>{selectedBulkTaskIds.length} selected</strong>
                 <button type="button" onClick={selectCurrentBulkPage} disabled={!workQueuePagination.items.some((task) => task.sourceType === "candidate")} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: "6px 9px", background: theme.panel, color: theme.text }}>Select current page</button>
@@ -902,7 +911,7 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
               {workQueuePagination.items.length ? workQueuePagination.items.map((task) => <QueueRow key={task.id} task={task} theme={theme} narrow={isNarrow} selectionMode={bulkSelectionMode} selected={selectedBulkTaskIds.includes(task.id)} onToggleSelection={toggleBulkTask} onOpenCandidate={onOpenCandidate} onOpenRequisition={onOpenRequisition} onOpenCalendarEvent={onOpenCalendarEvent} onOpenActions={(selectedTask) => setActionTaskId(selectedTask.id)} />) : <EmptyQueue filter={activeFilter} waitingCount={model.snapshot.waiting} focusTask={model.focusTask} theme={theme} />}
               {actionTask ? <WorkspaceTaskActionPanel task={actionTask} theme={theme} onClose={() => setActionTaskId("")} onApply={onTaskAction} onScheduleCalendar={onScheduleCalendar} /> : null}
             </div>
-              <QueuePagination pagination={workQueuePagination} label="operational work" onPageChange={changeWorkQueuePage} theme={theme} />
+              {operationalWorkExpanded ? <QueuePagination pagination={workQueuePagination} label="operational work" onPageChange={changeWorkQueuePage} theme={theme} /> : null}
             </section>
             {bulkReview ? <WorkspaceBulkActionReview review={bulkReview} processing={bulkProcessing} theme={theme} onCancel={() => { setBulkReview(null); setBulkResult({ cancelled: true, succeeded: 0, failed: 0, results: [{ taskId: "cancelled", candidateName: "Bulk action", requisitionId: "", ok: false, message: "Cancelled. No records changed." }] }); }} onConfirm={confirmBulkAction} /> : null}
           </WorkspaceCard>

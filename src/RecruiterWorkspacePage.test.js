@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { paginateRecruiterQueue, RECRUITER_QUEUE_PAGE_SIZE, RecruiterWorkspacePage } from "./RecruiterWorkspacePage";
+import { paginateRecruiterQueue, RECRUITER_QUEUE_PAGE_SIZE, RECRUITER_WORK_INITIAL_ITEM_LIMIT, RecruiterWorkspacePage } from "./RecruiterWorkspacePage";
 import { FacilityPositionSetupPage, actionCenterNavigationState, activeActionCenterCandidateTargetForSelection, clearedActionCenterTargets, resolveActionCenterCandidateTarget, resolveActionCenterSetupTarget } from "./App";
 import { ACTION_CENTER_CATEGORIES, ACTION_CENTER_FILTERS, buildActionCenterItemId } from "./actionCenterSelectors";
 
@@ -94,6 +94,9 @@ test("consolidates operational work into the Action Center and pages a large que
   expect(screen.queryByRole("heading", { name: "My Work Queue" })).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Operational work" })).toBeInTheDocument();
   expect(screen.getByText(/Nothing was removed or reclassified/i)).toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: "Open Candidate" })).toHaveLength(RECRUITER_WORK_INITIAL_ITEM_LIMIT);
+  expect(screen.queryByRole("navigation", { name: "operational work pagination" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "View all operational work (45)" }));
 
   fireEvent.click(screen.getByText("More queue filters"));
   const queueTabs = screen.getByRole("tablist", { name: "Work queue filters" });
