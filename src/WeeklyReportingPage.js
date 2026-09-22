@@ -456,8 +456,8 @@ export function WeeklyReportingPage(props) {
                       <Button primary onClick={sendReadyFacilityReports} disabled={!reportingActionState.selectedReadyReportIds.length}>Review {reportingActionState.selectedReadyReportIds.length} Ready Reports</Button>
                     </div>
                     <div style={{ overflowX: "auto" }}>
-                      <div style={{ minWidth: isNarrow ? 760 : 0, display: "grid", gap: 8 }}>
-                        <div style={{ display: "grid", gridTemplateColumns: "34px 1.2fr 120px 140px 1fr 90px", gap: 10, padding: "0 10px", color: THEME.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>
+                      <div style={{ minWidth: 0, display: "grid", gap: 8 }}>
+                        <div style={{ display: isNarrow ? "none" : "grid", gridTemplateColumns: "34px 1.2fr 120px 140px 1fr 90px", gap: 10, padding: "0 10px", color: THEME.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>
                           <span />
                           <span>Facility</span>
                           <span>Report</span>
@@ -466,12 +466,12 @@ export function WeeklyReportingPage(props) {
                           <span>Action</span>
                         </div>
                         {facilityReportQueueFiltered.length ? facilityReportQueueFiltered.map((row) => (
-                          <div key={row.id} style={{ display: "grid", gridTemplateColumns: "34px 1.2fr 120px 140px 1fr 90px", gap: 10, alignItems: "center", border: `1px solid ${selectedFacilityReports.includes(row.id) ? THEME.primary2 : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: selectedFacilityReports.includes(row.id) ? THEME.blueBg : THEME.panel }}>
+                          <div key={row.id} style={{ display: "grid", gridTemplateColumns: isNarrow ? "minmax(0, 1fr)" : "34px 1.2fr 120px 140px 1fr 90px", gap: 10, alignItems: "center", border: `1px solid ${selectedFacilityReports.includes(row.id) ? THEME.primary2 : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: selectedFacilityReports.includes(row.id) ? THEME.blueBg : THEME.panel }}>
                             <input type="checkbox" checked={selectedFacilityReports.includes(row.id)} onChange={(event) => toggleFacilityReportSelection(row.id, event.target.checked)} aria-label={`Select ${row.facility} report`} />
                             <strong>{row.facility}</strong>
                             <span style={{ color: THEME.muted }}>{row.report}</span>
                             <Badge tone={row.status === "Missing Contact" ? "High" : row.status === "Needs Review" ? "Medium" : row.complete ? "Low" : "Interview"}>{LEGACY_REPORT_STATUS_DISPLAY[row.status] || row.status}</Badge>
-                            <span style={{ color: THEME.muted }}>{row.lastAction}</span>
+                            <span style={{ color: THEME.muted }}>{isNarrow ? "Last action: " : ""}{row.lastAction}</span>
                             <Button subtle onClick={() => { setSelectedFacilityReports([row.id]); previewSelectedFacilityReports([row]); }} style={{ padding: "6px 8px", fontSize: 11 }}>{row.action}</Button>
                           </div>
                         )) : <EmptyState>No facility reports match this filter.</EmptyState>}
@@ -534,8 +534,8 @@ export function WeeklyReportingPage(props) {
                 </Accordion>
                 {reportIssueGroups.length ? <Card compact title="Reporting Issues" subtitle={`${selectedReportEligibility.blockingReasons.length} blocker${selectedReportEligibility.blockingReasons.length === 1 ? "" : "s"} in the selected scope. Diagnostic details remain available even when final output is blocked.`}><div style={{ display: "grid", gap: 8 }}>{reportIssueGroups.map((group) => <div key={group.code} style={{ border: `1px solid ${group.blocking ? THEME.red : THEME.amber}`, borderRadius: 6, background: group.blocking ? THEME.coralBg : THEME.amberBg }}><button type="button" aria-expanded={expandedReportIssueCode === group.code} onClick={() => setExpandedReportIssueCode((current) => current === group.code ? "" : group.code)} style={{ width: "100%", border: 0, background: "transparent", padding: 10, display: "flex", justifyContent: "space-between", gap: 10, color: THEME.text, fontWeight: 900, cursor: "pointer", textAlign: "left" }}><span>{group.label}</span><span>{group.count}</span></button>{expandedReportIssueCode === group.code ? <div style={{ display: "grid", gap: 7, padding: "0 10px 10px" }}>{group.issues.map((issue, index) => <div key={`${group.code}-${issue.identifier || issue.candidateId || issue.requisitionId || issue.facilityId}-${index}`} style={{ borderTop: `1px solid ${THEME.borderSoft}`, paddingTop: 8, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}><ReportingIssueDetails issue={issue} THEME={THEME} />{issue.resolutionAction ? <Button subtle onClick={() => openReportingIssueCorrection(issue)}>{issue.resolutionAction}</Button> : null}</div>)}</div> : null}</div>)}</div></Card> : null}
                 <div style={{ overflowX: "auto" }}>
-                  <div style={{ minWidth: isNarrow ? 760 : 0, display: "grid", gap: 8 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "34px 1.2fr 120px 140px 1fr 90px", gap: 10, padding: "0 10px", color: THEME.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>
+                  <div style={{ minWidth: 0, display: "grid", gap: 8 }}>
+                    <div style={{ display: isNarrow ? "none" : "grid", gridTemplateColumns: "34px 1.2fr 120px 140px 1fr 90px", gap: 10, padding: "0 10px", color: THEME.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>
                       <span />
                       <span>Facility</span>
                       <span>Report</span>
@@ -544,12 +544,12 @@ export function WeeklyReportingPage(props) {
                       <span>Action</span>
                     </div>
                     {facilityReportQueueFiltered.length ? facilityReportQueueFiltered.map((row) => (
-                      <div key={row.id} style={{ display: "grid", gridTemplateColumns: "34px 1.2fr 120px 140px 1fr 90px", gap: 10, alignItems: "center", border: `1px solid ${selectedFacilityReports.includes(row.id) ? THEME.primary2 : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: selectedFacilityReports.includes(row.id) ? THEME.blueBg : THEME.panel }}>
+                      <div key={row.id} style={{ display: "grid", gridTemplateColumns: isNarrow ? "minmax(0, 1fr)" : "34px 1.2fr 120px 140px 1fr 90px", gap: 10, alignItems: "center", border: `1px solid ${selectedFacilityReports.includes(row.id) ? THEME.primary2 : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: selectedFacilityReports.includes(row.id) ? THEME.blueBg : THEME.panel }}>
                         <input type="checkbox" checked={selectedFacilityReports.includes(row.id)} onChange={(event) => toggleFacilityReportSelection(row.id, event.target.checked)} aria-label={`Select ${row.facility} report`} />
                         <strong>{row.facility}</strong>
                         <span style={{ color: THEME.muted }}>{row.report}</span>
                         <Badge tone={row.status === "Missing Contact" ? "High" : row.status === "Needs Review" ? "Medium" : row.complete ? "Low" : "Interview"}>{LEGACY_REPORT_STATUS_DISPLAY[row.status] || row.status}</Badge>
-                        <span style={{ color: THEME.muted }}>{row.lastAction}</span>
+                        <span style={{ color: THEME.muted }}>{isNarrow ? "Last action: " : ""}{row.lastAction}</span>
                         <Button subtle disabled={!eligibilityForReportRows([row]).canCreateFinalPreview} onClick={() => { setSelectedFacilityReports([row.id]); previewSelectedFacilityReports([row]); }} style={{ padding: "6px 8px", fontSize: 11 }}>{row.action}</Button>
                       </div>
                     )) : <EmptyState>No facility reports match this filter.</EmptyState>}
@@ -671,17 +671,17 @@ export function WeeklyReportingPage(props) {
                   </div>
                 ) : null}
                 <div style={{ overflowX: "auto" }}>
-                  <div style={{ minWidth: isNarrow ? 760 : 0, display: "grid", gap: 8 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "34px 1.3fr 110px 120px 1fr 180px", gap: 10, padding: "0 10px", color: THEME.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>
+                  <div style={{ minWidth: 0, display: "grid", gap: 8 }}>
+                    <div style={{ display: isNarrow ? "none" : "grid", gridTemplateColumns: "34px 1.3fr 110px 120px 1fr 180px", gap: 10, padding: "0 10px", color: THEME.muted, fontSize: 10, fontWeight: 900, textTransform: "uppercase" }}>
                       <span /><span>Facility</span><span>Report</span><span>Readiness</span><span>Last Action</span><span>Action</span>
                     </div>
                     {facilityReadinessVisibleRows.length ? facilityReadinessVisibleRows.map((row) => (
-                      <div key={row.id} style={{ display: "grid", gridTemplateColumns: "34px 1.3fr 110px 120px 1fr 180px", gap: 10, alignItems: "center", border: `1px solid ${row.readiness === "Blocked" ? THEME.red : row.readiness === "Needs Review" ? THEME.amber : selectedFacilityReports.includes(row.id) ? THEME.primary2 : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: selectedFacilityReports.includes(row.id) ? THEME.blueBg : THEME.panel }}>
+                      <div key={row.id} style={{ display: "grid", gridTemplateColumns: isNarrow ? "minmax(0, 1fr)" : "34px 1.3fr 110px 120px 1fr 180px", gap: 10, alignItems: "center", border: `1px solid ${row.readiness === "Blocked" ? THEME.red : row.readiness === "Needs Review" ? THEME.amber : selectedFacilityReports.includes(row.id) ? THEME.primary2 : THEME.borderSoft}`, borderRadius: 6, padding: 10, background: selectedFacilityReports.includes(row.id) ? THEME.blueBg : THEME.panel }}>
                         <input type="checkbox" checked={selectedFacilityReports.includes(row.id)} onChange={(event) => toggleFacilityReportSelection(row.id, event.target.checked)} aria-label={`Select ${row.facility} readiness report`} />
                         <div><strong>{row.facility}</strong><div style={{ color: THEME.muted, fontSize: 11 }}>{[row.facilityId, row.regionName, row.originalFacilityLabel && row.originalFacilityLabel !== row.facility ? `Original: ${row.originalFacilityLabel}` : ""].filter(Boolean).join(" | ")}</div></div>
                         <span style={{ color: THEME.muted }}>{row.report}{row.noOpeningOutcomeLabel ? <><br /><strong style={{ color: row.readiness === "Blocked" ? THEME.red : row.readiness === "Needs Review" ? THEME.amber : THEME.green }}>{row.noOpeningOutcomeLabel}</strong></> : null}</span>
                         <Badge tone={row.readiness === "Blocked" ? "High" : row.readiness === "Needs Review" ? "Medium" : ["Ready", "Sent"].includes(row.readiness) ? "Low" : "Interview"}>{row.readiness}</Badge>
-                        <span style={{ color: THEME.muted }}>{row.lastAction}</span>
+                        <span style={{ color: THEME.muted }}>{isNarrow ? "Last action: " : ""}{row.lastAction}</span>
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                           {row.noOpeningOutcome?.applies && noOpeningsPolicy === NO_OPENINGS_POLICIES.ASK_WEEKLY && !noOpeningWeeklyDecisions[row.facilityId] ? <>
                             <Button subtle onClick={() => setWeeklyNoOpeningDecision(row.facilityId, NO_OPENINGS_WEEKLY_DECISIONS.CREATE_STANDARD_REPORT)} style={{ padding: "6px 8px", fontSize: 11 }}>Create Standard Report This Week</Button>

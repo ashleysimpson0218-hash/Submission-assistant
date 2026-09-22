@@ -93,7 +93,7 @@ test("consolidates operational work into the Action Center and pages a large que
   expect(screen.getAllByRole("heading", { name: "Recruiter Action Center" })).toHaveLength(1);
   expect(screen.queryByRole("heading", { name: "My Work Queue" })).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Operational work" })).toBeInTheDocument();
-  expect(screen.getByText(/Nothing was removed or reclassified/i)).toBeInTheDocument();
+  expect(screen.getByText(/Open a record to review its next step/i)).toBeInTheDocument();
   expect(screen.getAllByRole("button", { name: "Open Candidate" })).toHaveLength(RECRUITER_WORK_INITIAL_ITEM_LIMIT);
   expect(screen.queryByRole("navigation", { name: "operational work pagination" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "View all operational work (45)" }));
