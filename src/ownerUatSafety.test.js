@@ -8,7 +8,9 @@ function source(relativePath) {
 test("UAT entrypoint requires owner authentication before loading the existing application", () => {
   const index = source("src/index.js");
   expect(index).toMatch(/<OwnerUatAuthGate>\{application\}<\/OwnerUatAuthGate>/);
-  expect(index).toMatch(/const applicationImport = import\('\.\/App'\)/);
+  expect(index).toContain("workflowRoute ? import('./workflow/WorkflowPortal') : import('./App')");
+  expect(index).toContain("runtimeConfig.isUat && !workflowRoute");
+  expect(source("src/workflow/WorkflowPortal.js")).not.toMatch(/from ["'].*App["']/);
 });
 
 test("UAT client contains no service credential", () => {

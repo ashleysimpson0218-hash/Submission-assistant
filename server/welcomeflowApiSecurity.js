@@ -5,6 +5,7 @@ const SYNTHETIC_TEST_SUPABASE_PROJECT_REF = "bjverobaoujhfaylyrzi";
 const OWNER_UAT_SUPABASE_PROJECT_REF = "zleslkwnbjxknmkqywyv";
 const SUPPORTED_SERVER_ENVIRONMENTS = new Set(["development", "test", "acceptance", "preview", "owner-uat", "production"]);
 const ACTION_ENABLE_FLAGS = Object.freeze({
+  workflow: "WELCOMEFLOW_ENABLE_WORKFLOW_ACTIONS",
   email: "WELCOMEFLOW_ENABLE_EMAIL_ACTIONS",
   resume: "WELCOMEFLOW_ENABLE_RESUME_ACTIONS",
   booking: "WELCOMEFLOW_ENABLE_BOOKING_ACTIONS",

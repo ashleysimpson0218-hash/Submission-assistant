@@ -1,0 +1,138 @@
+.wf-workflow {
+  margin: 16px 0;
+  padding: 20px;
+  background: #fff;
+  color: #241246;
+  border: 1px solid #ddd3ee;
+  border-radius: 8px;
+  font-family: Inter, Arial, sans-serif;
+}
+.wf-workflow header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 16px;
+}
+.wf-workflow h2,
+.wf-workflow h3 {
+  margin-top: 0;
+}
+.wf-workflow p {
+  line-height: 1.5;
+}
+.wf-workflow form {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0;
+  max-width: 760px;
+}
+.wf-field {
+  display: grid;
+  gap: 6px;
+  font-weight: 600;
+}
+.wf-workflow input:not([type="checkbox"]),
+.wf-workflow select,
+.wf-workflow textarea {
+  box-sizing: border-box;
+  width: 100%;
+  font: inherit;
+  color: #241246;
+  background: white;
+  border: 1px solid #b4a5cb;
+  border-radius: 5px;
+  padding: 10px;
+  min-height: 42px;
+}
+.wf-workflow textarea {
+  min-height: 80px;
+}
+.wf-workflow button {
+  font: inherit;
+  cursor: pointer;
+  padding: 10px 14px;
+  border: 1px solid #7751a8;
+  border-radius: 5px;
+  background: #5f2c91;
+  color: white;
+  min-height: 44px;
+}
+.wf-workflow button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.wf-workflow button:focus-visible,
+.wf-workflow input:focus-visible,
+.wf-workflow select:focus-visible,
+.wf-workflow textarea:focus-visible,
+.wf-workflow summary:focus-visible {
+  outline: 3px solid #b58ee0;
+  outline-offset: 3px;
+}
+.wf-card {
+  padding: 18px;
+  border: 1px solid #ddd3ee;
+  border-radius: 6px;
+  margin: 14px 0;
+}
+.wf-alert {
+  background: #fff8e8;
+  padding: 14px;
+  border: 1px solid #e8c483;
+  border-radius: 5px;
+}
+.wf-workflow details {
+  margin: 12px 0;
+}
+.wf-workflow summary {
+  cursor: pointer;
+  font-weight: 700;
+  padding: 8px 0;
+}
+.wf-workflow small {
+  display: block;
+  line-height: 1.5;
+  margin: 8px 0;
+}
+.wf-workflow fieldset {
+  border: 1px solid #ddd3ee;
+  display: grid;
+  gap: 10px;
+}
+.wf-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+  margin: 16px 0;
+}
+.wf-prewrap {
+  white-space: pre-wrap;
+}
+.wf-card a {
+  display: inline-block;
+  margin: 8px 0;
+  color: #5f2c91;
+}
+.wf-portal {
+  max-width: 1000px;
+  margin: auto;
+  padding: 16px;
+}
+@media (max-width: 600px) {
+  .wf-workflow {
+    padding: 12px;
+  }
+  .wf-workflow header {
+    flex-direction: column;
+  }
+  .wf-actions > * {
+    width: 100%;
+  }
+  .wf-card {
+    padding: 12px;
+  }
+  .wf-portal {
+    padding: 8px;
+  }
+}

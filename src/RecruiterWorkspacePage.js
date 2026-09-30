@@ -836,7 +836,7 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
             {focusMode ? <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "repeat(4, minmax(0, 1fr))", gap: 8, marginTop: 12 }}>{[["Shift", model.focusTask.shift || "Not listed"], ["Employment", model.focusTask.employmentType || "Not listed"], ["Schedule", model.focusTask.schedule || "Not listed"], ["Credentials / Pay", [model.focusTask.requiredCredentials, model.focusTask.pay].filter(Boolean).join(" · ") || "Review requisition"]].map(([label, value]) => <div key={label} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, padding: 9, background: theme.panelAlt }}><span style={{ color: theme.muted, fontSize: 10, fontWeight: 900 }}>{label}</span><strong style={{ display: "block", fontSize: 12, marginTop: 3 }}>{value}</strong></div>)}</div> : null}
           </WorkspaceCard> : null}
 
-          <WorkspaceCard theme={theme} title="Needs Action" subtitle={`Good morning, ${recruiterName}. Recruiter-owned work is primary; every canonical category remains available.`}>
+          <WorkspaceCard theme={theme} title="Needs Action" subtitle={`${recruiterName}, start with your next actions. Filter the queue to review other work.`}>
             {!focusMode ? <>
               {model.focusTask ? <details style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 8, padding: 10, marginBottom: 14, background: theme.panelAlt }}>
                 <summary style={{ color: theme.primary2, fontSize: 12, fontWeight: 900, cursor: "pointer" }}>View recruiting focus: {model.focusTask.position}</summary>
@@ -879,7 +879,7 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
 
             <section aria-labelledby="operational-work-heading" style={{ borderTop: focusMode ? 0 : `1px solid ${theme.borderSoft}`, marginTop: focusMode ? 0 : 16, paddingTop: focusMode ? 0 : 16 }}>
               <h3 id="operational-work-heading" style={{ margin: "0 0 4px", color: theme.text, fontSize: 13 }}>Operational work</h3>
-              <p style={{ margin: "0 0 10px", color: theme.muted, fontSize: 11 }}>{operationalWorkExpanded ? `Showing all ${activeFilter.toLowerCase()} work` : `Showing the first ${Math.min(RECRUITER_WORK_INITIAL_ITEM_LIMIT, filteredTasks.length)} ${activeFilter.toLowerCase()} priorities`} from the existing operational queue. Nothing was removed or reclassified.</p>
+              <p style={{ margin: "0 0 10px", color: theme.muted, fontSize: 11 }}>{operationalWorkExpanded ? `Showing all ${activeFilter.toLowerCase()} work` : `Showing the first ${Math.min(RECRUITER_WORK_INITIAL_ITEM_LIMIT, filteredTasks.length)} ${activeFilter.toLowerCase()} priorities`}. Open a record to review its next step.</p>
             <details style={{ marginBottom: 12 }}>
               <summary style={{ color: theme.primary2, fontSize: 11, fontWeight: 900, cursor: "pointer" }}>More queue filters</summary>
               <div role="tablist" aria-label="Work queue filters" style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 8 }}>
@@ -916,7 +916,7 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
             {bulkReview ? <WorkspaceBulkActionReview review={bulkReview} processing={bulkProcessing} theme={theme} onCancel={() => { setBulkReview(null); setBulkResult({ cancelled: true, succeeded: 0, failed: 0, results: [{ taskId: "cancelled", candidateName: "Bulk action", requisitionId: "", ok: false, message: "Cancelled. No records changed." }] }); }} onConfirm={confirmBulkAction} /> : null}
           </WorkspaceCard>
 
-          {!focusMode ? <WorkspaceCard theme={theme} title="Today & Scheduled" subtitle="Date-bound recruiter activity stays visible without crowding the action queue." action={<button type="button" onClick={onOpenCalendar} style={{ border: `1px solid ${theme.primary2}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "7px 10px", fontWeight: 900, cursor: "pointer" }}>Open Calendar</button>}>
+          {!focusMode ? <WorkspaceCard theme={theme} title="Today & Scheduled" subtitle="Your scheduled interviews, follow-ups, and recruiting time." action={<button type="button" onClick={onOpenCalendar} style={{ border: `1px solid ${theme.primary2}`, borderRadius: 6, background: theme.panel, color: theme.primary2, padding: "7px 10px", fontWeight: 900, cursor: "pointer" }}>Open Calendar</button>}>
             <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "repeat(2, minmax(0, 1fr))" : "repeat(3, minmax(0, 1fr))", gap: 8 }}>
               {[["Due today", workPagePresentation.counts["Due Today"]], ["Scheduled", workPagePresentation.counts.Scheduled], ["Missing outcomes", model.reportReadiness.calendarEventsMissingOutcomes]].map(([label, value]) => <div key={label} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 7, padding: 10, background: theme.panelAlt }}><strong style={{ display: "block", color: theme.primary2, fontSize: 20 }}>{value}</strong><span style={{ color: theme.muted, fontSize: 11 }}>{label}</span></div>)}
             </div>
@@ -924,7 +924,7 @@ export function RecruiterWorkspacePage({ tracker = EMPTY_LIST, requisitions = EM
             {scheduleExpanded ? <div style={{ marginTop: 10 }}><HomeCalendarWidget events={calendarEvents} theme={theme} onAddEvent={onAddCalendarEvent} onOpenCalendar={onOpenCalendar} onOpenEvent={(event) => onOpenCalendarEvent(event.id)} /></div> : null}
           </WorkspaceCard> : null}
 
-          {!focusMode ? <WorkspaceCard theme={theme} title="Pipeline Health" subtitle="Compact signals only. Detailed readiness and health remain one step deeper." action={<button type="button" onClick={onOpenReports} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panel, color: theme.text, padding: "7px 10px", fontWeight: 900, cursor: "pointer" }}>Open Reports</button>}>
+          {!focusMode ? <WorkspaceCard theme={theme} title="Pipeline Health" subtitle="See where candidates are moving and where help is needed." action={<button type="button" onClick={onOpenReports} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 6, background: theme.panel, color: theme.text, padding: "7px 10px", fontWeight: 900, cursor: "pointer" }}>Open Reports</button>}>
             <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))", gap: 8 }}>
               {[["Active candidate work", workPagePresentation.activeCandidateWork], ["At-risk records", workPagePresentation.counts["At Risk"]], ["SLA exceptions", workPagePresentation.slaExceptions], ["Report ready", model.snapshot.reportReady == null ? "—" : `${model.snapshot.reportReady}%`]].map(([label, value]) => <div key={label} style={{ border: `1px solid ${theme.borderSoft}`, borderRadius: 7, padding: 10, background: theme.panelAlt }}><strong style={{ display: "block", color: theme.primary2, fontSize: 20 }}>{value}</strong><span style={{ color: theme.muted, fontSize: 11 }}>{label}</span></div>)}
             </div>

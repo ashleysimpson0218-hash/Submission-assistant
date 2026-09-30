@@ -60,8 +60,9 @@ if (isMaintenanceModeEnabled(runtimeConfig)) {
     </React.StrictMode>
   );
 } else {
-  const applicationImport = import('./App');
-  const ownerUatAuthImport = runtimeConfig.isUat ? import('./OwnerUatAuthGate') : Promise.resolve({ default: null });
+  const workflowRoute = window.location.pathname === '/workflow';
+  const applicationImport = workflowRoute ? import('./workflow/WorkflowPortal') : import('./App');
+  const ownerUatAuthImport = runtimeConfig.isUat && !workflowRoute ? import('./OwnerUatAuthGate') : Promise.resolve({ default: null });
   Promise.all([applicationImport, ownerUatAuthImport]).then(([{ default: App }, { default: OwnerUatAuthGate }]) => {
     const application = (
       <WelcomeFlowErrorBoundary safeErrorsOnly={safeRuntimeErrors}>
@@ -70,7 +71,7 @@ if (isMaintenanceModeEnabled(runtimeConfig)) {
     );
     root.render(
       <React.StrictMode>
-        {runtimeConfig.isTest ? <TestModeFrame>{application}</TestModeFrame> : runtimeConfig.isUat ? <OwnerUatFrame><OwnerUatAuthGate>{application}</OwnerUatAuthGate></OwnerUatFrame> : application}
+        {runtimeConfig.isTest ? <TestModeFrame>{application}</TestModeFrame> : runtimeConfig.isUat && !workflowRoute ? <OwnerUatFrame><OwnerUatAuthGate>{application}</OwnerUatAuthGate></OwnerUatFrame> : application}
       </React.StrictMode>
     );
   }).catch((error) => {

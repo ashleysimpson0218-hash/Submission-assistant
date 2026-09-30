@@ -5,7 +5,17 @@
     }
   },
   "rewrites": [
-    { "source": "/schedule/:path*", "destination": "/index.html" },
-    { "source": "/book/:path*", "destination": "/index.html" }
+    {
+      "source": "/schedule/:path*",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/book/:path*",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/workflow",
+      "destination": "/index.html"
+    }
   ]
 }

@@ -1,7 +1,12 @@
 // File: src/App.js
 // Premium Purple Precision Polish - squared UI, cleaner header, dark mode contrast, glossary-first help
 
+import WorkflowPanel from "./workflow/WorkflowPanel";
+import { isConfirmedCompletion } from "./workflow/completion";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { RecruiterEnablementPage, RecruiterIndustrySetupCard } from "./RecruiterEnablementPage";
+import { INDUSTRY_PROFILES, applyIndustryProfile, industryProfile, industryScreeningQuestions, mobilePageValue, notesWithIndustryScreening, resolveIndustryRole, workspaceSaveStatus } from "./industryProfiles";
+import { hasExplicitNonHealthcareIndustry, resolveIndustryCommunicationTemplate } from "./industryCommunicationTemplates";
 import {
   buildCompleteProcessArchivePatch,
   buildHireWorkflowPatch,
@@ -261,7 +266,7 @@ const DARK = {
 
 let THEME = LIGHT;
 
-const ROLE_TYPES = ["Healthcare", "Other"];
+const ROLE_TYPES = ["Healthcare", "Transportation", "Manufacturing", "Hospitality", "Professional", "Other"];
 const ROLE_CREDENTIAL_TYPES = ["Credentialed", "Non-credentialed"];
 const WORK_TYPES = ["On-site", "Remote", "Hybrid"];
 const SHIFT_OPTIONS = ["Day", "Night", "Evening", "Day or Night", "Evening or Night", "Any Shift"];
@@ -1202,7 +1207,7 @@ const WORKFLOW_STATUS_MAP = {
   Closed: { nextAction: "No action needed", owner: "Recruiter" },
 };
 const SITE_TEMPLATE_COLUMNS = ["Site Name", "Location Type", "Address", "City", "State", "Zip Code", "Hiring Manager", "Manager Email", "Status", "Notes"];
-const ROLE_TEMPLATE_COLUMNS = ["Position Title", "Role Category", "Credential Type", "Requires License", "Requires CPR", "Requires Credentialing", "Status"];
+const ROLE_TEMPLATE_COLUMNS = ["Position Title", "Role Category", "Industry Profile", "Credential Type", "Requires License", "Requires CPR", "Requires Credentialing", "Status"];
 const REQUISITION_TEMPLATE_COLUMNS = ["Req Number", "Unique ID Number", "Position", "Facility", "Open Date", "Openings", "Employment Type", "Shift", "FTE", "Status", "Internal Job Link", "External Job Link", "Work Schedule", "Notes"];
 const CONTACT_TEMPLATE_COLUMNS = ["Department", "Name", "Title", "Email", "Phone", "Duty", "Facility", "Status", "Notes"];
 const WORKSPACE_TEMPLATE_COLUMNS = ["Task Type", "Person", "Facility", "Req Number", "Priority", "Due Date", "Note"];
@@ -1709,7 +1714,7 @@ function tokenMap(form = {}, settings = {}, extra = {}) {
     candidate_email: form.emailAddress || form.candidateEmail || "",
     candidate_phone: form.phoneNumber || form.candidatePhone || "",
     application_link: extra.applicationLink || form.applicationLink || form.onboardingApplicationLink || settings.general?.defaultApplicationLink || settings.general?.defaultBookingLink || "Application link needed",
-    candidate_notes: form.candidateNotes || "",
+    candidate_notes: notesWithIndustryScreening(form),
     status: extra.status || form.status || "Submitted",
     next_action: extra.nextAction || form.nextAction || "Awaiting manager review",
     submission_date: displayDate(extra.submissionDate || todayIso()),
@@ -2383,10 +2388,11 @@ async function createBookingAccess(lead = {}, requisition = {}) {
   return result.record;
 }
 
-function LoginPage({ mode, setMode, onEnter, soundEnabled, setSoundEnabled }) {
+export function LoginPage({ mode, setMode, onEnter, soundEnabled, setSoundEnabled }) {
   const width = useWindowWidth();
   const compact = width < 960;
   const [showPassword, setShowPassword] = useState(false);
+  const [signupIndustry, setSignupIndustry] = useState("");
   const title = mode === "signup" ? "Create your account" : "Welcome back";
   const subtitle = mode === "signup" ? "Start your WelcomeFlow recruiter workspace" : "Sign in to your WelcomeFlow account";
   const cta = mode === "signup" ? "Create Account" : "Sign In";
@@ -2451,6 +2457,13 @@ function LoginPage({ mode, setMode, onEnter, soundEnabled, setSoundEnabled }) {
               <p style={{ margin: 0, color: "#635b7c", fontSize: 18, fontWeight: 700 }}>{subtitle}</p>
             </div>
             <div style={{ display: "grid", gap: 20 }}>
+              {mode === "signup" ? <label style={{ display: "grid", gap: 8, color: "#635b7c", fontWeight: 800 }}>Which industry do you recruit for?
+                <select aria-label="Recruiting industry" value={signupIndustry} onChange={(event) => setSignupIndustry(event.target.value)} style={{ minHeight: 54, border: "1px solid #ded7f1", borderRadius: 8, padding: 12, background: "white", color: "#160a43", font: "inherit", fontSize: 16, width: "100%" }}>
+                  <option value="">Choose your industry</option>
+                  {INDUSTRY_PROFILES.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+                </select>
+                <span style={{ fontWeight: 400, fontSize: 14 }}>We'll tailor your role starters, screening prompts, and guidance. You can change this in setup.</span>
+              </label> : null}
               <label style={{ display: "grid", gap: 8, color: "#635b7c", fontWeight: 800 }}>Email address
                 <div style={{ display: "grid", gridTemplateColumns: "32px 1fr", alignItems: "center", border: "1px solid #ded7f1", borderRadius: 8, padding: "0 14px", minHeight: 54, background: "#fff" }}>
                   <span style={{ fontSize: 14, color: "#6b5f93", fontWeight: 950 }}>Mail</span>
@@ -2468,9 +2481,9 @@ function LoginPage({ mode, setMode, onEnter, soundEnabled, setSoundEnabled }) {
                 <label style={{ display: "flex", alignItems: "center", gap: 10 }}><input type="checkbox" style={{ width: 19, height: 19 }} /> Remember me</label>
                 <button type="button" onClick={() => window.alert("Password reset can be connected with authentication later.")} style={{ border: 0, background: "transparent", color: "#6d28d9", fontWeight: 900, cursor: "pointer" }}>Forgot password?</button>
               </div>
-              <button type="button" onClick={onEnter} style={{ border: 0, borderRadius: 8, minHeight: 56, background: "linear-gradient(135deg, #6d28d9 0%, #7c3aed 100%)", color: "#ffffff", fontWeight: 950, fontSize: 18, cursor: "pointer", boxShadow: "0 18px 34px rgba(109,40,217,0.24)" }}>{cta}</button>
+              <button type="button" disabled={mode === "signup" && !signupIndustry} onClick={() => onEnter(mode === "signup" ? { industryId: signupIndustry } : {})} style={{ border: 0, borderRadius: 8, minHeight: 56, background: "linear-gradient(135deg, #6d28d9 0%, #7c3aed 100%)", color: "#ffffff", fontWeight: 950, fontSize: 18, cursor: "pointer", boxShadow: "0 18px 34px rgba(109,40,217,0.24)" }}>{cta}</button>
               <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 18, alignItems: "center", color: "#8b83a5", fontWeight: 800 }}><span style={{ height: 1, background: "#ded7f1" }} /><span>or</span><span style={{ height: 1, background: "#ded7f1" }} /></div>
-              <button type="button" onClick={onEnter} style={{ border: "1px solid #ded7f1", borderRadius: 8, minHeight: 56, background: "#ffffff", color: "#160a43", fontWeight: 900, fontSize: 17, cursor: "pointer" }}><span style={{ color: "#4285F4", marginRight: 12, fontWeight: 950 }}>G</span>Continue with Google</button>
+              <button type="button" disabled={mode === "signup" && !signupIndustry} onClick={() => onEnter(mode === "signup" ? { industryId: signupIndustry } : {})} style={{ border: "1px solid #ded7f1", borderRadius: 8, minHeight: 56, background: "#ffffff", color: "#160a43", fontWeight: 900, fontSize: 17, cursor: "pointer" }}><span style={{ color: "#4285F4", marginRight: 12, fontWeight: 950 }}>G</span>Continue with Google</button>
               <div style={{ textAlign: "center", color: "#635b7c", fontWeight: 750 }}>
                 {mode === "signup" ? "Already have an account?" : "Don't have an account?"}
                 <button type="button" onClick={() => setMode(mode === "signup" ? "signin" : "pricing")} style={{ border: 0, background: "transparent", color: "#6d28d9", fontWeight: 950, cursor: "pointer", marginLeft: 8 }}>{mode === "signup" ? "Sign in" : "Create one"}</button>
@@ -4910,12 +4923,12 @@ function hotLeadCredentialReadiness(lead = {}) {
   const blockers = [];
   if (requiresClinicalCredential && !hasLicense) blockers.push(`${expected} license`);
   if (requiresClinicalCredential && !hasCpr) blockers.push("CPR/BLS");
-  const label = !requiresClinicalCredential ? "No credential required" : blockers.length ? "Credential info missing" : "Ready to verify during screen";
+  const label = !requiresClinicalCredential ? "Review role requirements" : blockers.length ? "Credential info missing" : "Ready to verify during screen";
   return {
     label,
-    tone: blockers.length ? "Medium" : "Low",
+    tone: blockers.length || !requiresClinicalCredential ? "Medium" : "Low",
     blockers,
-    summary: blockers.length ? `Missing: ${blockers.join(", ")}` : requiresClinicalCredential ? `${expected} details found or ready for recruiter verification.` : "No credential required for this lead.",
+    summary: blockers.length ? `Missing: ${blockers.join(", ")}` : requiresClinicalCredential ? `${expected} details found or ready for recruiter verification.` : "Review the selected role and employer requirements before deciding which credentials to verify.",
   };
 }
 
@@ -6143,6 +6156,8 @@ function RecruiterApp() {
   const [actionCenterNavigationTarget, setActionCenterNavigationTarget] = useState(initialActionCenterNavigation);
   const [accountTab, setAccountTab] = useState("profile");
   const [activeSettingsTab, setActiveSettingsTab] = useState("general");
+  const [learningSection, setLearningSection] = useState("learn");
+  const [completedLessons, setCompletedLessons] = useState([]);
   const [reportsTab, setReportsTabState] = useState(() => initialReportReviewTarget ? "review-reports" : "overview");
   const setReportsTab = useCallback((value) => {
     setReportsTabState((current) => normalizeWeeklyReportingStep(typeof value === "function" ? value(current) : value));
@@ -6959,7 +6974,10 @@ function RecruiterApp() {
     return Array.from(new Set(titles)).sort((a, b) => a.localeCompare(b));
   }, [activeRequisitions, form.siteName, selectedRequisition]);
   const selectedSecondaryRequisition = useMemo(() => activeRequisitions.find((req) => req.id === form.secondaryRequisitionId) || null, [activeRequisitions, form.secondaryRequisitionId]);
-  const selectedScreeningQuestions = useMemo(() => intakeScreeningQuestionsFor(selectedSite, selectedRequisition), [selectedSite, selectedRequisition]);
+  const selectedScreeningQuestions = useMemo(() => [
+    ...intakeScreeningQuestionsFor(selectedSite, selectedRequisition),
+    ...industryScreeningQuestions(resolveIndustryRole(settings, form.position), selectedRequisition),
+  ], [selectedSite, selectedRequisition, settings, form.position]);
   useEffect(() => {
     if (!hasLoaded || !hotLeadWorkingReq || editingHotLeadId || hotLeadDraft.selectedRequisitionId) return;
     setHotLeadDraft((prev) => {
@@ -9811,7 +9829,14 @@ function RecruiterApp() {
   }
 
   function updateScreeningAnswer(questionId, value) {
-    setForm((prev) => ({ ...prev, siteSpecificAnswers: { ...(typeof prev.siteSpecificAnswers === "object" ? prev.siteSpecificAnswers : {}), [questionId]: value } }));
+    setForm((prev) => ({
+      ...prev,
+      siteSpecificAnswers: { ...(typeof prev.siteSpecificAnswers === "object" ? prev.siteSpecificAnswers : {}), [questionId]: value },
+      industryScreeningContext: {
+        position: prev.position,
+        questions: selectedScreeningQuestions.filter((question) => question.source === "Industry").map(({ id, question }) => ({ id, question })),
+      },
+    }));
   }
 
   function compensationEstimateForIntake(req, role, site, baseForm = form) {
@@ -10446,7 +10471,7 @@ function RecruiterApp() {
         credentials: [form.licenseType, form.licenseStatus, form.cprStatus, form.additionalLicenseInfo].filter(Boolean),
         interviewAvailability: form.interviewAvailability,
         finalCompensation: (form.estimatedCompensation || estimatedComp || form.compensationRequested || "").trim(),
-        recruiterNotes: form.candidateNotes,
+        recruiterNotes: notesWithIndustryScreening(form),
         intakeCompleted: intakeOutputBlockers.length === 0,
         intakeCompletedAt: todayIso(),
         submissionDate,
@@ -11095,7 +11120,7 @@ function RecruiterApp() {
       { name: "Sites", columns: SITE_TEMPLATE_COLUMNS, rows: settings.sites.map((site) => ({ "Site Name": site.siteName, "Location Type": site.siteType, "Location": site.location || siteFullLocation(site), "Address": site.siteAddress, "City": site.siteCity, "State": site.siteState, "Zip Code": site.siteZipCode, "Hiring Manager Name": site.hiringManagerName, "Hiring Manager Position Title": site.hiringManagerTitle, "Hiring Manager Email": site.hiringManagerEmail, "Hiring Manager Phone": site.hiringManagerPhone, "Additional Manager Name": (site.additionalHiringManagers || []).map((m) => m.name).join("; "), "Additional Manager Title": (site.additionalHiringManagers || []).map((m) => m.title).join("; "), "Additional Manager Email": (site.additionalHiringManagers || []).map((m) => m.email).join("; "), "Additional Manager Phone": (site.additionalHiringManagers || []).map((m) => m.phone).join("; "), "Administrative Contact Name": site.adminContactName, "Administrative Contact Email": site.adminContactEmail, "Administrative Contact Phone": site.adminContactPhone, "Site-Specific Screening Questions": serializeScreeningQuestions(site.siteSpecificQuestions), "Status": site.status, "Notes": site.notes })) },
       { name: "Contacts", columns: CONTACT_TEMPLATE_COLUMNS, rows: (settings.contacts || []).map((contact) => ({ Department: contact.department, "Contact Duty": contact.duty, Name: contact.name, Title: contact.title, Email: contact.email, Phone: contact.phone, Status: contact.status, Notes: contact.notes })) },
       { name: "Requisitions", columns: REQUISITION_TEMPLATE_COLUMNS, rows: safeObjectRecords(settings.requisitions).map((req) => ({ "Req Number": req.reqNumber, "Unique ID Number": req.uniqueIdNumber, "Position": req.positionTitle, "Site / Facility": req.siteName, "Number of Openings": req.numberOfOpenings || openingsForReq(req), "Requisition Open Date": requisitionOpenDate(req), "Who Is This Position Replacing?": req.replacingPerson || req.previousIncumbent || "", "Employment Type": req.employmentType, "Shift": req.shiftPreference, "FTE": req.fte, "Status": req.status, "Archived At": req.archivedAt, "Archive Reason": req.archiveReason, "Role Category": req.roleCategory, "Work Type": req.workType, "Required Info": req.requiredInfo, "Credential Requirements": req.credentialRequirements, "Pay Notes": req.payNotes, "Notes": req.notes, "Internal Job Link": req.internalJobLink || "", "External Job Link": req.externalJobLink || "", "Work Schedule": req.workSchedule, "Work Area": req.workArea, "OT Requirement": req.otRequirement, "Weekend Requirement": req.weekendRequirement, "On-Call Requirement": req.onCallRequirement, "Screening Questions": serializeScreeningQuestions(req.screeningQuestions) })) },
-      { name: "Roles", columns: ROLE_TEMPLATE_COLUMNS, rows: (settings.roles || []).map((role) => ({ "Position Title": role.positionTitle, "Role Category": role.roleCategory, "Role Credential Type": role.roleCredentialType || "Non-credentialed", "Role Scope Type": role.roleScopeType || "All", "Role Scope Value": role.roleScopeValue || "All", "Requires License": String(Boolean(role.requiresLicense)), "Requires CPR": String(Boolean(role.requiresCpr)), "Requires Credentialing": String(Boolean(role.requiresCredentialing)), "Requires Degree": String(Boolean(role.requiresDegree)), "Requires Background": String(Boolean(role.requiresBackground)), "Requires Drug Screen": String(Boolean(role.requiresDrugScreen)), "Requires Pay Approval": String(Boolean(role.requiresPayApproval)), "Requires Facility Clearance": String(Boolean(role.requiresFacilityClearance)), "Requires Manager Approval": String(Boolean(role.requiresManagerApproval)), "Requires Start Date Approval": String(Boolean(role.requiresStartDate)), "Requires Coverage / FTE Rules": String(Boolean(role.requiresFte)), "Requires Shift Confirmation": String(Boolean(role.requiresShift)), "Requires Work Expectations": String(Boolean(role.requiresWorkExpectations)), "Status": role.status })) },
+      { name: "Roles", columns: ROLE_TEMPLATE_COLUMNS, rows: (settings.roles || []).map((role) => ({ "Position Title": role.positionTitle, "Role Category": role.roleCategory, "Industry Profile": role.industryId || "", "Role Credential Type": role.roleCredentialType || "Non-credentialed", "Role Scope Type": role.roleScopeType || "All", "Role Scope Value": role.roleScopeValue || "All", "Requires License": String(Boolean(role.requiresLicense)), "Requires CPR": String(Boolean(role.requiresCpr)), "Requires Credentialing": String(Boolean(role.requiresCredentialing)), "Requires Degree": String(Boolean(role.requiresDegree)), "Requires Background": String(Boolean(role.requiresBackground)), "Requires Drug Screen": String(Boolean(role.requiresDrugScreen)), "Requires Pay Approval": String(Boolean(role.requiresPayApproval)), "Requires Facility Clearance": String(Boolean(role.requiresFacilityClearance)), "Requires Manager Approval": String(Boolean(role.requiresManagerApproval)), "Requires Start Date Approval": String(Boolean(role.requiresStartDate)), "Requires Coverage / FTE Rules": String(Boolean(role.requiresFte)), "Requires Shift Confirmation": String(Boolean(role.requiresShift)), "Requires Work Expectations": String(Boolean(role.requiresWorkExpectations)), "Status": role.status })) },
       { name: "History", columns: ["Type", "Timestamp", "Candidate", "Facility", "Subject", "Body"], rows: history.map((item) => ({ "Type": item.type, "Timestamp": item.timestamp, "Candidate": item.candidate, "Facility": item.facility, "Subject": item.subject, "Body": item.body })) },
     ]);
   }
@@ -11867,7 +11892,13 @@ function RecruiterApp() {
   function makeTemplateEmail(item, templateKey, typeLabel, extra = {}, log = true) {
     if (!item) return { subject: typeLabel || "ATS Update", body: "No candidate selected.", to: "", cc: "", from: "" };
     const snapshot = item.formSnapshot || {};
-    const template = (settings.templates || {})[templateKey] || DEFAULT_SETTINGS.templates[templateKey] || {};
+    const template = resolveIndustryCommunicationTemplate({
+      settings,
+      role: resolveIndustryRole(settings, snapshot.position || item.position),
+      templateKey,
+      template: (settings.templates || {})[templateKey] || DEFAULT_SETTINGS.templates[templateKey] || {},
+      defaultTemplate: DEFAULT_SETTINGS.templates[templateKey],
+    });
     const values = tokenMap(snapshot, settings, { status: item.status, nextAction: item.nextAction, submissionDate: item.submissionDate, interviewDate: interviewDateTimeFor(item).date || item.interviewDate, interviewDateText: interviewDateTimeTextFor(item), rescheduledDate: item.rescheduledInterviewDate || item.bookingRecord?.rescheduledDate || "", tentativeStartDate: item.tentativeStartDate || snapshot.tentativeStartDate || "", tentativeTransferDate: item.tentativeTransferDate || item.tentativeStartDate || snapshot.tentativeTransferDate || snapshot.tentativeStartDate || "", applicationLink: item.applicationLink || item.onboardingApplicationLink || snapshot.applicationLink || snapshot.onboardingApplicationLink || "", facilityContacts: siteContactDetailLinesFor(settings, item), departmentContacts: departmentContactLinesFor(settings), roleCredentialType: credentialedProfileFor(settings, item) ? "Credentialed" : "Non-credentialed", ...extra });
     const subject = applyTokens(template.subject || typeLabel, values);
     const body = applyTokens(template.body || "", values);
@@ -12894,6 +12925,10 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
     const position = formLike.position || "Position";
     const facility = formLike.siteName || "Location";
     const email = formLike.emailAddress || "verified email address";
+    const role = resolveIndustryRole(settings, formLike.position);
+    if (hasExplicitNonHealthcareIndustry({ settings, role })) {
+      return `Hello ${firstName}, this is ${settings.general?.recruiterName || "your recruiter"}. Please review the hiring team's instructions for the ${position} opportunity at ${facility}. Let me know if you need help or your availability has changed.`;
+    }
     return [
       `Hello ${firstName}! This is Ash w/Centurion Health. I would like to start your onboarding process for the ${position} at ${facility}.`,
       `I sent you a link via email to the application. Please log in with the email address you originally created your account with: ${email}.`,
@@ -12903,7 +12938,13 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
 
   function textBodyForOnboardingStep(item, step = {}) {
     if (step.textTemplateId) {
-      const template = (settings.textTemplates || DEFAULT_SETTINGS.textTemplates || []).find((row) => row.id === step.textTemplateId);
+      const template = resolveIndustryCommunicationTemplate({
+        settings,
+        role: resolveIndustryRole(settings, formLikeFromCandidate(item).position),
+        templateKey: step.textTemplateId,
+        template: (settings.textTemplates || DEFAULT_SETTINGS.textTemplates || []).find((row) => row.id === step.textTemplateId),
+        defaultTemplate: (DEFAULT_SETTINGS.textTemplates || []).find((row) => row.id === step.textTemplateId),
+      });
       if (template?.body) {
         return applyTokens(template.body, tokenMap(formLikeFromCandidate(item), settings, { status: item.status, nextAction: item.nextAction, submissionDate: item.submissionDate, interviewDate: interviewDateTimeFor(item).date || item.interviewDate, interviewDateText: interviewDateTimeTextFor(item) }));
       }
@@ -12994,7 +13035,7 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
       const body = textBodyForOnboardingStep(item, step);
       safeCopy(body);
       markOnboardingStepComplete(item, step, body, "Copied");
-      setCopyNotice(`${step.typeLabel || "Text message"} copied and marked complete.`);
+      setCopyNotice(`${step.typeLabel || "Text message"} copied. Confirm sending separately.`);
       return;
     }
     if (step.channel === "ats") {
@@ -13015,10 +13056,10 @@ ${settings.general.signOffName || settings.general.recruiterName || ""}`;
     const now = new Date().toISOString();
     setTracker((prev) => prev.map((row) => row.id === item.id ? {
       ...row,
-      onboardingCompletedSteps: Array.from(new Set([...(row.onboardingCompletedSteps || []), step.label])),
+      onboardingCompletedSteps: isConfirmedCompletion(status) ? Array.from(new Set([...(row.onboardingCompletedSteps || []), step.label])) : (row.onboardingCompletedSteps || []),
       onboardingLastStepAt: now,
       onboardingLastStepLabel: step.label,
-      nextAction: row.nextAction === "Send onboarding roadmap" || row.nextAction === "Generate offer communication" ? "Continue onboarding follow-up" : row.nextAction,
+      nextAction: isConfirmedCompletion(status) && (row.nextAction === "Send onboarding roadmap" || row.nextAction === "Generate offer communication") ? "Continue onboarding follow-up" : row.nextAction,
       communicationEvents: [{ id: makeId("comm"), timestamp: now, type: step.typeLabel, status, summary: subject || step.label, channel: step.channel || "email" }, ...(row.communicationEvents || [])].slice(0, 100),
       audit: [...(row.audit || []), { id: makeId("audit"), timestamp: now, label: `${step.typeLabel} ${status}`, detail: step.label }],
       updatedAt: now,
@@ -15435,6 +15476,8 @@ function rowifyCandidate(item = {}) {
     window.setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 30);
   }
 
+  const activeIndustry = industryProfile(settings);
+  const saveStatus = workspaceSaveStatus({ cloudStatus, cloudEnabled: workspacePersistenceEnabled, browserEnabled: browserPersistenceEnabled });
   const isNarrow = viewportWidth < 900;
   const isMedium = viewportWidth < 1180;
   const queueCompact = viewportWidth < 640;
@@ -15460,12 +15503,21 @@ function rowifyCandidate(item = {}) {
     ["home", "Home", "\u2302"],
     ["candidates", "Candidates", "\uD83D\uDC65"],
     ["calendar", "Calendar", "\uD83D\uDCC5"],
-    ["positions", "Facility & Position Setup", "\uD83C\uDFE2"],
+    ["positions", activeIndustry.id === "healthcare" ? "Facility & Position Setup" : "Locations & Positions", "\uD83C\uDFE2"],
     ["reports", "Weekly Reporting", "\uD83E\uDDF9"],
     ["reporting", "Reports & History", "\uD83D\uDCCA"],
+    ["learning", "Learn & Setup", "\uD83D\uDCD6"],
     ["settings", "Settings", "\u2699\uFE0F"],
     ["account", "Profile & Account", "\uD83D\uDC64"],
   ];
+  function openLearning(section = "learn") {
+    setLearningSection(section);
+    navigateToPage("learning");
+  }
+  function openGuidedSettings(tab) {
+    setActiveSettingsTab(tab);
+    navigateToPage("settings");
+  }
   function updateActionCenterNavigation({ filter, itemId = "" } = {}) {
     const navigation = buildActionCenterNavigation({
       search: window.location.search,
@@ -16063,8 +16115,14 @@ function rowifyCandidate(item = {}) {
     playUiSound("tick", soundEnabled);
   }
 
-  function enterAppFromLogin() {
+  function enterAppFromLogin({ industryId } = {}) {
     if (!browserDemoAccess) return;
+    if (loginMode === "signup") {
+      if (!INDUSTRY_PROFILES.some((profile) => profile.id === industryId)) return;
+      setSettings((current) => applyIndustryProfile(current, industryId));
+      setLearningSection("industry");
+      setActivePage("learning");
+    }
     window.localStorage.setItem("welcomeflow-session", "active");
     setIsAuthenticated(true);
     playUiSound("ding", soundEnabled);
@@ -16193,28 +16251,32 @@ function rowifyCandidate(item = {}) {
             </div>
           </aside>
         ) : null}
-        <main style={shellStyle}>
+        <main className="wf-app-shell" style={shellStyle}>
           <div style={{ display: "grid", gap: 18, gridTemplateColumns: isMedium ? "1fr" : "1fr auto", alignItems: "center", marginBottom: 18 }}>
             <div>
               <HeaderLogo soundEnabled={soundEnabled} />
             </div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: isMedium ? "flex-start" : "flex-end", alignItems: "center" }}>
               {isNarrow ? (
-                <select value={activePage} onChange={(event) => navigateToPage(event.target.value)} style={controlStyle}>
+                <select className="wf-mobile-menu" aria-label="Navigate WelcomeFlow" value={mobilePageValue(activePage, reportsTab)} onChange={(event) => navigateToPage(event.target.value)} style={controlStyle}>
                   {nav.map(([key, label, icon]) => <option key={key} value={key}>{icon} {label}</option>)}
+                  <option value="hot">Candidate queue</option>
+                  <option value="submission">Candidate intake</option>
+                  <option value="workspace">Candidate profiles</option>
+                  <option value="automation">Automation Center</option>
                 </select>
               ) : null}
               {runtimeConfig.isTest ? <span aria-label="Test mode indicator" style={{ display: "inline-flex", alignItems: "center", minHeight: 40, border: "1px solid #d97706", borderRadius: 6, padding: "0 10px", background: "#fef3c7", color: "#92400e", fontSize: 11, fontWeight: 950 }}>TEST</span> : runtimeConfig.isUat ? <span aria-label="Owner UAT mode indicator" style={{ display: "inline-flex", alignItems: "center", minHeight: 40, border: "1px solid #991b1b", borderRadius: 6, padding: "0 10px", background: "#fee2e2", color: "#7f1d1d", fontSize: 11, fontWeight: 950 }}>OWNER UAT</span> : null}
-              <select value={themeMode} onChange={(event) => setThemeMode(event.target.value)} style={controlStyle}>
+              <select aria-label="Color theme" value={themeMode} onChange={(event) => setThemeMode(event.target.value)} style={controlStyle}>
                 <option value="light">Light Mode</option>
                 <option value="dark">Dark Mode</option>
               </select>
               <Button subtle onClick={undoLastAction} disabled={!undoDepth} title={undoDepth ? `Undo last action (${undoDepth} saved step${undoDepth === 1 ? "" : "s"})` : "No recent action to undo"} style={{ minHeight: 40, padding: "8px 12px" }}>Undo</Button>
               <Button subtle onClick={loadDemoData} style={{ minHeight: 40, padding: "8px 12px" }}>Load Demo</Button>
               <Button subtle onClick={logoutOfApp} style={{ minHeight: 40, padding: "8px 12px" }}>Log Out</Button>
-              <span title={cloudStatus} style={{ display: "inline-flex", alignItems: "center", minHeight: 40, border: `1px solid ${THEME.borderSoft}`, borderRadius: 6, padding: "0 10px", background: cloudStatus.includes("Saved") || cloudStatus.includes("connected") ? THEME.greenBg : THEME.amberBg, color: cloudStatus.includes("Saved") || cloudStatus.includes("connected") ? THEME.green : THEME.amber, fontSize: 12, fontWeight: 900 }}>
-                {cloudStatus.includes("Saved") || cloudStatus.includes("connected") ? "Cloud Saved" : "Cloud Pending"}
-              </span>
+              <button type="button" onClick={() => openLearning("connections")} title={saveStatus.detail} style={{ ...controlStyle, cursor: "pointer", fontSize: 12 }}>
+                {saveStatus.label}
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -16231,6 +16293,23 @@ function rowifyCandidate(item = {}) {
             </div>
           </div>
 
+        {activePage === "home" && hasLoaded && !settings.recruiterExperience?.industryId ? <RecruiterIndustrySetupCard settings={settings} theme={THEME} onApplyIndustry={(id) => setSettings((current) => applyIndustryProfile(current, id))} /> : null}
+        {activePage === "home" ? <div className="wf-quick-actions" style={{ "--wf-panel": THEME.panel, "--wf-text": THEME.text, "--wf-border": THEME.border }} aria-label="Recruiter shortcuts">
+          <button type="button" onClick={() => navigateToPage("submission")}>Add / resume candidate</button>
+          <button type="button" onClick={() => navigateToPage("hot")}>Candidate queue</button>
+          <button type="button" onClick={() => navigateToPage("reports")}>Weekly reporting</button>
+          <button type="button" onClick={() => openLearning()}>Training & help</button>
+          <span>{settings.recruiterExperience?.industryId ? activeIndustry.name : "Personalize your workspace"} <button type="button" onClick={() => openLearning("industry")}>{settings.recruiterExperience?.industryId ? "Change industry" : "Choose industry"}</button></span>
+        </div> : null}
+        {activePage === "learning" ? <RecruiterEnablementPage
+          settings={settings} theme={THEME} saveStatus={saveStatus}
+          section={learningSection} onSectionChange={setLearningSection}
+          completedLessons={completedLessons}
+          onCompleteLesson={(id) => setCompletedLessons((current) => [...new Set([...current, id])])}
+          onApplyIndustry={(id) => setSettings((current) => applyIndustryProfile(current, id))}
+          onNavigate={navigateToPage} onOpenSettings={openGuidedSettings}
+        /> : null}
+
         {candidateRouteKeys.includes(activePage) ? <CandidateSectionNavigator onChange={navigateToCandidateSection} /> : null}
         {reportCorrectionTarget && activePage !== "reports" ? (
           <div role="status" style={{ marginBottom: 14, border: `1px solid ${THEME.primary2}`, borderRadius: 8, padding: 12, background: THEME.blueBg, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
@@ -16244,6 +16323,7 @@ function rowifyCandidate(item = {}) {
           </div>
         ) : null}
 
+        {activePage === "home" && process.env.REACT_APP_WELCOMEFLOW_WORKFLOW_ENABLED === "true" ? <WorkflowPanel client={supabase} workspaceId={CLOUD_WORKSPACE_ID} /> : null}
         {activePage === "home" ? (
           <RecruiterWorkspacePage
             tracker={safeTrackerRows}
@@ -16533,6 +16613,7 @@ function rowifyCandidate(item = {}) {
 
             {accountTab === "profile" ? (
               <>
+            <RecruiterIndustrySetupCard settings={settings} theme={THEME} onApplyIndustry={(id) => setSettings((current) => applyIndustryProfile(current, id))} />
             <Card compact title="Profile Overview">
               <div style={{ display: "grid", gap: 18, gridTemplateColumns: isNarrow ? "1fr" : "1fr 280px", alignItems: "center" }}>
                 <div style={{ display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
@@ -17373,15 +17454,15 @@ function rowifyCandidate(item = {}) {
                       <Field label="License / Certification Note"><TextArea value={form.licenseCertificationNotes || form.additionalLicenseInfo || ""} onChange={(event) => updateForm("licenseCertificationNotes", event.target.value)} minHeight={62} placeholder="License, certification, verification, standing, expiration, and follow-up notes." /></Field>
 
                       <div style={{ color: THEME.primary2, fontSize: 12, fontWeight: 950, textTransform: "uppercase", marginTop: 4 }}>Experience</div>
-                      <Field label="Experience Summary*"><TextArea value={form.experienceNotes} onChange={(event) => updateForm("experienceNotes", event.target.value)} minHeight={78} placeholder="Years, setting, patient type, and relevant experience." /></Field>
+                      <Field label="Experience Summary*"><TextArea value={form.experienceNotes} onChange={(event) => updateForm("experienceNotes", event.target.value)} minHeight={78} placeholder="Relevant experience, work setting, skills, and equipment." /></Field>
                       <div style={{ display: "grid", gap: 12, gridTemplateColumns: formCompact ? "1fr" : "repeat(3, minmax(0, 1fr))" }}>
                         <Field label="Why a Fit*"><TextArea value={form.whyFit || form.candidateTalkingPoints || ""} onChange={(event) => updateForm("whyFit", event.target.value)} minHeight={78} placeholder="Why this candidate should be reviewed." /></Field>
-                        <Field label="Strengths"><TextArea value={form.candidateStrengths || ""} onChange={(event) => updateForm("candidateStrengths", event.target.value)} minHeight={78} placeholder="Clinical strengths, reliability, schedule fit, or role match." /></Field>
+                        <Field label="Strengths"><TextArea value={form.candidateStrengths || ""} onChange={(event) => updateForm("candidateStrengths", event.target.value)} minHeight={78} placeholder="Role strengths, reliability, schedule fit, or relevant skills." /></Field>
                         <Field label="Weaknesses / Watchouts"><TextArea value={form.candidateWeaknesses || ""} onChange={(event) => updateForm("candidateWeaknesses", event.target.value)} minHeight={78} placeholder="Anything to verify, coach, or clarify before submission." /></Field>
                       </div>
                       {selectedScreeningQuestions.length ? (
                         <div style={{ gridColumn: "1 / -1", border: `1px solid ${THEME.primary2}`, borderRadius: 8, padding: 12, background: THEME.lightPurple, display: "grid", gap: 10 }}>
-                          <div><strong style={{ color: THEME.text }}>Site-Specific Screening Questions</strong><div style={{ color: THEME.muted, fontSize: 12, marginTop: 3 }}>These questions come from the selected facility or requisition and save into the candidate profile.</div></div>
+                          <div><strong style={{ color: THEME.text }}>Site-Specific Screening Questions</strong><div style={{ color: THEME.muted, fontSize: 12, marginTop: 3 }}>These questions come from the selected location, requisition, or industry role and save into the candidate profile.</div></div>
                           <div style={{ display: "grid", gap: 10 }}>
                             {selectedScreeningQuestions.map((question) => (
                               <div key={question.id} style={{ display: "grid", gap: 8, border: `1px solid ${THEME.borderSoft}`, borderRadius: 6, padding: 10, background: THEME.panel }}>
@@ -20028,6 +20109,7 @@ function rowifyCandidate(item = {}) {
         ) : null}
         {activePage === "settings" ? (
           <div style={{ display: "grid", gap: 18 }}>
+            <Card compact title="Your recruiting industry" subtitle={settings.recruiterExperience?.industryId ? activeIndustry.name : "Choose the industry for your account's recruiting workspace."} action={<Button primary onClick={() => openLearning("industry")}>{settings.recruiterExperience?.industryId ? "Review industry setup" : "Choose industry"}</Button>} />
             <div>
               <h1 style={{ margin: 0, fontSize: 24, lineHeight: 1.15 }}>Settings</h1>
               <p style={{ margin: "6px 0 0", color: THEME.muted, fontWeight: 700 }}>Manage your workspace configuration and application settings.</p>
@@ -23839,7 +23921,7 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
   }
 
   function addRole() {
-    setSettings((prev) => ({ ...prev, roles: [...prev.roles, { id: makeId("role"), positionTitle: "", roleCategory: "Other", roleCredentialType: "Non-credentialed", roleScopeType: "All", roleScopeValue: "All", requiresLicense: false, requiresCpr: false, requiresFte: false, requiresShift: false, requiresWorkExpectations: true, status: "Active" }] }));
+    setSettings((prev) => ({ ...prev, roles: [...prev.roles, { id: makeId("role"), positionTitle: "", industryId: prev.recruiterExperience?.industryId || "", roleCategory: industryProfile(prev).category, roleCredentialType: "Non-credentialed", roleScopeType: "All", roleScopeValue: "All", requiresLicense: false, requiresCpr: false, requiresFte: false, requiresShift: false, requiresWorkExpectations: true, status: "Active" }] }));
   }
 
   function updateCandidateTypeRule(id, key, value) {
@@ -23964,7 +24046,7 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
       { name: "Sites", columns: SITE_TEMPLATE_COLUMNS, rows: settings.sites.map((site) => ({ "Site Name": site.siteName, "Location Type": site.siteType, "Location": site.location || siteFullLocation(site), "Address": site.siteAddress, "City": site.siteCity, "State": site.siteState, "Zip Code": site.siteZipCode, "Hiring Manager Name": site.hiringManagerName, "Hiring Manager Email": site.hiringManagerEmail, "Hiring Manager Phone": site.hiringManagerPhone, "Additional Manager Name": (site.additionalHiringManagers || []).map((m) => m.name).join("; "), "Additional Manager Title": (site.additionalHiringManagers || []).map((m) => m.title).join("; "), "Additional Manager Email": (site.additionalHiringManagers || []).map((m) => m.email).join("; "), "Additional Manager Phone": (site.additionalHiringManagers || []).map((m) => m.phone).join("; "), "Administrative Contact Name": site.adminContactName, "Administrative Contact Email": site.adminContactEmail, "Administrative Contact Phone": site.adminContactPhone, "Site-Specific Screening Questions": serializeScreeningQuestions(site.siteSpecificQuestions), "Status": site.status, "Notes": site.notes })) },
       { name: "Contacts", columns: CONTACT_TEMPLATE_COLUMNS, rows: (settings.contacts || []).map((contact) => ({ Department: contact.department, "Contact Duty": contact.duty, Name: contact.name, Title: contact.title, Email: contact.email, Phone: contact.phone, Status: contact.status, Notes: contact.notes })) },
       { name: "Requisitions", columns: REQUISITION_TEMPLATE_COLUMNS, rows: safeObjectRecords(settings.requisitions).map((req) => ({ "Req Number": req.reqNumber, "Unique ID Number": req.uniqueIdNumber, "Position": req.positionTitle, "Site / Facility": req.siteName, "Number of Openings": req.numberOfOpenings || openingsForReq(req), "Requisition Open Date": requisitionOpenDate(req), "Who Is This Position Replacing?": req.replacingPerson || req.previousIncumbent || "", "Employment Type": req.employmentType, "Shift": req.shiftPreference, "FTE": req.fte, "Status": req.status, "Archived At": req.archivedAt, "Archive Reason": req.archiveReason, "Role Category": req.roleCategory, "Work Type": req.workType, "Required Info": req.requiredInfo, "Credential Requirements": req.credentialRequirements, "Pay Notes": req.payNotes, "Notes": req.notes, "Internal Job Link": req.internalJobLink || "", "External Job Link": req.externalJobLink || "", "Work Schedule": req.workSchedule, "Work Area": req.workArea, "OT Requirement": req.otRequirement, "Weekend Requirement": req.weekendRequirement, "On-Call Requirement": req.onCallRequirement, "Screening Questions": serializeScreeningQuestions(req.screeningQuestions) })) },
-      { name: "Roles", columns: ROLE_TEMPLATE_COLUMNS, rows: (settings.roles || []).map((role) => ({ "Position Title": role.positionTitle, "Role Category": role.roleCategory, "Role Credential Type": role.roleCredentialType || "Non-credentialed", "Role Scope Type": role.roleScopeType || "All", "Role Scope Value": role.roleScopeValue || "All", "Requires License": String(Boolean(role.requiresLicense)), "Requires CPR": String(Boolean(role.requiresCpr)), "Requires Credentialing": String(Boolean(role.requiresCredentialing)), "Requires Degree": String(Boolean(role.requiresDegree)), "Requires Background": String(Boolean(role.requiresBackground)), "Requires Drug Screen": String(Boolean(role.requiresDrugScreen)), "Requires Pay Approval": String(Boolean(role.requiresPayApproval)), "Requires Facility Clearance": String(Boolean(role.requiresFacilityClearance)), "Requires Manager Approval": String(Boolean(role.requiresManagerApproval)), "Requires Start Date Approval": String(Boolean(role.requiresStartDate)), "Requires Coverage / FTE Rules": String(Boolean(role.requiresFte)), "Requires Shift Confirmation": String(Boolean(role.requiresShift)), "Requires Work Expectations": String(Boolean(role.requiresWorkExpectations)), "Status": role.status })) },
+      { name: "Roles", columns: ROLE_TEMPLATE_COLUMNS, rows: (settings.roles || []).map((role) => ({ "Position Title": role.positionTitle, "Role Category": role.roleCategory, "Industry Profile": role.industryId || "", "Role Credential Type": role.roleCredentialType || "Non-credentialed", "Role Scope Type": role.roleScopeType || "All", "Role Scope Value": role.roleScopeValue || "All", "Requires License": String(Boolean(role.requiresLicense)), "Requires CPR": String(Boolean(role.requiresCpr)), "Requires Credentialing": String(Boolean(role.requiresCredentialing)), "Requires Degree": String(Boolean(role.requiresDegree)), "Requires Background": String(Boolean(role.requiresBackground)), "Requires Drug Screen": String(Boolean(role.requiresDrugScreen)), "Requires Pay Approval": String(Boolean(role.requiresPayApproval)), "Requires Facility Clearance": String(Boolean(role.requiresFacilityClearance)), "Requires Manager Approval": String(Boolean(role.requiresManagerApproval)), "Requires Start Date Approval": String(Boolean(role.requiresStartDate)), "Requires Coverage / FTE Rules": String(Boolean(role.requiresFte)), "Requires Shift Confirmation": String(Boolean(role.requiresShift)), "Requires Work Expectations": String(Boolean(role.requiresWorkExpectations)), "Status": role.status })) },
       { name: "Compensation", columns: COMP_TEMPLATE_COLUMNS, rows: (settings.compensationStructure?.rules || []).map((rule) => ({ "Position Title": rule.positionTitle, "Scope Type": rule.scopeType, "Scope Value": rule.scopeValue, "Compensation Type": rule.compensationType, "Basis Type": rule.basisType, "Experience Tier": rule.experienceTier, "Base Amount": rule.baseAmount, "Night Differential": rule.shiftDifferentialNight, "Weekend Differential": rule.shiftDifferentialWeekend, "Evening Differential": rule.shiftDifferentialEvening, "Bonus Type": rule.bonusType, "Bonus Amount": rule.bonusAmount, "Bonus Notes": rule.bonusNotes, "Custom Notes": rule.customNotes })) },
       { name: "Workflow Rules", columns: ["Rule", "Value"], rows: Object.entries(settings.options.workflowRules || {}).map(([rule, value]) => ({ Rule: labelFromKey(rule), Value: value })) },
       { name: "Core Options", columns: ["Option Group", "Values"], rows: [
@@ -24057,6 +24139,7 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
       id: makeId("role"),
       positionTitle: normalizeCsvHeader(row, ["Position Title", "Position", "Positon", "Role", "Job Title", "positionTitle"]),
       roleCategory: normalizeCsvHeader(row, ["Role Category", "Category", "roleCategory"]) || "Other",
+      industryId: normalizeCsvHeader(row, ["Industry Profile", "Industry ID", "industryId"]),
       roleCredentialType: normalizeCsvHeader(row, ["Role Credential Type", "Credential Type", "Credentialed Type", "roleCredentialType"]),
       roleScopeType: normalizeCsvHeader(row, ["Role Scope Type", "Scope Type", "roleScopeType"]) || "All",
       roleScopeValue: normalizeCsvHeader(row, ["Role Scope Value", "Scope Value", "roleScopeValue"]) || "All",
@@ -24274,7 +24357,7 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
         <div style={{ color: THEME.muted, fontSize: 12, marginTop: 2 }}>Sections</div>
       </div>
     );
-    const wizardTone = (item) => item.type === "optional" ? { bg: THEME.blueBg, color: THEME.primary2, label: "Optional", icon: "Done" } : { bg: THEME.amberBg, color: THEME.amber, label: "Needs Attention", icon: "!" };
+    const wizardTone = (item) => item.type === "optional" ? { bg: THEME.blueBg, color: THEME.primary2, label: "Optional", icon: "Done" } : item.done ? { bg: THEME.greenBg, color: THEME.green, label: "Complete", icon: "✓" } : { bg: THEME.amberBg, color: THEME.amber, label: "Needs Attention", icon: "!" };
     const generalMatches = (...parts) => matchesSettingsSearch(parts, searchFor("general"));
     const workspaceField = (key, label = labelFromKey(key), full = false) => generalMatches(key, label, settings.general[key]) ? (
       <div style={full ? { gridColumn: "1 / -1" } : null}>
@@ -25037,6 +25120,7 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
                 </div>
                 <div style={fieldGrid}>
                   <Field label="Position Title"><TextInput value={role.positionTitle} onChange={(event) => updateArrayRecord("roles", role.id, "positionTitle", event.target.value)} /></Field>
+                  <Field label="Industry screening prompts"><select aria-label={`Industry screening prompts for ${role.positionTitle || "new role"}`} value={role.industryId || ""} onChange={(event) => updateArrayRecord("roles", role.id, "industryId", event.target.value)} style={{ width: "100%", minHeight: 44, padding: 10, border: `1px solid ${THEME.border}`, borderRadius: 6, background: THEME.panel, color: THEME.text, font: "inherit" }}><option value="">Use existing role questions only</option>{INDUSTRY_PROFILES.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></Field>
                   <Field label="Role Category"><SelectInput value={role.roleCategory} onChange={(event) => updateArrayRecord("roles", role.id, "roleCategory", event.target.value)} options={settings.options.roleTypes} /></Field>
                   <Field label="Role Credential Type"><SelectInput value={role.roleCredentialType || "Non-credentialed"} onChange={(event) => updateArrayRecord("roles", role.id, "roleCredentialType", event.target.value)} options={settings.options.roleCredentialTypes || ROLE_CREDENTIAL_TYPES} /></Field>
                   <Field label="Role Scope Type"><SelectInput value={role.roleScopeType || "All"} onChange={(event) => updateArrayRecord("roles", role.id, "roleScopeType", event.target.value)} options={roleScopeTypes} /></Field>
