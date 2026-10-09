@@ -15,13 +15,13 @@ The following update supersedes the restoration/recipient blockers below; the ea
 - Connected RPC/sequence checks passed: anonymous/authenticated roles cannot execute the commit function or use the audit sequence; service role can.
 - Existing workspace records were not modified. No test users, memberships, candidate records, worker activation, email sending, or deployment was performed.
 
-Approved exact test recipients:
+Approved exact test recipients are maintained in the secure isolated runtime and private approval records. This public checkpoint does not reproduce mailbox addresses:
 
 | Test role | Approved address |
 | --- | --- |
-| Recruiter | ashleysimpson0218@gmail.com |
-| Manager / stage owner | central54llc@outlook.com |
-| Synthetic candidate | chicagoroxi@gmail.com |
+| Recruiter | Exact privately approved recruiter test mailbox |
+| Manager / stage owner | Exact privately approved manager test mailbox |
+| Synthetic candidate | Exact privately approved candidate test mailbox |
 
 These addresses are approved only for synthetic records in WelcomeFlow Test. Configure `WELCOMEFLOW_EMAIL_ALLOWED_RECIPIENTS` with these three addresses and leave `WELCOMEFLOW_EMAIL_ALLOWED_DOMAINS` empty. Approval is recorded here; runtime allowlisting is not yet configured.
 
@@ -114,7 +114,7 @@ Authentication is no longer the observed blocker. Branch-specific test configura
 
 Status: runtime preparation advanced; no connected A01–A15 executed.
 
-- Recovered the committed source in `/workspace/scratch/ef11b0fef41d/welcomeflow`, branch `codex/revision-5-workflow-foundation`, starting head `689ab9d8cca6222af2143b98d85afbaab8c8aa58`. Origin is `https://github.com/ashleysimpson0218-hash/Submission-assistant.git`. Remote branch was absent in read-only checks.
+- Recovered the committed source in `/workspace/scratch/ef11b0fef41d/welcomeflow`, branch `codex/revision-5-workflow-foundation`, starting head `689ab9d8cca6222af2143b98d85afbaab8c8aa58`. Origin is the existing connected `Submission-assistant` repository. Remote branch was absent in read-only checks.
 - Verified the existing isolated Vercel project `welcomeflow-revision5-test`, project ID `prj_M1XpY5rahX31QqPdXzv0m4xFGjtL`, team `team_taUwIH8zImWmWOtcqnzM2uqU`. Deployment list is empty. No new project or repository was created.
 - Dashboard authentication worked without a new login. Saved 18 non-secret configuration settings to **Preview only in this dedicated project**. The dashboard confirmed success and every setting showed Preview. The Shared tab explicitly showed no linked shared variables.
 - Frontend/server environment is `acceptance`; both project-reference guards and Supabase URLs identify `bjverobaoujhfaylyrzi`. Workspace allowlist and frontend workspace are `revision5-connected-synthetic`. Autosave is false. Recruiter role allowlist is `recruiter`.
@@ -140,6 +140,6 @@ Do not reapply existing migrations merely because their connector-assigned times
 
 Automatic approval review rejected `git push origin HEAD:refs/heads/codex/revision-5-workflow-foundation`, citing private source disclosure to a GitHub destination not explicitly approved for this action. The push was not retried or bypassed. A subsequent read-only remote check still showed no such branch.
 
-Approval needed: publish the reviewed Revision 5 branch and this infrastructure correction/checkpoint to the existing repository `ashleysimpson0218-hash/Submission-assistant`, branch `codex/revision-5-workflow-foundation`, solely to support the isolated test runtime. Do not push main, change production, or connect another project.
+Approval needed: publish the reviewed Revision 5 branch and this infrastructure correction/checkpoint to the existing repository the existing connected `Submission-assistant` repository, branch `codex/revision-5-workflow-foundation`, solely to support the isolated test runtime. Do not push main, change production, or connect another project.
 
 After approval, verify the exact remote commit, establish Preview-only deployment in the dedicated project, configure test-only secrets/provider and synthetic identities, verify all runtime/database/membership/role/worker/recipient guards, and execute A01–A15. Do not treat the saved Vercel configuration as a running runtime. A test origin is not yet established. Production and unrelated Vercel projects remained unchanged.

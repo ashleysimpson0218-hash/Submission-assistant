@@ -85,6 +85,7 @@ export default function WorkflowPortal() {
         client={client}
         workspaceId={workspaceId}
         token={token}
+        entry={{caseId: query.get("case") || "", action: query.get("action") || "", version: query.get("version") || ""}}
       />
     </main>
   );

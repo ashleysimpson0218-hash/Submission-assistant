@@ -9,7 +9,7 @@ const {
   deliveryGroups,
   buildMessage,
 } = require("../server/workflow/communications");
-const { need } = require("../src/workflow/engine");
+const { need, isId } = require("../src/workflow/engine");
 function authorized(req) {
   const expected = process.env.WELCOMEFLOW_WORKFLOW_WORKER_SECRET,
     provided = String(req.headers?.authorization || "").replace(/^Bearer /, "");
@@ -75,6 +75,8 @@ module.exports = async function handler(req, res) {
           SYSTEM,
         );
     const confirmationCaseId = req.body?.confirmationCaseId;
+    const requestedCaseId = req.body?.caseId;
+    need(!Object.prototype.hasOwnProperty.call(req.body || {}, "caseId") || isId(requestedCaseId), "CASE_REQUIRED", "A candidate case is required for targeted delivery.", 400);
     if (!confirmationCaseId) await run("tick", {});
     // Timers and recovery are operational even when outbound email is deliberately disabled.
     if (
@@ -99,6 +101,7 @@ module.exports = async function handler(req, res) {
           .filter(
             (j) =>
               j.status === "provider_accepted" &&
+              (!requestedCaseId || j.caseId === requestedCaseId) &&
               j.providerId &&
               (!j.providerCheckedAt ||
                 Date.now() - Date.parse(j.providerCheckedAt) > 5 * 60000),
@@ -143,7 +146,8 @@ module.exports = async function handler(req, res) {
           (x) =>
             x.status === "queued" &&
             x.dueAt <= now &&
-            (!confirmationCaseId || x.caseId === confirmationCaseId),
+            (!confirmationCaseId || x.caseId === confirmationCaseId) &&
+            (!requestedCaseId || x.caseId === requestedCaseId),
         )
         .slice(0, 50)) {
         const check = eligible(j, snap.state, snap.members, now);
@@ -155,7 +159,7 @@ module.exports = async function handler(req, res) {
           });
       }
       snap = await snapshot(client, workspaceId);
-      const group = deliveryGroups(snap.state, snap.members, now).find(
+      const group = deliveryGroups(snap.state, snap.members, now).map(g => ({...g, jobs: g.jobs.filter(j => !requestedCaseId || j.caseId === requestedCaseId)})).filter(g => g.jobs.length).find(
         (g) =>
           !confirmationCaseId ||
           g.jobs.some(
@@ -190,7 +194,7 @@ module.exports = async function handler(req, res) {
         });
         continue;
       }
-      if (!message || !allowedRecipient(message.to)) {
+      if (!message || !allowedRecipient(message.to) || (message.replyTo && !allowedRecipient(message.replyTo))) {
         await run("record_delivery", {
           jobIds: group.jobs.map((j) => j.id),
           leaseId,
@@ -217,6 +221,8 @@ module.exports = async function handler(req, res) {
             to: [message.to],
             subject: message.subject,
             text: message.text,
+            html: message.html,
+            ...(message.replyTo ? {reply_to: message.replyTo} : {}),
           }),
         });
         const data = await response.json().catch(() => ({}));

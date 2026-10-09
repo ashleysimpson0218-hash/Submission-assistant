@@ -248,6 +248,15 @@ function stateView(state, actor, members = []) {
   };
 }
 function applyCommand(input, command, context) {
+  if (command.type === "proceed_with_slots") {
+    const p = command.payload || {};
+    const first = applyCommand(input, {...command, type: "decision", payload: {...p, decision: "proceed", schedulingMode: "manager_times"}}, context);
+    const c = first.state.cases.find(c => c.id === p.caseId);
+    need(c?.status === "slots_needed", "SCHEDULING_NOT_REQUIRED", "The final stage proceeds toward offer handoff, not another interview.", 409);
+    const second = applyCommand(first.state, {...command, type: "offer_slots", payload: {...p, expectedVersion: c.version}}, context);
+    second.state.revision = input.revision + 1;
+    return {state: second.state, events: [...first.events, ...second.events]};
+  }
   const state = clone(input),
     { actor, members = [], now } = context;
   need(
@@ -957,6 +966,8 @@ function applyCommand(input, command, context) {
           "INTERVIEW_INCOMPLETE",
           "Confirm that the interview occurred before recording its decision.",
         );
+      need(p.decision !== "proceed" || p.schedulingMode !== "calendar" || c.stageIndex + 1 === c.stages.length,
+        "CALENDAR_CONNECTION_REQUIRED", "Leadership calendar booking is not connected yet. Use manager-selected interview times, or ask your administrator to connect the leadership calendar.", 409);
       invalidate(c);
       resolveFor(c.id, ["DECISION_OVERDUE"]);
       if (p.decision === "hold") {
@@ -979,6 +990,8 @@ function applyCommand(input, command, context) {
         c.status = "declined";
         c.finalReason = clean(p.reason);
         c.finalAt = now;
+        exception("DECLINE_FOLLOW_UP_REQUIRED", c, r, "The manager declined to proceed. Recruiting must choose candidate follow-up through WelcomeFlow or the company ATS.");
+        job("recruiter_decline", c, r, c.recruiterId, c.stageIndex, now, String(c.version));
       } else {
         if (s) {
           s.status = "completed";
@@ -1015,6 +1028,15 @@ function applyCommand(input, command, context) {
         reason: clean(p.reason),
         comment: clean(p.comment),
       });
+    } else if (command.type === "decline_follow_up") {
+      need(canRecruit(actor, r) && c.status === "declined", "FORBIDDEN", "Only recruiting can choose follow-up for a declined candidate.", 403);
+      need(["welcomeflow", "ats"].includes(p.channel), "INVALID_CHANNEL", "Choose WelcomeFlow or your company ATS.", 400);
+      need(!c.declineFollowUp, "FOLLOW_UP_ALREADY_CHOSEN", "Candidate follow-up has already been assigned. Check the recorded delivery before choosing again.");
+      c.declineFollowUp = {channel: p.channel, actorId: actor.userId, recordedAt: now};
+      if (p.channel === "welcomeflow") job("candidate_decline", c, r, "candidate", c.stageIndex);
+      resolveFor(c.id, ["DECLINE_FOLLOW_UP_REQUIRED"]);
+      if (p.channel === "ats") exception("ATS_DECLINE_FOLLOW_UP_REQUIRED", c, r, "Recruiting chose the company ATS. Copy the recorded decline note and send the candidate follow-up there; no external ATS write was made.");
+      event("decline.follow_up_assigned", r.id, c.id, {channel: p.channel});
     } else if (command.type === "offer_slots") {
       need(
         isOwner && ["slots_needed", "selection_pending"].includes(c.status),

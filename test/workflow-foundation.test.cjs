@@ -267,7 +267,8 @@ test("Hold produces one no-date communication; decline requires a reason", () =>
     origin: "https://example.com",
     workspaceId: "test",
   });
-  assert.match(mail.text, /in active review/);
+  assert.match(mail.text, /actively reviewed by the hiring manager/);
+  assert.equal(mail.replyTo, "recruiter@example.com");
   assert.doesNotMatch(mail.text, /update you by/);
   f.action("decision", {
     decision: "decline",
@@ -731,4 +732,75 @@ test("an after-hours 24–48 hour booking sends confirmation alone and defers pr
     ).state,
     "waiting",
   );
+});
+
+test('manager submission contains reviewed packet and four candidate-specific HTML/text action links', () => {
+  const f = fixture();
+  const group = deliveryGroups(f.state, members, now).find(g => g.jobs[0].kind === 'decision_request');
+  const before = JSON.stringify(f.state);
+  const mail = buildMessage(group, f.state, members, now, {origin:'https://example.com', workspaceId:'test'});
+  assert.match(mail.text, /Approved packet/);
+  for (const label of ['Proceed', 'Proceed but select your time your way', 'Hold for other candidate review', 'Decline to proceed']) assert.ok(mail.html.includes(label));
+  for (const action of ['proceed-calendar', 'proceed-times', 'hold', 'decline']) assert.ok(mail.text.includes(`case=candidate&action=${action}&version=1`));
+  assert.equal(JSON.stringify(f.state), before);
+  f.handoff('second-candidate');
+  const batch = deliveryGroups(f.state, members, now).find(g => g.jobs[0].kind === 'decision_request');
+  const batchMail = buildMessage(batch, f.state, members, now, {origin:'https://example.com', workspaceId:'test'});
+  assert.ok(batchMail.text.includes('case=second-candidate&action=hold&version=1'));
+  assert.ok(batchMail.html.includes('candidate: Proceed'));
+});
+
+test('manual Proceed and offered times commit together; invalid times never record Proceed', () => {
+  const f = fixture();
+  const before = JSON.stringify(f.state);
+  assert.throws(() => f.action('proceed_with_slots', {slots:[]}), /one or more/);
+  assert.equal(JSON.stringify(f.state), before);
+  const revision = f.state.revision;
+  f.action('proceed_with_slots', {slots:[{start:'2026-09-28T14:00:00Z',end:'2026-09-28T15:00:00Z'}], location:'Facility', instructions:'Bring questions'});
+  assert.equal(f.c.status, 'selection_pending');
+  assert.equal(f.c.stageIndex, 0);
+  assert.equal(f.state.revision, revision + 1);
+  assert.equal(f.state.jobs.filter(j => j.kind === 'slot_selection' && j.status === 'queued').length, 1);
+  assert.equal(f.state.jobs.filter(j => j.kind === 'slots_request' && j.status === 'queued').length, 0);
+  const group = deliveryGroups(f.state, members, now).find(g => g.jobs[0].kind === 'slot_selection');
+  const mail = buildMessage(group, f.state, members, now, {origin:'https://example.com',workspaceId:'test',linkSecret:'x'.repeat(40)});
+  assert.equal(mail.replyTo, 'recruiter@example.com');
+  assert.match(mail.text, /choose an offered time/);
+});
+
+test('calendar Proceed cannot manufacture a booking or silently choose manual times', () => {
+  const f = fixture(); const before = JSON.stringify(f.state);
+  assert.throws(() => f.action('decision', {decision:'proceed',schedulingMode:'calendar'}), e => e.code === 'CALENDAR_CONNECTION_REQUIRED');
+  assert.equal(JSON.stringify(f.state), before);
+});
+
+test('decline returns internal reason to recruiting; WelcomeFlow candidate follow-up requires recruiter choice', () => {
+  const f = fixture();
+  f.action('decision', {decision:'decline',reason:'Availability mismatch',comment:'Internal manager detail'});
+  assert.equal(f.state.jobs.filter(j => j.kind === 'candidate_decline').length, 0);
+  const group = deliveryGroups(f.state, members, now).find(g => g.jobs[0].kind === 'recruiter_decline');
+  const note = buildMessage(group, f.state, members, now, {origin:'https://example.com',workspaceId:'test'});
+  assert.equal(note.to, 'recruiter@example.com'); assert.match(note.text, /Internal manager detail/);
+  assert.throws(() => f.action('decline_follow_up', {channel:'welcomeflow'}), /Only recruiting/);
+  f.action('decline_follow_up', {channel:'welcomeflow'}, 'recruiter');
+  const candidateGroup = deliveryGroups(f.state, members, now).find(g => g.jobs[0].kind === 'candidate_decline');
+  const mail = buildMessage(candidateGroup, f.state, members, now, {origin:'https://example.com',workspaceId:'test'});
+  assert.equal(mail.to, 'candidate@example.com'); assert.equal(mail.replyTo, 'recruiter@example.com');
+  assert.doesNotMatch(mail.text, /Internal manager detail|Availability mismatch/);
+  assert.throws(() => f.action('decline_follow_up', {channel:'ats'}, 'recruiter'), /already been assigned/);
+});
+
+test('ATS decline choice records manual follow-up without an automatic candidate email', () => {
+  const f = fixture(); f.action('decision', {decision:'decline',reason:'Experience mismatch'});
+  f.action('decline_follow_up', {channel:'ats'}, 'recruiter');
+  assert.equal(f.c.declineFollowUp.channel, 'ats');
+  assert.equal(f.state.jobs.filter(j => j.kind === 'candidate_decline').length, 0);
+  assert.ok(f.state.exceptions.some(e => e.code === 'ATS_DECLINE_FOLLOW_UP_REQUIRED' && e.ownerId === 'recruiter'));
+});
+
+test('HTML packet content is escaped and email links cannot become injected markup', () => {
+  const f = fixture(); f.state.cases[0].packet = '<script>alert("bad")</script>';
+  const group = deliveryGroups(f.state, members, now).find(g => g.jobs[0].kind === 'decision_request');
+  const mail = buildMessage(group, f.state, members, now, {origin:'https://example.com',workspaceId:'test'});
+  assert.doesNotMatch(mail.html, /<script>/); assert.match(mail.html, /&lt;script&gt;/);
 });
