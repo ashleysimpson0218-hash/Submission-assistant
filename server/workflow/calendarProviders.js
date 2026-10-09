@@ -92,16 +92,30 @@ function createCalendarProvider(binding, dependencies = {}) {
         fail('CALENDAR_UNAVAILABLE', 'Calendar availability could not be verified.');
       rows = result.busy;
     } else {
-      const data = await request(`${GRAPH}/me/calendar/getSchedule`, 'POST', {
-        schedules: [binding.email], startTime: graphDate(range.start), endTime: graphDate(range.end),
-        availabilityViewInterval: 30,
-      });
-      const result = data.value?.find(x => x.scheduleId?.toLowerCase() === binding.email.toLowerCase());
-      if (!result || result.error || !Array.isArray(result.scheduleItems))
-        fail('CALENDAR_UNAVAILABLE', 'Calendar availability could not be verified.');
-      rows = result.scheduleItems.filter(x => x.status !== 'free').map(x => ({
-        start: graphTime(x.start), end: graphTime(x.end),
-      }));
+      // getSchedule excludes personal Microsoft accounts. Read only this
+      // authorized account's calendarView instead, including recurring instances.
+      const query = new URLSearchParams({ startDateTime: range.start, endDateTime: range.end,
+        '$select': 'start,end,showAs,isCancelled', '$top': '100' });
+      let next = `${GRAPH}/me/calendar/calendarView?${query}`, pages = 0;
+      rows = [];
+      const seen = new Set();
+      while (next) {
+        const url = new URL(next);
+        if (url.origin !== 'https://graph.microsoft.com' ||
+            url.pathname !== '/v1.0/me/calendar/calendarView' ||
+            seen.has(next) || ++pages > 100)
+          fail('CALENDAR_UNAVAILABLE', 'Calendar availability could not be fully verified.');
+        seen.add(next);
+        const data = await request(next);
+        if (!Array.isArray(data.value))
+          fail('CALENDAR_UNAVAILABLE', 'Calendar availability could not be verified.');
+        rows.push(...data.value.filter(x => !x.isCancelled && x.showAs !== 'free').map(x => ({
+          start: graphTime(x.start), end: graphTime(x.end),
+        })));
+        next = data['@odata.nextLink'];
+        if (next !== undefined && typeof next !== 'string')
+          fail('CALENDAR_UNAVAILABLE', 'Calendar availability could not be fully verified.');
+      }
     }
     return rows.map(x => interval(x.start, x.end));
   }

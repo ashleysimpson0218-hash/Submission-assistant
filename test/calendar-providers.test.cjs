@@ -20,7 +20,7 @@ function setup(provider, replies) {
   return { client, calls, tokens };
 }
 const googleFree = { body: { calendars: { primary: { busy: [] } } } };
-const outlookFree = { body: { value: [{ scheduleId: 'leader@example.com', scheduleItems: [] }] } };
+const outlookFree = { body: { value: [] } };
 
 test('Google creates an invited event on the scoped calendar after checking availability', async () => {
   const { client, calls, tokens } = setup('google', [{ status: 404 }, googleFree, { body: { id: 'event-1' } }]);
@@ -31,11 +31,12 @@ test('Google creates an invited event on the scoped calendar after checking avai
   assert.deepEqual(calls[2].body.attendees, [{ email: 'candidate@example.com' }]);
   assert.deepEqual(tokens[0][1].subject, { type: 'user', id: 'leader-1' });
 });
-test('Outlook uses UTC, verified mailbox availability, and a stable transaction ID', async () => {
+test('Outlook uses calendarView for personal and organization accounts with a stable transaction ID', async () => {
   const a = setup('microsoft', [outlookFree, { body: { id: 'event-2' } }]);
   await a.client.createEvent(booking);
-  assert.equal(a.calls[0].url, 'https://graph.microsoft.com/v1.0/me/calendar/getSchedule');
-  assert.deepEqual(a.calls[0].body.schedules, ['leader@example.com']);
+  assert.match(a.calls[0].url, /^https:\/\/graph.microsoft.com\/v1.0\/me\/calendar\/calendarView\?/);
+  assert.equal(a.calls[0].method, 'GET');
+  assert.equal(a.calls[0].headers.Prefer, 'outlook.timezone="UTC"');
   assert.equal(a.calls[1].body.start.timeZone, 'UTC');
   assert.equal(a.calls[1].body.attendees[0].emailAddress.address, 'candidate@example.com');
   const b = setup('microsoft', [outlookFree, { body: { id: 'event-2' } }]);
@@ -43,16 +44,16 @@ test('Outlook uses UTC, verified mailbox availability, and a stable transaction 
   assert.equal(a.calls[1].body.transactionId, b.calls[1].body.transactionId);
 });
 test('busy or out-of-office Outlook time prevents an event write', async () => {
-  const { client, calls } = setup('microsoft', [{ body: { value: [{ scheduleId: 'leader@example.com',
-    scheduleItems: [{ status: 'oof', start: { dateTime: '2026-10-12T14:00:00', timeZone: 'UTC' },
-      end: { dateTime: '2026-10-12T15:00:00', timeZone: 'UTC' } }] }] } }]);
+  const { client, calls } = setup('microsoft', [{ body: { value: [{ showAs: 'oof',
+    start: { dateTime: '2026-10-12T14:00:00', timeZone: 'UTC' },
+    end: { dateTime: '2026-10-12T15:00:00', timeZone: 'UTC' } }] } }]);
   await assert.rejects(client.createEvent(booking), { code: 'CALENDAR_SLOT_UNAVAILABLE' });
   assert.equal(calls.length, 1);
 });
 test('partial free/busy errors never become free time', async () => {
   for (const provider of ['google', 'microsoft']) {
     const body = provider === 'google' ? { calendars: { primary: { errors: [{ reason: 'notFound' }], busy: [] } } }
-      : { value: [{ scheduleId: 'leader@example.com', error: { message: 'denied' }, scheduleItems: [] }] };
+      : { error: { message: 'denied' } };
     const { client } = setup(provider, [{ body }]);
     await assert.rejects(client.busy(start, end), { code: 'CALENDAR_UNAVAILABLE' });
   }
@@ -84,4 +85,25 @@ test('Google safely reuses an identical recorded event without writing twice', a
 test('missing trusted binding and unsupported Outlook calendars fail closed', () => {
   assert.throws(() => createCalendarProvider({ provider: 'google' }), { code: 'CALENDAR_CONNECTION_REQUIRED' });
   assert.throws(() => createCalendarProvider({ provider: 'microsoft', workspaceId: 'w', userId: 'u', connectorId: 'c', calendarId: 'other' }), { code: 'UNSUPPORTED_CALENDAR' });
+});
+test('Outlook consumes every page and catches a busy event on a later page', async () => {
+  const later = 'https://graph.microsoft.com/v1.0/me/calendar/calendarView?$skiptoken=next';
+  const { client, calls } = setup('microsoft', [{ body: { value: [], '@odata.nextLink': later } },
+    { body: { value: [{ showAs: 'tentative', start: { dateTime: '2026-10-12T14:00:00', timeZone: 'UTC' },
+      end: { dateTime: '2026-10-12T14:30:00', timeZone: 'UTC' } }] } }]);
+  await assert.rejects(client.createEvent(booking), { code: 'CALENDAR_SLOT_UNAVAILABLE' });
+  assert.equal(calls.length, 2);
+});
+test('Outlook rejects foreign pagination links before forwarding credentials', async () => {
+  const { client, calls } = setup('microsoft', [{ body: { value: [], '@odata.nextLink': 'https://untrusted.example.com/events' } }]);
+  await assert.rejects(client.busy(start, end), { code: 'CALENDAR_UNAVAILABLE' });
+  assert.equal(calls.length, 1);
+});
+test('Outlook excludes cancelled/free events and conservatively blocks unknown availability', async () => {
+  const event = { start: { dateTime: '2026-10-12T14:00:00', timeZone: 'UTC' },
+    end: { dateTime: '2026-10-12T14:30:00', timeZone: 'UTC' } };
+  const { client } = setup('microsoft', [{ body: { value: [
+    {...event, showAs: 'free'}, {...event, showAs: 'busy', isCancelled: true}, {...event, showAs: 'unknown'},
+  ] } }]);
+  assert.equal((await client.busy(start, end)).length, 1);
 });
