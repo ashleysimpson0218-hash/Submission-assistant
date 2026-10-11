@@ -136,3 +136,22 @@
     padding: 8px;
   }
 }
+.wf-password-success {
+  text-align: center;
+}
+
+.wf-success-check {
+  align-items: center;
+  background: #e8f7ee;
+  border: 2px solid #218653;
+  border-radius: 999px;
+  color: #17673f;
+  display: inline-flex;
+  font-size: 2rem;
+  font-weight: 700;
+  height: 3.5rem;
+  justify-content: center;
+  margin-bottom: 0.75rem;
+  width: 3.5rem;
+}
+
