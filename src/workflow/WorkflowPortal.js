@@ -13,7 +13,7 @@ export default function WorkflowPortal() {
     [message, setMessage] = useState(""),
     [version, setVersion] = useState(0),
     [busy, setBusy] = useState(false),
-    [setup, setSetup] = useState(() => /(?:type=invite|type=recovery)/i.test(window.location.hash)),
+    [setup, setSetup] = useState(() => query.get("setup") === "password" || /(?:type=invite|type=recovery)/i.test(window.location.hash + window.location.search)),
     [newPassword, setNewPassword] = useState("");
   useEffect(() => {
     if (!client) return undefined;
@@ -96,7 +96,13 @@ export default function WorkflowPortal() {
             <button type="button" disabled={busy || !email.trim()} onClick={async () => {
               setBusy(true); setMessage("");
               try {
-                await client.auth.resetPasswordForEmail(email.trim(), { redirectTo: `${window.location.origin}/workflow` });
+                const { error } = await client.auth.resetPasswordForEmail(email.trim(), { redirectTo: `${window.location.origin}/workflow?setup=password` });
+                if (error) {
+                  setMessage(error.code === "over_email_send_rate_limit" || error.status === 429
+                    ? "The email service has reached its sending limit. No setup email was sent. Please wait before requesting another link."
+                    : "The setup email could not be sent. Please try again later.");
+                  return;
+                }
                 setMessage("If this is an invited WelcomeFlow account, a setup email has been requested. Open its link to set your WelcomeFlow password.");
               } catch { setMessage("The setup email could not be requested. Please try again."); }
               finally { setBusy(false); }

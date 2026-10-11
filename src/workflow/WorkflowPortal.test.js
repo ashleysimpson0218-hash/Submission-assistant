@@ -12,7 +12,7 @@ test('setup email requires an explicit click and uses current workflow origin',a
   fireEvent.click(screen.getByText('Sign in or change account'));
   fireEvent.change(screen.getByLabelText('Email'),{target:{value:'owner@example.test'}});
   fireEvent.click(screen.getByText('Set or reset password'));
-  await waitFor(()=>expect(mockClient.auth.resetPasswordForEmail).toHaveBeenCalledWith('owner@example.test',{redirectTo:`${window.location.origin}/workflow`}));
+  await waitFor(()=>expect(mockClient.auth.resetPasswordForEmail).toHaveBeenCalledWith('owner@example.test',{redirectTo:`${window.location.origin}/workflow?setup=password`}));
 });
 test('invite allows password setup only with an authenticated invite session',async()=>{
   window.location.hash='#type=invite';mockClient.auth.getSession.mockResolvedValue({data:{session:null}});
@@ -24,4 +24,16 @@ test('verified invite session can set a password without signup or membership ch
   fireEvent.change(screen.getByLabelText('New password'),{target:{value:'synthetic-test-password'}});fireEvent.click(screen.getByText('Save password'));
   await waitFor(()=>expect(mockClient.auth.updateUser).toHaveBeenCalledWith({password:'synthetic-test-password'}));
   expect(await screen.findByText('Your WelcomeFlow password is saved.')).toBeInTheDocument();
+});
+
+test('email rate limit never reports a setup email as requested',async()=>{
+  mockClient.auth.resetPasswordForEmail.mockResolvedValue({error:{code:'over_email_send_rate_limit',status:429}});
+  render(<WorkflowPortal/>);fireEvent.change(screen.getByLabelText('Email'),{target:{value:'owner@example.test'}});fireEvent.click(screen.getByText('Set or reset password'));
+  expect(await screen.findByText(/No setup email was sent/)).toBeInTheDocument();
+  expect(screen.queryByText(/a setup email has been requested/)).not.toBeInTheDocument();
+});
+test('explicit password destination survives recovery event already consumed',()=>{
+  window.history.replaceState({},'', '/workflow?setup=password');
+  render(<WorkflowPortal/>);expect(screen.getByLabelText('New password')).toBeInTheDocument();
+  window.history.replaceState({},'', '/workflow');
 });
