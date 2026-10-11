@@ -34,6 +34,15 @@ test('password confirmation must match before saving',async()=>{
   expect(mockClient.auth.updateUser).not.toHaveBeenCalled();
 });
 
+test('reused password shows a specific correction instead of requesting another link',async()=>{
+  window.location.hash='#type=recovery';mockClient.auth.getSession.mockResolvedValue({data:{session:{}}});
+  mockClient.auth.updateUser.mockResolvedValue({error:{message:'New password should be different from the old password.'}});
+  render(<WorkflowPortal/>);
+  fireEvent.change(screen.getByLabelText('New password'),{target:{value:'synthetic-test-password'}});fireEvent.change(screen.getByLabelText('Confirm new password'),{target:{value:'synthetic-test-password'}});fireEvent.click(screen.getByText('Save password'));
+  expect(await screen.findByText('Choose a new password you have not used for this account before.')).toBeInTheDocument();
+  expect(screen.queryByText(/Request a new setup link/)).not.toBeInTheDocument();
+});
+
 test('interview work stays hidden until a user is authenticated',async()=>{
   render(<WorkflowPortal/>);
   await waitFor(()=>expect(mockClient.auth.getSession).toHaveBeenCalled());
