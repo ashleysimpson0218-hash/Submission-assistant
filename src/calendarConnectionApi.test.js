@@ -7,7 +7,7 @@ const handler = require('../api/calendar');
 const env = {...process.env};
 let service;
 beforeEach(() => {
-  jest.clearAllMocks();process.env.VERCEL_ENV='preview';process.env.WELCOMEFLOW_MAINTENANCE_MODE='false';process.env.WELCOMEFLOW_API_WORKSPACE_IDS='test';
+  jest.clearAllMocks();process.env.VERCEL_ENV='preview';process.env.WELCOMEFLOW_MAINTENANCE_MODE='false';process.env.WELCOMEFLOW_API_WORKSPACE_IDS='test';process.env.WELCOMEFLOW_UAT_EXTERNAL_ACTIONS_DISABLED='false';
   mockSecurity.readServerRuntimeConfig.mockReturnValue({ok:true,environment:'preview',projectRef:'test-ref'});
   mockSecurity.consumePreAuthenticationRateLimit.mockResolvedValue({ok:true});
   mockSecurity.authenticatedUser.mockResolvedValue({user:{id:'trusted-user'}});
@@ -22,3 +22,5 @@ test('production database runtime cannot invoke connector test',async()=>{mockSe
 test('anonymous and inactive users cannot access calendar',async()=>{mockSecurity.authenticatedUser.mockResolvedValue({});expect((await call()).statusCode).toBe(401);mockSecurity.authenticatedUser.mockResolvedValue({user:{id:'trusted-user'}});mockSnapshot.mockResolvedValue({members:[{userId:'trusted-user',active:false}]});expect((await call()).statusCode).toBe(403);});
 test('browser identity, connector and provider overrides are ignored',async()=>{expect((await call({action:'authorize',userId:'victim',connectorId:'other',workspaceId:'other'})).statusCode).toBe(200);expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({userId:'trusted-user',workspaceId:'test',projectRef:'test-ref'}));expect(service.authorize).toHaveBeenCalledWith();});
 test('SDK errors cannot leak credentials or provider diagnostics',async()=>{service.authorize.mockRejectedValue(Object.assign(new Error('secret token value'), {status:400, code:'upstream_error'}));const r=await call({action:'authorize'});expect(r.statusCode).toBe(503);expect(JSON.stringify(r.body)).not.toContain('secret token');});
+
+test('external-action safety switch blocks test appointment writes',async()=>{process.env.WELCOMEFLOW_UAT_EXTERNAL_ACTIONS_DISABLED='true';expect((await call({action:'book_test'})).statusCode).toBe(503);});

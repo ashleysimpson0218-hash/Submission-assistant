@@ -31,7 +31,9 @@ module.exports = async function handler(req, res) {
         case 'authorize': result = await service.authorize(); break;
         case 'verify': result = await service.verify(); break;
         case 'availability': result = await service.availability(p.start, p.end); break;
-        case 'book_test': result = await service.book(p.id, p.start); break;
+        case 'book_test':
+          need(process.env.WELCOMEFLOW_UAT_EXTERNAL_ACTIONS_DISABLED !== 'true', 'DISABLED', 'External calendar test writes are disabled in this environment.', 503);
+          result = await service.book(p.id, p.start); break;
         case 'reconcile': result = await service.reconcile(p.id); break;
         case 'disconnect': result = await service.disconnect(); break;
         default: need(false, 'INVALID_COMMAND', 'Choose a supported calendar action.', 400);
