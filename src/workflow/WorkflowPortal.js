@@ -13,11 +13,21 @@ export default function WorkflowPortal() {
     [message, setMessage] = useState(""),
     [version, setVersion] = useState(0),
     [busy, setBusy] = useState(false),
+    [session, setSession] = useState(null),
+    [sessionReady, setSessionReady] = useState(false),
+    [passwordSaved, setPasswordSaved] = useState(false),
     [setup, setSetup] = useState(() => query.get("setup") === "password" || /(?:type=invite|type=recovery)/i.test(window.location.hash + window.location.search)),
-    [newPassword, setNewPassword] = useState("");
+    [newPassword, setNewPassword] = useState(""),
+    [confirmPassword, setConfirmPassword] = useState("");
   useEffect(() => {
     if (!client) return undefined;
-    const listener = client.auth.onAuthStateChange(event => {
+    client.auth.getSession().then(({ data }) => {
+      setSession(data?.session || null);
+      setSessionReady(true);
+    });
+    const listener = client.auth.onAuthStateChange((event, nextSession) => {
+      setSession(nextSession || null);
+      setSessionReady(true);
       if (event === "PASSWORD_RECOVERY") setSetup(true);
     });
     return () => listener?.data?.subscription?.unsubscribe();
@@ -32,24 +42,39 @@ export default function WorkflowPortal() {
     <main className="wf-portal">
       <h1>WelcomeFlow</h1>
       {message ? <p role="status">{message}</p> : null}
-      {!token && setup ? (
+      {!token && passwordSaved ? (
+        <section className="wf-workflow wf-password-success" aria-labelledby="password-updated-title">
+          <div className="wf-success-check" aria-hidden="true">&#10003;</div>
+          <h2 id="password-updated-title">Your password has been updated</h2>
+          <p>Your new WelcomeFlow password is saved for {session?.user?.email || email || "this account"}.</p>
+          <p>Review the account above, then continue to your interview workspace.</p>
+          <button type="button" onClick={() => {
+            setPasswordSaved(false);
+            setMessage("");
+            window.history.replaceState({}, "", "/workflow");
+          }}>Continue to WelcomeFlow</button>
+        </section>
+      ) : null}
+      {!token && setup && !passwordSaved ? (
         <form className="wf-workflow" onSubmit={async e => {
           e.preventDefault(); setBusy(true); setMessage("");
           try {
+            if (newPassword !== confirmPassword) throw new Error("The passwords do not match. Re-enter both passwords.");
             const { data } = await client.auth.getSession();
             if (!data?.session) throw new Error("Open your WelcomeFlow setup email link first.");
             const { error } = await client.auth.updateUser({ password: newPassword });
             if (error) throw new Error("Password setup could not be completed. Request a new setup link.");
-            setNewPassword(""); setSetup(false); setMessage("Your WelcomeFlow password is saved."); setVersion(v => v + 1);
+            setSession(data.session); setNewPassword(""); setConfirmPassword(""); setSetup(false); setPasswordSaved(true); setVersion(v => v + 1);
           } catch (error) { setMessage(error.message); }
           finally { setBusy(false); }
         }}>
           <h2>Set your WelcomeFlow password</h2>
           <label>New password<input type="password" autoComplete="new-password" minLength={12} required value={newPassword} onChange={e => setNewPassword(e.target.value)} /></label>
+          <label>Confirm new password<input type="password" autoComplete="new-password" minLength={12} required value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} /></label>
           <button disabled={busy}>Save password</button>
         </form>
       ) : null}
-      {!token ? (
+      {!token && !setup && !passwordSaved ? (
         <details className="wf-workflow">
           <summary>Sign in or change account</summary>
           <form
@@ -64,7 +89,10 @@ export default function WorkflowPortal() {
                 });
                 setPassword("");
                 if (result.error) setMessage("Sign-in could not be verified.");
-                else setVersion((v) => v + 1);
+                else {
+                  setSession(result.data?.session || null);
+                  setVersion((v) => v + 1);
+                }
               } catch {
                 setMessage("Sign-in is temporarily unavailable.");
               } finally {
@@ -112,6 +140,7 @@ export default function WorkflowPortal() {
               disabled={busy}
               onClick={async () => {
                 await client.auth.signOut();
+                setSession(null);
                 setVersion((v) => v + 1);
               }}
             >
@@ -120,13 +149,16 @@ export default function WorkflowPortal() {
           </form>
         </details>
       ) : null}
-      <WorkflowPanel
-        key={version}
-        client={client}
-        workspaceId={workspaceId}
-        token={token}
-        entry={{caseId: query.get("case") || "", action: query.get("action") || "", version: query.get("version") || ""}}
-      />
+      {(token || (sessionReady && session && !setup && !passwordSaved)) ? (
+        <WorkflowPanel
+          key={version}
+          client={client}
+          workspaceId={workspaceId}
+          token={token}
+          entry={{caseId: query.get("case") || "", action: query.get("action") || "", version: query.get("version") || ""}}
+        />
+      ) : null}
     </main>
   );
 }
+
