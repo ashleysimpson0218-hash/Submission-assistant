@@ -2,24 +2,32 @@
 
 Approved provider scope: Microsoft 365 / Outlook and Google Calendar. The facility's assigned leadership account determines the provider; candidates use the same WelcomeFlow scheduling experience. The manual manager-times option remains available.
 
-## Source prepared
+## Current preview connection
 
-`server/workflow/calendarProviders.js` supplies server-only free/busy and invited-event adapters for both providers. It requests short-lived user-scoped tokens through Vercel Connect. Binding values must come from trusted workspace/member records, never candidate or browser input. No refresh tokens belong in the browser or workflow snapshots.
+The Microsoft connector `microsoft/welcomeflow-preview` is saved and attached to `welcomeflow-revision5-test` for Preview only. Its Entra app supports organizational and personal accounts with authority `common`. The dashboard authorization test issued a token and showed a refresh token; the selected test scopes were User.Read and Calendars.ReadWrite. This does not establish a grant for an application user or prove a calendar API call.
 
-Google supports the approved calendar ID. Outlook currently supports the connected leadership account's primary calendar, not shared/delegated calendars. Microsoft uses UTC calendarView results and a stable transaction ID. calendarView supports both personal and organization accounts; getSchedule does not support personal accounts. Availability reads follow all pages and reject foreign or looping pagination links. Google uses a stable event ID and payload fingerprint to detect identical retries. Partial availability errors fail closed. Network uncertainty on event creation requires reconciliation before confirmation; no blind retries occur.
+The authenticated `/api/calendar` route and **Outlook calendar connection test** section now provide the application-owned connection flow:
 
-These adapters are prepared source, **not an activated calendar workflow**. The existing direct-calendar Proceed guard remains in place. The API and candidate UI are not connected to these adapters yet, and no live booking or email has been sent by this change.
+- The Connect subject is derived server-side from database project, workspace and authenticated user. Dashboard example identities and client-supplied identities are never used.
+- The server verifies Microsoft profile and writable primary calendar before persisting the account binding in the existing workflow store. Only active members of an allowlisted workspace can use the route.
+- Availability returns busy intervals without event subjects or descriptions. Each operation verifies that the provider identity still matches the saved binding.
+- A 15-minute, clearly labeled test appointment has no invitees or reminders. Its durable intent and reservation commit through the existing serializing workflow RPC before Outlook is contacted. Replayed requests only reconcile; they never issue another create. The UI reports confirmed only after reading the matching transaction back from Outlook.
+- Test history is restricted to its owner. Unknown writes remain reserved and require reconciliation. A changed or deleted event is not permission to blindly recreate it. The preview permits at most 20 test requests per member.
+- Disconnect removes the app binding; it does not revoke Microsoft's underlying consent. Pending writes must be reconciled before disconnecting. Test appointments can be removed manually from Outlook after verification.
 
-## Activation requirements
+The test endpoint is disabled outside Vercel Preview and an isolated test/acceptance/preview database runtime. It reuses the existing database schema and workflow feature/runtime gates. No new secret environment variables are needed. `@vercel/connect` uses the deployment OIDC token. The connector UID is pinned to the preview connector.
 
-1. Obtain Vercel Connect management access, create/discover separate preview Google and Microsoft connectors, and attach them to the test project/environment. Connector listing returned HTTP 403 in this session; no Vercel CLI credentials are available as a fallback.
-2. For personal Microsoft accounts, use Vercel Microsoft Bring Your Own with tenant authority `common` and a Microsoft Entra app registration supporting organizational and personal Microsoft accounts. The Vercel draft form was prepared with name WelcomeFlow Microsoft Preview, UID microsoft/welcomeflow-preview, and authority common. No connector was saved or credentials entered. The app registration must supply Client ID and Client Secret securely and use the displayed callback https://connect.vercel.com/callback. Registration requires access to a Microsoft Entra tenant; no subscription purchase is authorized or necessary to assume.
+## Running the Outlook connector test
 
-   Implement the authenticated account-consent/settings flow. Derive user subjects from the server session; persist provider account/calendar bindings scoped to the workspace and authorized leadership member. Confirm mailbox identity and account access before accepting a binding. Provide disconnect/reconnect behavior.
-3. Configure approved interview duration, leadership working hours, timezone, location and preparation instructions. Generate candidate-visible slots from intersections of all required participants' availability and internal reservations.
-4. Wire Proceed to availability-backed invitation. Persist durable booking intent before provider writes; serialize internal reservations; recheck required calendars immediately before writing. Reconcile unknown writes and record provider event IDs before reporting confirmation. External calendars can change concurrently; availability checks alone are not an atomic reservation.
-5. Connect cancellation/rescheduling and revoked-account handling. Outlook uncertain writes need event reconciliation; a repeated create request is not sufficient acceptance evidence.
-6. Verify both providers on the nonproduction deployment: manager email -> authenticated decision -> candidate invitation -> slot choice -> actual leadership event -> confirmation and recruiter visibility. Test conflicts, duplicate clicks, timezone changes and revoked access. Release approval remains separate.
+1. Open the test deployment's `/workflow` page and sign in with an active test workspace member.
+2. Expand **Outlook calendar connection test**. Select **Connect Outlook**, follow **Continue to Microsoft**, and complete the app user's authorization.
+3. Return and select **Verify connected calendar**. Confirm the displayed mailbox is the intended Outlook account.
+4. Choose a future start in the explicitly displayed browser timezone. Check the time, then create the 15-minute test appointment.
+5. Confirm **Confirmed in Outlook** and independently inspect Outlook. Use **Check saved test appointment** after an interrupted response. No candidate invitation is sent by this test.
+
+## Remaining interview scheduling work
+
+The existing direct-calendar Proceed guard remains in place. The connector test does not activate candidate interview scheduling. Full release still requires approved leadership working hours, duration/location/preparation, required-participant slot generation, durable candidate booking/reconciliation, cancellations/rescheduling, candidate email confirmation and recruiter visibility. Google adapters exist but the Google connector and app consent flow are not activated. Both providers require live acceptance before release. Production approval remains separate.
 
 ## Official references
 
@@ -32,6 +40,8 @@ These adapters are prepared source, **not an activated calendar workflow**. The 
 
 ## Validation
 
-Run `node --test test/calendar-providers.test.cjs test/workflow-foundation.test.cjs` and `CI=true npm run build`. Provider adapter tests use isolated fake HTTP responses; they do not prove real consent, delivery or calendar writes.
+Run `node --test test/calendar-connection.test.cjs test/calendar-providers.test.cjs test/workflow-foundation.test.cjs`, the calendar/workflow API and WorkflowPanel Jest tests, lint, and `CI=true npm run build`.
 
-Results: 39 tests passed, lint passed, production build compiled successfully, and the SDK's server import was verified. Install with `npm ci --legacy-peer-deps`: the SDK's unused optional Better Auth adapter otherwise pulls a newer TypeScript peer that conflicts with Create React App's TypeScript 4 peer. The dry-run clean install with this flag passed. Configure the test project's install command before deployment; do not silently change production project settings.
+October 11 UTC: 48 server/domain/provider tests and 19 API/UI tests passed; lint and build passed. Tests cover durable intent before writes, concurrent duplicates, uncertain-write reconciliation, account changes, overlapping reservations, preview/runtime/auth isolation, sanitized errors, and no test invitees. Provider tests use fake HTTP; these results do not prove live calendar access. The local optional canvas package lacked a native binary and was moved aside for jsdom's supported no-canvas mode; no dependency manifest or lockfile changed.
+
+Install with `npm ci --legacy-peer-deps` to avoid the unused Better Auth adapter's optional TypeScript peer conflict with Create React App. Production project settings are unchanged.

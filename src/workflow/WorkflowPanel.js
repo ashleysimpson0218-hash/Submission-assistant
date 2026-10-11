@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import "./workflow.css";
+import CalendarConnectionPanel from "./CalendarConnectionPanel";
 const uid = () => crypto.randomUUID();
 const WITHDRAWAL_REASONS = [
   "Accepted another position",
@@ -203,6 +204,7 @@ export default function WorkflowPanel({ client, workspaceId, token = "", entry =
           {["admin", "recruiter"].includes(view.actor.role) && view.policy ? (
             <Enrollment view={view} send={send} disabled={disabled} />
           ) : null}
+          <CalendarConnectionPanel key={view.actor.userId} client={client} workspaceId={workspaceId} />
           <h3>Needs attention ({view.exceptions.length})</h3>
           {view.exceptions.map((e) => (
             <article key={e.id} className="wf-card">

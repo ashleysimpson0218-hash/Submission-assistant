@@ -4,7 +4,7 @@ const GOOGLE = 'https://www.googleapis.com/calendar/v3';
 const GRAPH = 'https://graph.microsoft.com/v1.0';
 const SCOPES = Object.freeze({
   google: ['https://www.googleapis.com/auth/calendar.events', 'https://www.googleapis.com/auth/calendar.freebusy'],
-  microsoft: ['Calendars.ReadWrite'],
+  microsoft: ['User.Read', 'Calendars.ReadWrite'],
 });
 
 function fail(code, message) {
@@ -162,7 +162,62 @@ function createCalendarProvider(binding, dependencies = {}) {
       fail('CALENDAR_RECONCILIATION_REQUIRED', 'Verify the provider booking before sending a confirmation.');
     return { provider: binding.provider, eventId: result.id, reused: false };
   }
-  return { busy, createEvent };
+  async function inspectAccount() {
+    if (binding.provider !== 'microsoft') fail('UNSUPPORTED_CALENDAR', 'Use Outlook for this connection test.');
+    const profile = await request(`${GRAPH}/me?$select=id,mail,userPrincipalName`);
+    const calendar = await request(`${GRAPH}/me/calendar?$select=id,canEdit,owner`);
+    const email = profile.mail || profile.userPrincipalName;
+    if (!profile.id || !email || !calendar.id || calendar.canEdit !== true)
+      fail('CALENDAR_CONNECTION_REQUIRED', 'A writable Outlook calendar could not be verified.');
+    return { accountId: profile.id, email, providerCalendarId: calendar.id };
+  }
+  const testId = booking => createHash('sha256').update(JSON.stringify([
+    binding.workspaceId, binding.userId, booking.id,
+  ])).digest('hex');
+  async function findTestAppointment(booking) {
+    const range = interval(booking.start, booking.end);
+    const query = new URLSearchParams({ startDateTime: range.start, endDateTime: range.end,
+      '$select': 'id,transactionId,start,end,isCancelled', '$top': '100' });
+    let next = `${GRAPH}/me/calendar/calendarView?${query}`, pages = 0;
+    const seen = new Set(), matches = [];
+    while (next) {
+      const u = new URL(next);
+      if (u.origin !== 'https://graph.microsoft.com' || u.pathname !== '/v1.0/me/calendar/calendarView' ||
+          seen.has(next) || ++pages > 100) fail('CALENDAR_UNAVAILABLE', 'Test appointment could not be fully checked.');
+      seen.add(next);
+      const data = await request(next);
+      if (!Array.isArray(data.value)) fail('CALENDAR_UNAVAILABLE', 'Test appointment could not be checked.');
+      matches.push(...data.value.filter(x => x.transactionId === testId(booking) && !x.isCancelled));
+      next = data['@odata.nextLink'];
+      if (next !== undefined && typeof next !== 'string') fail('CALENDAR_UNAVAILABLE', 'Test appointment could not be fully checked.');
+    }
+    if (matches.length > 1) fail('CALENDAR_RECONCILIATION_REQUIRED', 'Multiple matching test appointments need review.');
+    const found = matches[0];
+    if (!found) return null;
+    if (new Date(graphTime(found.start)).toISOString() !== range.start ||
+        new Date(graphTime(found.end)).toISOString() !== range.end)
+      fail('CALENDAR_RECONCILIATION_REQUIRED', 'The test appointment was changed in Outlook.');
+    return { eventId: found.id, verified: true };
+  }
+  async function createTestAppointment(booking) {
+    if (binding.provider !== 'microsoft' || !booking.id)
+      fail('INVALID_CALENDAR_BOOKING', 'An Outlook test booking is required.');
+    const range = interval(booking.start, booking.end);
+    if (Date.parse(range.end) - Date.parse(range.start) !== 15 * 60000)
+      fail('INVALID_CALENDAR_BOOKING', 'The test appointment must last 15 minutes.');
+    const blocks = await busy(range.start, range.end);
+    if (blocks.some(x => x.start < range.end && x.end > range.start))
+      fail('CALENDAR_SLOT_UNAVAILABLE', 'This time is busy. Choose another test time.');
+    const result = await request(eventsUrl, 'POST', {
+      transactionId: testId(booking), subject: 'WelcomeFlow TEST — calendar connection',
+      body: { contentType: 'text', content: '15-minute WelcomeFlow connector test. No candidate or interview invitation. You may remove this test appointment from Outlook after verification.' },
+      start: graphDate(range.start), end: graphDate(range.end),
+      showAs: 'busy', isReminderOn: false, attendees: [],
+    });
+    if (!result.id) fail('CALENDAR_WRITE_UNKNOWN', 'The test result needs reconciliation.');
+    return { eventId: result.id };
+  }
+  return { busy, createEvent, inspectAccount, createTestAppointment, findTestAppointment };
 }
 
 module.exports = { createCalendarProvider, SCOPES };
