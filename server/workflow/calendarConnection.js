@@ -141,6 +141,7 @@ function createConnectionService({ client, workspaceId, userId, projectRef, prov
       need(row.accountId === c.accountId, 'CALENDAR_RECONCILIATION_REQUIRED', 'Reconnect the Outlook account used for this test.', 409);
       const result = await (await checkedProvider(c)).findTestAppointment(row);
       if (result) await updateTest(id, { status: 'verified', eventId: result.eventId, code: null });
+      else if (row.status === 'verified') await updateTest(id, { status: 'unknown', code: 'CALENDAR_RECONCILIATION_REQUIRED' });
       // An absent event after an uncertain write is not permission to issue another create.
       return this.status();
     },

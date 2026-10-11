@@ -40,8 +40,9 @@ module.exports = async function handler(req, res) {
     res.statusCode = 200;
     res.end(JSON.stringify({ ok: true, ...result }));
   } catch (e) {
-    res.statusCode = e.status || 503;
-    const safe = e.status || (typeof e.code === 'string' && /^(CALENDAR_|INVALID_CALENDAR_|UNSUPPORTED_CALENDAR)/.test(e.code));
+    const publicCodes = new Set(['METHOD', 'DISABLED', 'TOO_LARGE', 'RATE_LIMIT', 'AUTH_REQUIRED', 'FORBIDDEN', 'INVALID_COMMAND', 'INVALID_TIME', 'COMMAND_REUSED', 'TEST_LIMIT', 'NOT_FOUND', 'STORAGE_UNAVAILABLE', 'WRITE_CONFLICT', 'AUTHORIZATION_UNAVAILABLE']);
+    const safe = publicCodes.has(e.code) || (typeof e.code === 'string' && /^(CALENDAR_|INVALID_CALENDAR_|UNSUPPORTED_CALENDAR)/.test(e.code));
+    res.statusCode = safe ? (e.status || 503) : 503;
     res.end(JSON.stringify({ ok: false, code: safe ? e.code : 'CALENDAR_UNAVAILABLE',
       error: safe ? e.message : 'Calendar access could not be verified. Your saved test request remains available for checking.' }));
   }
