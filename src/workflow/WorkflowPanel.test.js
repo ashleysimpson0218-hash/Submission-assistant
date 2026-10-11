@@ -157,3 +157,45 @@ test("copying and opening a draft never establish completion", () => {
   expect(isConfirmedCompletion("Sent")).toBe(true);
   expect(isConfirmedCompletion("Manually Confirmed")).toBe(true);
 });
+
+test('email decline link opens its candidate reason form without recording any decision', async () => {
+  global.fetch = jest.fn(async () => response({ view: {...view, cases:[...view.cases, {...view.cases[0],id:'other-case',name:'Other candidate'}]} }));
+  render(<WorkflowPanel client={client} workspaceId="test" entry={{caseId:'case',action:'decline',version:'1'}} />);
+  await screen.findByLabelText('Decline reason');
+  expect(screen.queryByText('Other candidate')).not.toBeInTheDocument();
+  expect(global.fetch.mock.calls.every(([,o]) => o.method === 'GET')).toBe(true);
+  fireEvent.change(screen.getByLabelText('Decline reason'), {target:{value:'Insufficient experience'}});
+  fireEvent.click(screen.getByRole('button',{name:'Record decline and notify recruiter'}));
+  await waitFor(() => expect(global.fetch.mock.calls.some(([,o]) => o.method === 'POST')).toBe(true));
+  const command = JSON.parse(global.fetch.mock.calls.find(([,o]) => o.method === 'POST')[1].body);
+  expect(command.payload.caseId).toBe('case');
+  expect(command.payload.decision).toBe('decline');
+});
+
+test('old email version requires current review before a manager can submit', async () => {
+  global.fetch = jest.fn(async () => response({view}));
+  render(<WorkflowPanel client={client} workspaceId="test" entry={{caseId:'case',action:'hold',version:'0'}} />);
+  expect(await screen.findByRole('button',{name:'Hold for other candidate review'})).toBeDisabled();
+  fireEvent.click(screen.getByRole('button',{name:'Review current candidate'}));
+  expect(screen.getByRole('button',{name:'Hold for other candidate review'})).not.toBeDisabled();
+});
+
+test('manager-selected times record Proceed and send the invitation in one command', async () => {
+  global.fetch = jest.fn(async () => response({view}));
+  render(<WorkflowPanel client={client} workspaceId="test" entry={{caseId:'case',action:'proceed-times',version:'1'}} />);
+  await screen.findByLabelText('Interview location or joining link');
+  expect(global.fetch.mock.calls.every(([,o]) => o.method === 'GET')).toBe(true);
+  fireEvent.change(screen.getByLabelText('Interview location or joining link'),{target:{value:'Demo Facility'}});
+  fireEvent.change(screen.getByLabelText('Preparation information'),{target:{value:'Bring questions'}});
+  fireEvent.change(screen.getByLabelText('Slot start'),{target:{value:'2027-01-05T10:00'}});
+  fireEvent.change(screen.getByLabelText('Slot end'),{target:{value:'2027-01-05T11:00'}});
+  fireEvent.click(screen.getByRole('button',{name:'Add time'}));
+  fireEvent.click(screen.getByRole('button',{name:'Proceed and send interview invitation'}));
+  await waitFor(() => expect(global.fetch.mock.calls.some(([,o]) => o.method === 'POST')).toBe(true));
+  const commands = global.fetch.mock.calls.filter(([,o]) => o.method === 'POST');
+  expect(commands).toHaveLength(1);
+  const command = JSON.parse(commands[0][1].body);
+  expect(command.type).toBe('proceed_with_slots');
+  expect(command.payload.caseId).toBe('case');
+  expect(command.payload.slots).toHaveLength(1);
+});

@@ -8,6 +8,7 @@ const {
 } = require("../../src/workflow/engine");
 const { signCapability } = require("./capabilities");
 const crypto = require("crypto");
+const { managerActions, messageHtml } = require("./managerActions");
 const terminal = new Set(["declined", "withdrawn", "offer_ready"]);
 const decisionKinds = new Set([
   "decision_request",
@@ -23,6 +24,12 @@ function eligible(job, state, members, now) {
   if (job.kind === "experience") {
     if (!stage?.completedAt || stage.experience)
       return { state: "cancelled", reason: "EXPERIENCE_RESOLVED" };
+  } else if (job.kind === "recruiter_decline") {
+    if (c.status !== "declined" || job.recipientId !== c.recruiterId)
+      return { state: "cancelled", reason: "DECLINE_CHANGED" };
+  } else if (job.kind === "candidate_decline") {
+    if (c.status !== "declined" || c.declineFollowUp?.channel !== "welcomeflow")
+      return { state: "cancelled", reason: "DECLINE_FOLLOW_UP_CHANGED" };
   } else if (decisionKinds.has(job.kind)) {
     if (
       !["manager_decision", "feedback_due"].includes(c.status) ||
@@ -61,6 +68,8 @@ function eligible(job, state, members, now) {
       : member(members, job.recipientId);
   if (!recipient?.email || !zoneValid(recipient.timezone))
     return { state: "blocked", reason: "RECIPIENT_UNVERIFIED" };
+  if (job.recipientId === "candidate" && !member(members, c.recruiterId)?.email)
+    return { state: "blocked", reason: "RECRUITER_REPLY_ROUTE_REQUIRED" };
   if (job.recipientId === "candidate" && !c.contactAllowed)
     return { state: "blocked", reason: "CONTACT_PERMISSION_REQUIRED" };
   if (
@@ -117,7 +126,8 @@ function buildMessage(
   if (jobs.some((j) => eligible(j, state, members, now).state !== "ready"))
     return null;
   const { c, r, recipient, stage } = first,
-    lines = [];
+    lines = [],
+    actions = [];
   const actionUrl = `${origin}/workflow?workspace=${encodeURIComponent(workspaceId)}`;
   const date = (iso) =>
     new Intl.DateTimeFormat("en-US", {
@@ -135,9 +145,15 @@ function buildMessage(
       const e = eligible(j, state, members, now);
       if (e.state !== "ready") return null;
       if (canReadCase(recipient, r, e.c))
-        lines.push(
-          `${e.c.name} | ${e.stage?.name || "Post-screen review"} | ${e.c.status} | Requested: ${e.c.decisionRequestedAt || "new request"}`,
-        );
+        {
+          lines.push(`${e.c.name} | ${e.stage?.name || "Post-screen review"} | ${e.c.status} | Requested: ${e.c.decisionRequestedAt || "new request"}`);
+          if (e.c.stageIndex === -1 && e.c.packet) lines.push(e.c.packet);
+          if (currentOwner(e.c, r) === recipient.userId) {
+            const links = managerActions(origin, workspaceId, e.c);
+            actions.push(...links.map(a => ({...a, label: jobs.length > 1 ? `${e.c.name}: ${a.label}` : a.label})));
+            lines.push(...links.map(a => `${a.label}: ${a.url}`));
+          }
+        }
     }
     if (!canReadCase(recipient, r, c))
       lines.push(
@@ -171,8 +187,18 @@ function buildMessage(
   } else if (jobs[0].kind === "active_review")
     lines.push(
       `Hello ${c.name},`,
-      `Your application for ${r.title} is in active review. Please contact recruiting if your interest or availability changes.`,
+      `Good news: your resume for ${r.title} is being actively reviewed by the hiring manager alongside other candidates.`,
+      "No interview or hiring decision has been made yet. Your recruiter will share the next update. Please reply to recruiting with any questions or changes to your interest or availability.",
     );
+  else if (jobs[0].kind === "recruiter_decline") {
+    lines.push(`The manager declined to proceed with ${c.name} for ${r.title}.`,
+      `Reason: ${c.lastDecision.reason}`, ...(c.lastDecision.comment ? [`Manager comment: ${c.lastDecision.comment}`] : []),
+      "Choose candidate follow-up in WelcomeFlow, or handle it in your company's ATS. Internal manager feedback is for recruiting only.",
+      `${actionUrl}&case=${encodeURIComponent(c.id)}&action=decline-follow-up`);
+  } else if (jobs[0].kind === "candidate_decline") {
+    lines.push(`Hello ${c.name},`, `Thank you for your interest in ${r.title}. The hiring team has decided not to move forward with your application for this opportunity.`,
+      "Please contact your recruiter with any questions. Thank you for the time you invested in the process.");
+  }
   else if (jobs[0].kind === "slot_selection" || jobs[0].kind === "experience") {
     const purpose = jobs[0].kind === "experience" ? "experience" : "booking";
     const token = signCapability(
@@ -210,8 +236,10 @@ function buildMessage(
   }
   return {
     to: recipient.email,
-    subject: `${jobs[0].kind === "experience" ? "Your interview experience" : jobs[0].kind === "manager_interview" ? "Upcoming interview" : decisionKinds.has(jobs[0].kind) ? "Interview decisions needed" : "Interview update"} | ${r.title}`,
+    subject: `${jobs[0].kind === "experience" ? "Your interview experience" : jobs[0].kind === "manager_interview" ? "Upcoming interview" : decisionKinds.has(jobs[0].kind) ? "Interview decisions needed" : jobs[0].kind === "recruiter_decline" ? "Manager declined to proceed" : jobs[0].kind === "active_review" ? "Your application is under review" : jobs[0].kind === "slot_selection" ? "Interview invitation" : "Interview update"} | ${r.title}`,
     text: lines.join("\n\n"),
+    html: messageHtml(lines.join("\n\n"), actions),
+    ...(jobs[0].recipientId === "candidate" ? {replyTo: member(members, c.recruiterId).email} : {}),
     idempotencyKey: crypto
       .createHash("sha256")
       .update(

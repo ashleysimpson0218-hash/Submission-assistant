@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import "./workflow.css";
+import CalendarConnectionPanel from "./CalendarConnectionPanel";
 const uid = () => crypto.randomUUID();
 const WITHDRAWAL_REASONS = [
   "Accepted another position",
@@ -74,12 +75,13 @@ export async function workflowRequest({
   }
   return result;
 }
-export default function WorkflowPanel({ client, workspaceId, token = "" }) {
+export default function WorkflowPanel({ client, workspaceId, token = "", entry = {} }) {
   const [view, setView] = useState(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [pending, setPending] = useState(null),
-    [done, setDone] = useState(false);
+    [done, setDone] = useState(false),
+    [entryReviewed, setEntryReviewed] = useState(false);
   const load = useCallback(async () => {
     setBusy(true);
     setError("");
@@ -117,6 +119,7 @@ export default function WorkflowPanel({ client, workspaceId, token = "" }) {
       if (r.completed) setDone(true);
       else setView(r.view);
       setPending(null);
+      setEntryReviewed(true);
     } catch (e) {
       setError(e.message);
       if (e.definitive) setPending(null);
@@ -124,6 +127,8 @@ export default function WorkflowPanel({ client, workspaceId, token = "" }) {
       setBusy(false);
     }
   }
+  const entryCase = view?.cases?.find(c => c.id === entry.caseId);
+  const staleEntry = Boolean(entryCase && entry.version && String(entryCase.version) !== entry.version && !entryReviewed);
   const disabled = busy || Boolean(pending);
   return (
     <section className="wf-workflow" aria-label="Interview workflow">
@@ -199,6 +204,7 @@ export default function WorkflowPanel({ client, workspaceId, token = "" }) {
           {["admin", "recruiter"].includes(view.actor.role) && view.policy ? (
             <Enrollment view={view} send={send} disabled={disabled} />
           ) : null}
+          <CalendarConnectionPanel key={view.actor.userId} client={client} workspaceId={workspaceId} />
           <h3>Needs attention ({view.exceptions.length})</h3>
           {view.exceptions.map((e) => (
             <article key={e.id} className="wf-card">
@@ -223,14 +229,17 @@ export default function WorkflowPanel({ client, workspaceId, token = "" }) {
               ) : null}
             </article>
           ))}
+          {entry.caseId && !entryCase ? <p role="alert">This candidate action is unavailable or outside your current access. No decision has been recorded.</p> : null}
+          {staleEntry ? <div role="alert"><p>This email refers to an older version. Review the current candidate and recorded outcome before deciding.</p><button disabled={disabled} onClick={() => setEntryReviewed(true)}>Review current candidate</button></div> : null}
           <div className="wf-case-list">
-            {view.cases.map((c) => (
+            {view.cases.filter(c => !entry.caseId || c.id === entry.caseId).map((c) => (
               <CaseCard
                 key={`${c.id}:${c.stageIndex}`}
                 c={c}
                 send={send}
-                disabled={disabled}
+                disabled={disabled || staleEntry}
                 view={view}
+                entryAction={entry.action}
               />
             ))}
           </div>
@@ -560,15 +569,15 @@ function Setup({ view, send, disabled }) {
     </details>
   );
 }
-function Enrollment({ view, send, disabled }) {
-  const [id, setId] = useState(""),
+function Enrollment({ view, send, disabled, candidateId = "" }) {
+  const [id, setId] = useState(candidateId),
     [zone, setZone] = useState(""),
     [reviewed, setReviewed] = useState(false),
     [contact, setContact] = useState(false);
   const c = view.catalog.candidates.find((x) => x.id === id);
   return (
     <details>
-      <summary>Start a reviewed candidate handoff</summary>
+      <summary>Send submission with manager actions</summary>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -640,14 +649,46 @@ function Enrollment({ view, send, disabled }) {
           Candidate email contact is permitted.
         </label>
         <button disabled={disabled || !c || !reviewed}>
-          Approve post-screen handoff
+          Send submission with manager actions
         </button>
       </form>
     </details>
   );
 }
-function CaseCard({ c, send, disabled, view }) {
+export function SubmissionWorkflowHandoff({client, workspaceId, candidateId}) {
+  const [view, setView] = useState(null), [error, setError] = useState(""), [busy, setBusy] = useState(false), [pending, setPending] = useState(null);
+  useEffect(() => {
+    let live = true;
+    workflowRequest({client, workspaceId}).then(r => {if (live) setView(r.view);}).catch(e => {if (live) setError(e.message);});
+    return () => {live = false;};
+  }, [client, workspaceId, candidateId]);
+  async function send(type, payload, retry = false) {
+    if (busy || (!retry && pending)) return;
+    const command = retry ? pending : {id: uid(), type, payload};
+    setPending(command); setBusy(true); setError("");
+    try {
+      const r = await workflowRequest({client, workspaceId, command});
+      setView(r.view); setPending(null);
+    } catch (e) {setError(e.message); if(e.definitive) setPending(null);}
+    finally {setBusy(false);}
+  }
+  const c = view?.cases.find(c => c.candidateId === candidateId);
+  const candidate = view?.catalog?.candidates.find(c => c.id === candidateId);
+  return <section className="wf-workflow" aria-label="Automatic manager submission">
+    <h3>Automatic manager submission</h3>
+    <p>Sends the reviewed packet with manager decision links. The recorded manager choice drives the interview workflow.</p>
+    {error ? <p role="alert">{error}</p> : null}
+    {pending && !busy ? <button onClick={() => send("", {}, true)}>Check and retry pending submission</button> : null}
+    {busy ? <p role="status">Recording the submission and checking email processing…</p> : null}
+    {c ? <><p role="status">Submission recorded. Current workflow: {c.status.replaceAll("_", " ")}.</p>
+      {view.jobs.filter(j => j.caseId === c.id && j.kind === "decision_request").map(j => <p key={j.id}>Manager email: {j.status.replaceAll("_", " ")}.</p>)}
+      <a href={`/workflow?workspace=${encodeURIComponent(workspaceId)}&case=${encodeURIComponent(c.id)}`}>Open this candidate's workflow</a></> : candidate ? <Enrollment key={candidateId} view={view} candidateId={candidateId} send={send} disabled={busy || Boolean(pending)} /> : view ? <p>The administrator must configure the active requisition's manager and Interview Plan before this saved packet can send an automatic decision request.</p> : !error ? <p>Checking the saved packet and assigned manager…</p> : null}
+  </section>;
+}
+function CaseCard({ c, send, disabled, view, entryAction = "" }) {
   const [reason, setReason] = useState(""),
+    [declineOpen, setDeclineOpen] = useState(entryAction === "decline"),
+    [manualSchedule, setManualSchedule] = useState(entryAction === "proceed-times"),
     [comment, setComment] = useState(""),
     [contact, setContact] = useState({
       email: c.email || "",
@@ -656,9 +697,9 @@ function CaseCard({ c, send, disabled, view }) {
     }),
     [replacement, setReplacement] = useState(""),
     [feedback, setFeedback] = useState(""),
-    [location, setLocation] = useState(c.stages[c.stageIndex]?.location || ""),
+    [location, setLocation] = useState(["slots_needed", "selection_pending"].includes(c.status) ? c.stages[c.stageIndex]?.location || "" : ""),
     [instructions, setInstructions] = useState(
-      c.stages[c.stageIndex]?.instructions || "",
+      ["slots_needed", "selection_pending"].includes(c.status) ? c.stages[c.stageIndex]?.instructions || "" : "",
     ),
     [slotStart, setSlotStart] = useState(""),
     [slotEnd, setSlotEnd] = useState(""),
@@ -671,6 +712,7 @@ function CaseCard({ c, send, disabled, view }) {
   return (
     <article id={`wf-case-${c.id}`} className="wf-card">
       <h3>{c.name}</h3>
+      {entryAction ? <p>Review this candidate and confirm your choice below. Opening an email link does not record a decision.</p> : null}
       <p>
         <strong>{stage?.name || "Post-screen manager review"}</strong> ·{" "}
         {c.status.replaceAll("_", " ")}
@@ -696,18 +738,22 @@ function CaseCard({ c, send, disabled, view }) {
         <div className="wf-actions">
           <button
             disabled={disabled}
-            onClick={() => act("decision", { decision: "proceed" })}
+            onClick={() => act("decision", { decision: "proceed", schedulingMode: c.stageIndex === c.stages.length - 1 ? undefined : "calendar" })}
           >
             {c.stageIndex === c.stages.length - 1
               ? "Proceed toward offer handoff"
               : "Proceed"}
           </button>
+          {c.stageIndex < c.stages.length - 1 ? <button disabled={disabled} onClick={() => {setManualSchedule(true); setLocation(""); setInstructions(""); setSlots([]);}}>Proceed but select your time your way</button> : null}
+          {c.stageIndex < c.stages.length - 1 ? <small>Proceed uses the leadership calendar when connected. Manager-selected times let you offer days and times for the candidate to choose.</small> : null}
           <button
             disabled={disabled || c.status === "held"}
             onClick={() => act("decision", { decision: "hold" })}
           >
-            Hold
+            Hold for other candidate review
           </button>
+          <button disabled={disabled} onClick={() => setDeclineOpen(!declineOpen)}>Decline to proceed</button>
+          {declineOpen ? <div>
           <Field label="Decline reason">
             <select value={reason} onChange={(e) => setReason(e.target.value)}>
               <option value="">Choose a short reason</option>
@@ -729,16 +775,17 @@ function CaseCard({ c, send, disabled, view }) {
               act("decision", { decision: "decline", reason, comment })
             }
           >
-            Decline
+            Record decline and notify recruiter
           </button>
+          </div> : null}
           <small>
-            Hold sends an active-review note without a promised decision date.
+            Hold sends an active-review email. Candidate replies go to recruiting; no interview or decision date is promised.
           </small>
         </div>
       ) : null}
       {c.canDecide &&
-      ["slots_needed", "selection_pending"].includes(c.status) ? (
-        <details open={c.status === "slots_needed"}>
+      (["slots_needed", "selection_pending"].includes(c.status) || (manualSchedule && ["manager_decision", "feedback_due", "held"].includes(c.status) && c.stageIndex < c.stages.length - 1)) ? (
+        <details open={c.status === "slots_needed" || manualSchedule}>
           <summary>
             {c.status === "selection_pending"
               ? "Replace offered interview times"
@@ -747,7 +794,7 @@ function CaseCard({ c, send, disabled, view }) {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              act("offer_slots", { slots, instructions, location });
+              act(["manager_decision", "feedback_due", "held"].includes(c.status) ? "proceed_with_slots" : "offer_slots", { slots, instructions, location });
             }}
           >
             <p>
@@ -817,7 +864,7 @@ function CaseCard({ c, send, disabled, view }) {
               </p>
             ))}
             <button disabled={disabled || !slots.length}>
-              Send offered times
+              {["manager_decision", "feedback_due", "held"].includes(c.status) ? "Proceed and send interview invitation" : "Send offered times"}
             </button>
           </form>
         </details>
@@ -875,6 +922,17 @@ function CaseCard({ c, send, disabled, view }) {
             ))}
         </details>
       ) : null}
+      {c.canRecruit && c.status === "declined" ? <section aria-label="Declined candidate follow-up">
+        <h4>Manager declined to proceed</h4>
+        <p>Reason: {c.lastDecision?.reason || c.finalReason}</p>
+        {c.lastDecision?.comment ? <p>Manager comment: {c.lastDecision.comment}</p> : null}
+        {c.declineFollowUp ? <p role="status">Follow-up assigned to {c.declineFollowUp.channel === "ats" ? "your company ATS. Send the candidate response there and record completion." : "WelcomeFlow. Check the recorded email outcome."}</p> : <>
+          <p>Choose where to follow up with the candidate. Internal manager comments stay with recruiting.</p>
+          <button disabled={disabled} onClick={() => act("decline_follow_up", {channel: "welcomeflow"})}>Send candidate follow-up through WelcomeFlow</button>
+          <button disabled={disabled} onClick={() => act("decline_follow_up", {channel: "ats"})}>Handle follow-up in company ATS</button>
+        </>}
+        <details><summary>ATS note to copy</summary><p className="wf-prewrap">{`Candidate: ${c.name}\nOutcome: Manager declined to proceed\nReason: ${c.lastDecision?.reason || c.finalReason}\nManager comment: ${c.lastDecision?.comment || "None"}\nRecorded: ${c.lastDecision?.recordedAt || c.finalAt}\nCandidate follow-up: ${c.declineFollowUp?.channel || "Not assigned"}`}</p></details>
+      </section> : null}
       {c.status === "offer_ready" ? (
         <p role="status">
           Final required interview decision recorded. Ready for the configured

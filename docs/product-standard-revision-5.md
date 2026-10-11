@@ -1,6 +1,6 @@
 # WelcomeFlow: Product Standard, Build Audit, and Final Specification for CEO Approval
 
-Prepared for Ashley Martin-Simpson, CEO
+Prepared for the WelcomeFlow CEO
 
 Audit date: September 22, 2026. Specification revised: September 24, 2026.
 
@@ -512,21 +512,21 @@ References below point to the inspected draft commit. Most foundations predate P
 
 | Ref | Source and relevant evidence |
 |---|---|
-| E1 | [App.js](https://github.com/ashleysimpson0218-hash/Submission-assistant/blob/00c52abdd87cda481a6ec70165e1df98c48e044f/src/App.js): status/owner map around 1182; save paths 1409; outreach 9279–9444; history 9993; workflow updates 11521; manager follow-up 12804; bulk starts 12870; onboarding completion 13029–13110; reporting settings 14139 and 17167. |
-| E2 | [candidateReadyConfirmation.js](https://github.com/ashleysimpson0218-hash/Submission-assistant/blob/00c52abdd87cda481a6ec70165e1df98c48e044f/src/candidateReadyConfirmation.js), candidateReadyPackageValidation.js, communicationGeneration.js: scoped validation, fingerprints, stale review, identity and duplicate protections. |
-| E3 | [actionCenterSelectors.js](https://github.com/ashleysimpson0218-hash/Submission-assistant/blob/00c52abdd87cda481a6ec70165e1df98c48e044f/src/actionCenterSelectors.js): read-only derived actions, readiness, manager feedback and context. |
-| E4 | [RecruiterWorkspacePage.js](https://github.com/ashleysimpson0218-hash/Submission-assistant/blob/00c52abdd87cda481a6ec70165e1df98c48e044f/src/RecruiterWorkspacePage.js), recruiterWorkspaceSelectors.js and workPagePresentation.js: existing Work sections and heuristic owner resolution. |
-| E5 | [submissionCommunicationActions.js](https://github.com/ashleysimpson0218-hash/Submission-assistant/blob/00c52abdd87cda481a6ec70165e1df98c48e044f/src/submissionCommunicationActions.js), actionCenterCommunicationActions.js: distinct copy/open/send-confirmation states and context revalidation. |
-| E6 | [send-email.js](https://github.com/ashleysimpson0218-hash/Submission-assistant/blob/00c52abdd87cda481a6ec70165e1df98c48e044f/api/send-email.js): recipient restrictions, gated provider request, and errors; no durable delivery recovery path in this handler. |
-| E7 | [welcomeflowApiSecurity.js](https://github.com/ashleysimpson0218-hash/Submission-assistant/blob/00c52abdd87cda481a6ec70165e1df98c48e044f/server/welcomeflowApiSecurity.js), communicationWorkflow.js: API role/workspace authorization and configurable channel modes. |
-| E8 | [book-screening.js](https://github.com/ashleysimpson0218-hash/Submission-assistant/blob/00c52abdd87cda481a6ec70165e1df98c48e044f/api/book-screening.js), internalCalendar.js and the slot-reservation migration: requested/confirmed distinction, scoped tokens, concurrency and internal-only calendar state. |
-| E9 | [workflowLogic.js](https://github.com/ashleysimpson0218-hash/Submission-assistant/blob/00c52abdd87cda481a6ec70165e1df98c48e044f/src/workflowLogic.js): hire records, fill counts, onboarding and withdrawal patches. |
-| E10 | [weeklyReportingWorkflow.js](https://github.com/ashleysimpson0218-hash/Submission-assistant/blob/00c52abdd87cda481a6ec70165e1df98c48e044f/src/weeklyReportingWorkflow.js), weeklyCleanupReporting.js, noOpeningFacilityPolicy.js: derived reporting and manual review flow. |
-| E11 | [Communication audit migration](https://github.com/ashleysimpson0218-hash/Submission-assistant/blob/00c52abdd87cda481a6ec70165e1df98c48e044f/supabase/migrations/20260826015254_add_communication_action_audit.sql), record-communication-action.js: actor, timestamps, duplicate prevention and constrained action types. |
-| E12 | [runtimeConfig.js](https://github.com/ashleysimpson0218-hash/Submission-assistant/blob/00c52abdd87cda481a6ec70165e1df98c48e044f/src/runtimeConfig.js), OwnerUatAuthGate.js and database migrations: environment boundaries and owner testing. Live policy installation was not inspected. |
-| E13 | [vercel.json](https://github.com/ashleysimpson0218-hash/Submission-assistant/blob/00c52abdd87cda481a6ec70165e1df98c48e044f/vercel.json), package.json, public/manifest.json and repository inventory: web application structure; no extension/background automation service found in inspected paths. |
-| E14 | [communicationDraftCloudSave.js](https://github.com/ashleysimpson0218-hash/Submission-assistant/blob/00c52abdd87cda481a6ec70165e1df98c48e044f/src/communicationDraftCloudSave.js): version checks and preservation for communication drafts; not proof of general multi-user reconciliation. |
-| E15 | [Draft release scope](https://github.com/ashleysimpson0218-hash/Submission-assistant/blob/00c52abdd87cda481a6ec70165e1df98c48e044f/docs/recruiter-experience-release.md), industryProfiles.js, industryCommunicationTemplates.js, RecruiterEnablementPage.js: additive industry setup, preserved templates, session-only training and known rollout limits. |
+| E1 | [App.js](../src/App.js): status/owner map around 1182; save paths 1409; outreach 9279–9444; history 9993; workflow updates 11521; manager follow-up 12804; bulk starts 12870; onboarding completion 13029–13110; reporting settings 14139 and 17167. |
+| E2 | [candidateReadyConfirmation.js](../src/candidateReadyConfirmation.js), candidateReadyPackageValidation.js, communicationGeneration.js: scoped validation, fingerprints, stale review, identity and duplicate protections. |
+| E3 | [actionCenterSelectors.js](../src/actionCenterSelectors.js): read-only derived actions, readiness, manager feedback and context. |
+| E4 | [RecruiterWorkspacePage.js](../src/RecruiterWorkspacePage.js), recruiterWorkspaceSelectors.js and workPagePresentation.js: existing Work sections and heuristic owner resolution. |
+| E5 | [submissionCommunicationActions.js](../src/submissionCommunicationActions.js), actionCenterCommunicationActions.js: distinct copy/open/send-confirmation states and context revalidation. |
+| E6 | [send-email.js](../api/send-email.js): recipient restrictions, gated provider request, and errors; no durable delivery recovery path in this handler. |
+| E7 | [welcomeflowApiSecurity.js](../server/welcomeflowApiSecurity.js), communicationWorkflow.js: API role/workspace authorization and configurable channel modes. |
+| E8 | [book-screening.js](../api/book-screening.js), internalCalendar.js and the slot-reservation migration: requested/confirmed distinction, scoped tokens, concurrency and internal-only calendar state. |
+| E9 | [workflowLogic.js](../src/workflowLogic.js): hire records, fill counts, onboarding and withdrawal patches. |
+| E10 | [weeklyReportingWorkflow.js](../src/weeklyReportingWorkflow.js), weeklyCleanupReporting.js, noOpeningFacilityPolicy.js: derived reporting and manual review flow. |
+| E11 | [Communication audit migration](../supabase/migrations/20260826015254_add_communication_action_audit.sql), record-communication-action.js: actor, timestamps, duplicate prevention and constrained action types. |
+| E12 | [runtimeConfig.js](../src/runtimeConfig.js), OwnerUatAuthGate.js and database migrations: environment boundaries and owner testing. Live policy installation was not inspected. |
+| E13 | [vercel.json](../vercel.json), package.json, public/manifest.json and repository inventory: web application structure; no extension/background automation service found in inspected paths. |
+| E14 | [communicationDraftCloudSave.js](../src/communicationDraftCloudSave.js): version checks and preservation for communication drafts; not proof of general multi-user reconciliation. |
+| E15 | [Draft release scope](../docs/recruiter-experience-release.md), industryProfiles.js, industryCommunicationTemplates.js, RecruiterEnablementPage.js: additive industry setup, preserved templates, session-only training and known rollout limits. |
 
 ## Final disposition
 

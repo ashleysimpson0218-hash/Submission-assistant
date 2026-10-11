@@ -1,6 +1,6 @@
 # WelcomeFlow Revision 5: implementation validation checkpoint
 
-Prepared for Ashley Martin-Simpson, CEO. September 27, 2026.
+Prepared for the WelcomeFlow CEO. September 27, 2026.
 
 **Governing authority:** Revision 5 was approved in the CEO implementation authorization in this conversation. CEO-01 through CEO-03 remain closed; CEO-04 remains approved with revision. The preserved specification in `product-standard-revision-5.md` is the original submitted document. Its historical “awaiting approval” language is superseded by that explicit authorization and the timing decisions below. No production release is authorized.
 

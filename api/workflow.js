@@ -16,6 +16,8 @@ const USER_COMMANDS = new Set([
   "set_requisition_active",
   "handoff",
   "decision",
+  "decline_follow_up",
+  "proceed_with_slots",
   "offer_slots",
   "complete_interview",
   "feedback",
@@ -195,7 +197,7 @@ module.exports = async function handler(req, res) {
           403,
         );
       const result = await execute(client, workspaceId, cmd, actor);
-      if (cmd.type === "book") {
+      if (["book", "handoff", "decision", "offer_slots", "decline_follow_up", "proceed_with_slots"].includes(cmd.type)) {
         // The reservation and outbox commit first. A transport failure cannot undo the booking.
         // Replayed booking requests use the same durable outbox; accepted/unknown sends are not replayed.
         const worker = require("./workflow-worker");
@@ -205,12 +207,12 @@ module.exports = async function handler(req, res) {
             headers: {
               authorization: `Bearer ${process.env.WELCOMEFLOW_WORKFLOW_WORKER_SECRET || ""}`,
             },
-            body: { workspaceId, confirmationCaseId: actor.caseId },
+            body: cmd.type === "book" ? {workspaceId, confirmationCaseId: actor.caseId} : {workspaceId, caseId: cmd.payload.caseId || result.snapshot.state.cases.find(c => c.candidateId === cmd.payload.candidateId && c.requisitionId === cmd.payload.requisitionId)?.id},
           },
           { setHeader() {}, end() {}, statusCode: 0 },
         );
       }
-      snap = result.snapshot;
+      snap = await snapshot(client, workspaceId);
       actor = result.actor;
       if (actor.role === "candidate")
         return json(res, 200, {
