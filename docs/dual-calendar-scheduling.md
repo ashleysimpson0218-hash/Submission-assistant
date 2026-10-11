@@ -21,7 +21,7 @@ The test endpoint is disabled outside Vercel Preview and an isolated test/accept
 
 ## Running the Outlook connector test
 
-1. Open the test deployment's `/workflow` page and sign in with an active test workspace member.
+1. Open the test deployment's `/workflow` page and sign in with an active test workspace member. Invited accounts without a password can use **Set or reset password**, open the setup email, and complete the new-password form. The auth provider must allow the test origin as a redirect. No setup email is sent until the user requests it.
 2. Expand **Outlook calendar connection test**. Select **Connect Outlook**, follow **Continue to Microsoft**, and complete the app user's authorization.
 3. Return and select **Verify connected calendar**. Confirm the displayed mailbox is the intended Outlook account.
 4. Choose a future start in the explicitly displayed browser timezone. Check the time, then create the 15-minute test appointment.
@@ -44,6 +44,6 @@ The existing direct-calendar Proceed guard remains in place. The connector test 
 
 Run `node --test test/calendar-connection.test.cjs test/calendar-providers.test.cjs test/workflow-foundation.test.cjs`, the calendar/workflow API and WorkflowPanel Jest tests, lint, and `CI=true npm run build`.
 
-October 11 UTC: 48 server/domain/provider tests and 20 API/UI tests passed; lint and build passed. Tests cover durable intent before writes, concurrent duplicates, uncertain-write reconciliation, account changes, overlapping reservations, preview/runtime/auth isolation, sanitized errors, and no test invitees. Provider tests use fake HTTP; these results do not prove live calendar access. The local optional canvas package lacked a native binary and was moved aside for jsdom's supported no-canvas mode; no dependency manifest or lockfile changed.
+October 11 UTC: 48 server/domain/provider tests and 23 API/UI tests passed; lint and build passed. Tests cover durable intent before writes, concurrent duplicates, uncertain-write reconciliation, account changes, overlapping reservations, preview/runtime/auth isolation, sanitized errors, and no test invitees. Provider tests use fake HTTP; these results do not prove live calendar access. The local optional canvas package lacked a native binary and was moved aside for jsdom's supported no-canvas mode; no dependency manifest or lockfile changed.
 
 Install with `npm ci --legacy-peer-deps` to avoid the unused Better Auth adapter's optional TypeScript peer conflict with Create React App. Production project settings are unchanged.

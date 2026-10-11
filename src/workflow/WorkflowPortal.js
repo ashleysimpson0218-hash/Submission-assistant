@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { readRuntimeConfig } from "../runtimeConfig";
 import { getRuntimeSupabaseClient } from "../supabaseRuntimeClient";
 import WorkflowPanel from "./WorkflowPanel";
@@ -12,7 +12,16 @@ export default function WorkflowPortal() {
     [password, setPassword] = useState(""),
     [message, setMessage] = useState(""),
     [version, setVersion] = useState(0),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [setup, setSetup] = useState(() => /(?:type=invite|type=recovery)/i.test(window.location.hash)),
+    [newPassword, setNewPassword] = useState("");
+  useEffect(() => {
+    if (!client) return undefined;
+    const listener = client.auth.onAuthStateChange(event => {
+      if (event === "PASSWORD_RECOVERY") setSetup(true);
+    });
+    return () => listener?.data?.subscription?.unsubscribe();
+  }, [client]);
   if (process.env.REACT_APP_WELCOMEFLOW_WORKFLOW_ENABLED !== "true")
     return (
       <main className="wf-portal">
@@ -22,6 +31,24 @@ export default function WorkflowPortal() {
   return (
     <main className="wf-portal">
       <h1>WelcomeFlow</h1>
+      {message ? <p role="status">{message}</p> : null}
+      {!token && setup ? (
+        <form className="wf-workflow" onSubmit={async e => {
+          e.preventDefault(); setBusy(true); setMessage("");
+          try {
+            const { data } = await client.auth.getSession();
+            if (!data?.session) throw new Error("Open your WelcomeFlow setup email link first.");
+            const { error } = await client.auth.updateUser({ password: newPassword });
+            if (error) throw new Error("Password setup could not be completed. Request a new setup link.");
+            setNewPassword(""); setSetup(false); setMessage("Your WelcomeFlow password is saved."); setVersion(v => v + 1);
+          } catch (error) { setMessage(error.message); }
+          finally { setBusy(false); }
+        }}>
+          <h2>Set your WelcomeFlow password</h2>
+          <label>New password<input type="password" autoComplete="new-password" minLength={12} required value={newPassword} onChange={e => setNewPassword(e.target.value)} /></label>
+          <button disabled={busy}>Save password</button>
+        </form>
+      ) : null}
       {!token ? (
         <details className="wf-workflow">
           <summary>Sign in or change account</summary>
@@ -66,6 +93,14 @@ export default function WorkflowPortal() {
               />
             </label>
             <button disabled={busy}>Sign in</button>
+            <button type="button" disabled={busy || !email.trim()} onClick={async () => {
+              setBusy(true); setMessage("");
+              try {
+                await client.auth.resetPasswordForEmail(email.trim(), { redirectTo: `${window.location.origin}/workflow` });
+                setMessage("If this is an invited WelcomeFlow account, a setup email has been requested. Open its link to set your WelcomeFlow password.");
+              } catch { setMessage("The setup email could not be requested. Please try again."); }
+              finally { setBusy(false); }
+            }}>Set or reset password</button>
             <button
               type="button"
               disabled={busy}
@@ -76,7 +111,6 @@ export default function WorkflowPortal() {
             >
               Sign out
             </button>
-            {message ? <p role="alert">{message}</p> : null}
           </form>
         </details>
       ) : null}
