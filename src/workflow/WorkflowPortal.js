@@ -63,7 +63,12 @@ export default function WorkflowPortal() {
             const { data } = await client.auth.getSession();
             if (!data?.session) throw new Error("Open your WelcomeFlow setup email link first.");
             const { error } = await client.auth.updateUser({ password: newPassword });
-            if (error) throw new Error("Password setup could not be completed. Request a new setup link.");
+            if (error) {
+              if (/different from the old password/i.test(error.message || "")) {
+                throw new Error("Choose a new password you have not used for this account before.");
+              }
+              throw new Error("Password setup could not be completed. Request a new setup link.");
+            }
             setSession(data.session); setNewPassword(""); setConfirmPassword(""); setSetup(false); setPasswordSaved(true); setVersion(v => v + 1);
           } catch (error) { setMessage(error.message); }
           finally { setBusy(false); }
