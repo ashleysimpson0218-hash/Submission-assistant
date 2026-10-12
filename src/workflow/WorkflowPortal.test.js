@@ -5,11 +5,11 @@ const mockClient = {auth:{getSession:jest.fn(),onAuthStateChange:jest.fn(),reset
 jest.mock('../runtimeConfig',()=>({readRuntimeConfig:()=>({workspaceId:'test'})}));
 jest.mock('../supabaseRuntimeClient',()=>({getRuntimeSupabaseClient:()=>mockClient}));
 jest.mock('./WorkflowPanel',()=>()=> <div>Workflow content</div>);
+jest.mock('./CalendarConnectionPanel',()=>()=> <div>Outlook account connection</div>);
 beforeEach(()=>{jest.clearAllMocks();process.env.REACT_APP_WELCOMEFLOW_WORKFLOW_ENABLED='true';window.location.hash='';mockClient.auth.onAuthStateChange.mockReturnValue({data:{subscription:{unsubscribe:jest.fn()}}});mockClient.auth.getSession.mockResolvedValue({data:{session:null}});mockClient.auth.updateUser.mockResolvedValue({});mockClient.auth.resetPasswordForEmail.mockResolvedValue({});mockClient.auth.signOut.mockResolvedValue({});});
 afterEach(()=>{window.location.hash='';});
 test('setup email requires an explicit click and uses current workflow origin',async()=>{
   render(<WorkflowPortal/>);expect(mockClient.auth.resetPasswordForEmail).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByText('Sign in or change account'));
   fireEvent.change(screen.getByLabelText('Email'),{target:{value:'owner@example.test'}});
   fireEvent.click(screen.getByText('Set or reset password'));
   await waitFor(()=>expect(mockClient.auth.resetPasswordForEmail).toHaveBeenCalledWith('owner@example.test',{redirectTo:`${window.location.origin}/workflow?setup=password`}));
@@ -49,6 +49,17 @@ test('interview work stays hidden until a user is authenticated',async()=>{
   expect(screen.queryByText('Workflow content')).not.toBeInTheDocument();
 });
 
+test('signed-in account owns calendar connection outside interview work',async()=>{
+  const session={user:{email:'owner@example.test'}};
+  mockClient.auth.getSession.mockResolvedValue({data:{session}});
+  render(<WorkflowPortal/>);
+  expect(await screen.findByText('Account & calendar')).toBeInTheDocument();
+  expect(screen.getByText('Signed in as owner@example.test.')).toBeInTheDocument();
+  expect(screen.getByText('Outlook account connection')).toBeInTheDocument();
+  expect(screen.getByText('Workflow content')).toBeInTheDocument();
+  expect(screen.queryByText('Sign in')).not.toBeInTheDocument();
+});
+
 test('email rate limit never reports a setup email as requested',async()=>{
   mockClient.auth.resetPasswordForEmail.mockResolvedValue({error:{code:'over_email_send_rate_limit',status:429}});
   render(<WorkflowPortal/>);fireEvent.change(screen.getByLabelText('Email'),{target:{value:'owner@example.test'}});fireEvent.click(screen.getByText('Set or reset password'));
@@ -60,4 +71,4 @@ test('explicit password destination survives recovery event already consumed',()
   render(<WorkflowPortal/>);expect(screen.getByLabelText('New password')).toBeInTheDocument();
   window.history.replaceState({},'', '/workflow');
 });
-
+
