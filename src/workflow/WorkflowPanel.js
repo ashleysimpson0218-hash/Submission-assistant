@@ -160,7 +160,7 @@ export default function WorkflowPanel({ client, workspaceId, token = "", entry =
           </button>
         </div>
       ) : null}
-      {busy ? <p role="status">Checking the shared workflowâ€¦</p> : null}
+      {busy ? <p role="status">Checking the shared workflow…</p> : null}
       {done ? (
         <p role="status">Thank you. Your response has been recorded.</p>
       ) : token && view ? (
@@ -221,7 +221,7 @@ export default function WorkflowPanel({ client, workspaceId, token = "", entry =
                 Owner:{" "}
                 {view.people?.find((p) => p.userId === e.ownerId)?.name ||
                   e.ownerId}{" "}
-                Â· First recorded {new Date(e.createdAt).toLocaleString()}
+                · First recorded {new Date(e.createdAt).toLocaleString()}
               </small>
               {e.caseId ? (
                 <a href={`#wf-case-${e.caseId}`}>Open related candidate</a>
@@ -249,11 +249,11 @@ export default function WorkflowPanel({ client, workspaceId, token = "", entry =
             <details>
               <summary>Workflow outcomes</summary>
               <p>
-                {view.cases.length} candidates Â·{" "}
+                {view.cases.length} candidates ·{" "}
                 {view.cases.filter((c) => c.status === "offer_ready").length}{" "}
-                ready for offer handoff Â·{" "}
+                ready for offer handoff ·{" "}
                 {view.cases.filter((c) => c.status === "withdrawn").length}{" "}
-                withdrawn Â·{" "}
+                withdrawn ·{" "}
                 {view.cases.filter((c) => c.status === "declined").length}{" "}
                 declined
               </p>
@@ -272,9 +272,9 @@ export default function WorkflowPanel({ client, workspaceId, token = "", entry =
               </p>
               {view.audit.map((e) => (
                 <p key={e.event_id}>
-                  <strong>{e.type.replaceAll(".", " ")}</strong> Â· {e.actor_id}{" "}
-                  Â· {new Date(e.occurred_at).toLocaleString()}
-                  {e.details?.reason ? ` Â· ${e.details.reason}` : ""}
+                  <strong>{e.type.replaceAll(".", " ")}</strong> · {e.actor_id}{" "}
+                  · {new Date(e.occurred_at).toLocaleString()}
+                  {e.details?.reason ? ` · ${e.details.reason}` : ""}
                 </p>
               ))}
             </details>
@@ -583,7 +583,161 @@ function Enrollment({ view, send, disabled, candidateId = "" }) {
           if (c)
             send("handoff", {
               candidateId: c.id,
-              requisitionId: c.r…1721 tokens truncated…roceed", schedulingMode: c.stageIndex === c.stages.length - 1 ? undefined : "calendar" })}
+              requisitionId: c.requisitionId,
+              reviewed,
+              sourceConfirmed: reviewed,
+              timezone: zone,
+              contactAllowed: contact,
+            });
+        }}
+      >
+        <Field label="Candidate with an approved submission packet">
+          <select
+            required
+            value={id}
+            onChange={(e) => {
+              setId(e.target.value);
+              setReviewed(false);
+              setContact(false);
+            }}
+          >
+            <option value="">Choose a candidate</option>
+            {view.catalog.candidates
+              .filter(
+                (x) =>
+                  !view.cases.some(
+                    (c) =>
+                      c.candidateId === x.id &&
+                      c.requisitionId === x.requisitionId,
+                  ),
+              )
+              .map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+          </select>
+        </Field>
+        <Field label="Verified candidate timezone">
+          <input
+            required
+            placeholder="America/New_York"
+            value={zone}
+            onChange={(e) => setZone(e.target.value)}
+          />
+        </Field>
+        <p>
+          Use the requisition source designated by your client administrator.
+        </p>
+        <label>
+          <input
+            type="checkbox"
+            required
+            checked={reviewed}
+            onChange={(e) => setReviewed(e.target.checked)}
+          />{" "}
+          I reviewed the approved packet and confirmed this active hiring need
+          against its source.
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={contact}
+            onChange={(e) => setContact(e.target.checked)}
+          />{" "}
+          Candidate email contact is permitted.
+        </label>
+        <button disabled={disabled || !c || !reviewed}>
+          Send submission with manager actions
+        </button>
+      </form>
+    </details>
+  );
+}
+export function SubmissionWorkflowHandoff({client, workspaceId, candidateId}) {
+  const [view, setView] = useState(null), [error, setError] = useState(""), [busy, setBusy] = useState(false), [pending, setPending] = useState(null);
+  useEffect(() => {
+    let live = true;
+    workflowRequest({client, workspaceId}).then(r => {if (live) setView(r.view);}).catch(e => {if (live) setError(e.message);});
+    return () => {live = false;};
+  }, [client, workspaceId, candidateId]);
+  async function send(type, payload, retry = false) {
+    if (busy || (!retry && pending)) return;
+    const command = retry ? pending : {id: uid(), type, payload};
+    setPending(command); setBusy(true); setError("");
+    try {
+      const r = await workflowRequest({client, workspaceId, command});
+      setView(r.view); setPending(null);
+    } catch (e) {setError(e.message); if(e.definitive) setPending(null);}
+    finally {setBusy(false);}
+  }
+  const c = view?.cases.find(c => c.candidateId === candidateId);
+  const candidate = view?.catalog?.candidates.find(c => c.id === candidateId);
+  return <section className="wf-workflow" aria-label="Automatic manager submission">
+    <h3>Automatic manager submission</h3>
+    <p>Sends the reviewed packet with manager decision links. The recorded manager choice drives the interview workflow.</p>
+    {error ? <p role="alert">{error}</p> : null}
+    {pending && !busy ? <button onClick={() => send("", {}, true)}>Check and retry pending submission</button> : null}
+    {busy ? <p role="status">Recording the submission and checking email processing…</p> : null}
+    {c ? <><p role="status">Submission recorded. Current workflow: {c.status.replaceAll("_", " ")}.</p>
+      {view.jobs.filter(j => j.caseId === c.id && j.kind === "decision_request").map(j => <p key={j.id}>Manager email: {j.status.replaceAll("_", " ")}.</p>)}
+      <a href={`/workflow?workspace=${encodeURIComponent(workspaceId)}&case=${encodeURIComponent(c.id)}`}>Open this candidate's workflow</a></> : candidate ? <Enrollment key={candidateId} view={view} candidateId={candidateId} send={send} disabled={busy || Boolean(pending)} /> : view ? <p>The administrator must configure the active requisition's manager and Interview Plan before this saved packet can send an automatic decision request.</p> : !error ? <p>Checking the saved packet and assigned manager…</p> : null}
+  </section>;
+}
+function CaseCard({ c, send, disabled, view, entryAction = "" }) {
+  const [reason, setReason] = useState(""),
+    [declineOpen, setDeclineOpen] = useState(entryAction === "decline"),
+    [manualSchedule, setManualSchedule] = useState(entryAction === "proceed-times"),
+    [comment, setComment] = useState(""),
+    [contact, setContact] = useState({
+      email: c.email || "",
+      timezone: c.timezone || "",
+      contactAllowed: c.contactAllowed,
+    }),
+    [replacement, setReplacement] = useState(""),
+    [feedback, setFeedback] = useState(""),
+    [location, setLocation] = useState(["slots_needed", "selection_pending"].includes(c.status) ? c.stages[c.stageIndex]?.location || "" : ""),
+    [instructions, setInstructions] = useState(
+      ["slots_needed", "selection_pending"].includes(c.status) ? c.stages[c.stageIndex]?.instructions || "" : "",
+    ),
+    [slotStart, setSlotStart] = useState(""),
+    [slotEnd, setSlotEnd] = useState(""),
+    [slots, setSlots] = useState([]),
+    [evidence, setEvidence] = useState(""),
+    [resolution, setResolution] = useState("");
+  const stage = c.stages[c.stageIndex],
+    payload = { caseId: c.id, expectedVersion: c.version };
+  const act = (type, p = {}) => send(type, { ...payload, ...p });
+  return (
+    <article id={`wf-case-${c.id}`} className="wf-card">
+      <h3>{c.name}</h3>
+      {entryAction ? <p>Review this candidate and confirm your choice below. Opening an email link does not record a decision.</p> : null}
+      <p>
+        <strong>{stage?.name || "Post-screen manager review"}</strong> ·{" "}
+        {c.status.replaceAll("_", " ")}
+      </p>
+      <p>{stage ? `Stage ${c.stageIndex + 1} of ${c.stages.length}` : ""}</p>
+      <details>
+        <summary>Reviewed candidate packet and recorded feedback</summary>
+        <p className="wf-prewrap">{c.packet}</p>
+        {c.stages.map((s) => (
+          <div key={s.id}>
+            <strong>{s.name}</strong>
+            {s.feedback?.map((f, i) => (
+              <p key={i}>
+                {f.text}{" "}
+                <small>{new Date(f.recordedAt).toLocaleString()}</small>
+              </p>
+            ))}
+          </div>
+        ))}
+      </details>
+      {c.canDecide &&
+      ["manager_decision", "feedback_due", "held"].includes(c.status) ? (
+        <div className="wf-actions">
+          <button
+            disabled={disabled}
+            onClick={() => act("decision", { decision: "proceed", schedulingMode: c.stageIndex === c.stages.length - 1 ? undefined : "calendar" })}
           >
             {c.stageIndex === c.stages.length - 1
               ? "Proceed toward offer handoff"
@@ -698,7 +852,7 @@ function Enrollment({ view, send, disabled, candidateId = "" }) {
             </button>
             {slots.map((s, i) => (
               <p key={i}>
-                {new Date(s.start).toLocaleString()} â€“{" "}
+                {new Date(s.start).toLocaleString()} –{" "}
                 {new Date(s.end).toLocaleTimeString()}{" "}
                 <button
                   type="button"
@@ -788,7 +942,7 @@ function Enrollment({ view, send, disabled, candidateId = "" }) {
       !["declined", "withdrawn", "offer_ready"].includes(c.status) ? (
         <details>
           <summary>Record confirmed candidate withdrawal</summary>
-          <Field label="Candidateâ€™s withdrawal reason">
+          <Field label="Candidate’s withdrawal reason">
             <select value={reason} onChange={(e) => setReason(e.target.value)}>
               <option value="">Choose a reason</option>
               {WITHDRAWAL_REASONS.map((r) => (
@@ -1058,7 +1212,7 @@ function CandidateAction({ view, send, disabled }) {
               <option value="">Choose an offered time</option>
               {view.slots.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {new Date(s.start).toLocaleString()} â€“{" "}
+                  {new Date(s.start).toLocaleString()} –{" "}
                   {new Date(s.end).toLocaleTimeString()}
                 </option>
               ))}
