@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { readRuntimeConfig } from "../runtimeConfig";
 import { getRuntimeSupabaseClient } from "../supabaseRuntimeClient";
 import WorkflowPanel from "./WorkflowPanel";
+import CalendarConnectionPanel from "./CalendarConnectionPanel";
 export default function WorkflowPortal() {
   const runtime = useMemo(() => readRuntimeConfig(), []),
     client = useMemo(() => getRuntimeSupabaseClient(runtime), [runtime]);
@@ -79,9 +80,9 @@ export default function WorkflowPortal() {
           <button disabled={busy}>Save password</button>
         </form>
       ) : null}
-      {!token && !setup && !passwordSaved ? (
+      {!token && !setup && !passwordSaved && !session ? (
         <details className="wf-workflow">
-          <summary>Sign in or change account</summary>
+          <summary>Sign in</summary>
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -140,6 +141,16 @@ export default function WorkflowPortal() {
               } catch { setMessage("The setup email could not be requested. Please try again."); }
               finally { setBusy(false); }
             }}>Set or reset password</button>
+          </form>
+        </details>
+      ) : null}
+      {!token && sessionReady && session && !setup && !passwordSaved ? (
+        <section className="wf-workflow wf-account" aria-labelledby="account-calendar-title">
+          <header>
+            <div>
+              <h2 id="account-calendar-title">Account &amp; calendar</h2>
+              <p>Signed in as {session.user?.email || "your WelcomeFlow account"}.</p>
+            </div>
             <button
               type="button"
               disabled={busy}
@@ -151,8 +162,9 @@ export default function WorkflowPortal() {
             >
               Sign out
             </button>
-          </form>
-        </details>
+          </header>
+          <CalendarConnectionPanel client={client} workspaceId={workspaceId} />
+        </section>
       ) : null}
       {(token || (sessionReady && session && !setup && !passwordSaved)) ? (
         <WorkflowPanel
@@ -166,4 +178,3 @@ export default function WorkflowPortal() {
     </main>
   );
 }
-
