@@ -1,4 +1,9 @@
 import React, { useEffect, useState } from 'react';
+function readableError(value, fallback) {
+  if (typeof value === 'string' && value.trim()) return value;
+  if (typeof value?.message === 'string' && value.message.trim()) return value.message;
+  return fallback;
+}
 export default function CalendarConnectionPanel({ client, workspaceId }) {
   const [status, setStatus] = useState(null), [message, setMessage] = useState(''),
     [busy, setBusy] = useState(false), [start, setStart] = useState(''),
@@ -11,12 +16,14 @@ export default function CalendarConnectionPanel({ client, workspaceId }) {
         Authorization: `Bearer ${data.session.access_token}` },
       ...(payload ? { body: JSON.stringify(payload) } : {}) });
     const result = await response.json();
-    if (!response.ok || !result.ok) throw new Error(result.error || 'Calendar check could not be completed.');
+    if (!response.ok || !result.ok) throw new Error(readableError(result.error, 'Calendar check could not be completed. Refresh and try again.'));
     return result;
   }
   useEffect(() => {
     let live = true;
-    request().then(r => { if (live) setStatus(r); }).catch(() => {});
+    request().then(r => { if (live) setStatus(r); }).catch(error => {
+      if (live) setMessage(readableError(error, 'Calendar status could not be loaded.'));
+    });
     return () => { live = false; };
     // Reload for a different authenticated workspace; never retain another member's status.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -30,10 +37,14 @@ export default function CalendarConnectionPanel({ client, workspaceId }) {
         setChecked({ start: payload.start, free: result.busy.length === 0 });
         setMessage(result.busy.length ? 'This 15-minute time is busy. Choose another time.' : 'This 15-minute time is currently free.');
       } else { setStatus(result); setAuthorizationUrl(''); }
-    } catch (e) { setMessage(e.message); }
+    } catch (e) { setMessage(readableError(e, 'Calendar check could not be completed.')); }
     finally { setBusy(false); }
   }
-  if (!status) return null;
+  if (!status) return <details className="wf-card" open>
+    <summary>Outlook calendar</summary>
+    <p role="status">{message || 'Checking the Outlook calendar connection...'}</p>
+    {message ? <button disabled={busy} onClick={() => run()}>Retry calendar check</button> : null}
+  </details>;
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const iso = start && Number.isFinite(new Date(start).getTime()) ? new Date(start).toISOString() : '';
   return <details className="wf-card">

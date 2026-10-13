@@ -54,6 +54,16 @@ beforeEach(() => {
 afterEach(() => {
   global.fetch = originalFetch;
 });
+test("structured API errors never render as object text", async () => {
+  global.fetch = jest.fn(async () => ({
+    ok: false,
+    status: 503,
+    json: async () => ({ ok: false, error: { message: "Workflow setup needs attention." } }),
+  }));
+  render(<WorkflowPanel client={client} workspaceId="test" />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Workflow setup needs attention.");
+  expect(screen.queryByText("[object Object]")).not.toBeInTheDocument();
+});
 test("uncertain network result retries the same command and does not show false completion", async () => {
   const calls = [];
   let fail = true;

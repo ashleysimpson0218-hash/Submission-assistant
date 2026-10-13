@@ -1,6 +1,11 @@
 import React, { useCallback, useEffect, useState } from "react";
 import "./workflow.css";
 const uid = () => crypto.randomUUID();
+function readableError(value, fallback) {
+  if (typeof value === "string" && value.trim()) return value;
+  if (typeof value?.message === "string" && value.message.trim()) return value.message;
+  return fallback;
+}
 const WITHDRAWAL_REASONS = [
   "Accepted another position",
   "Staying with current employer",
@@ -67,7 +72,7 @@ export async function workflowRequest({
   });
   const result = await response.json();
   if (!response.ok || !result.ok) {
-    const e = new Error(result.error || "The workflow could not be confirmed.");
+    const e = new Error(readableError(result.error, "The workflow could not be confirmed. Refresh and try again."));
     e.definitive = response.status >= 400 && response.status < 500;
     e.code = result.code;
     throw e;

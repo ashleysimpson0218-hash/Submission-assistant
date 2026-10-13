@@ -234,11 +234,14 @@ module.exports = async function handler(req, res) {
           : view(snap, actor),
     });
   } catch (e) {
+    const message = typeof e?.message === "string" && e.message.trim()
+      ? e.message
+      : "Workflow is temporarily unavailable. Your pending work remains recorded.";
     return json(res, e.status || 503, {
       ok: false,
       code: e.code || "WORKFLOW_UNAVAILABLE",
       error: e.status
-        ? e.message
+        ? message
         : "Workflow is temporarily unavailable. Your pending work remains recorded.",
     });
   }
