@@ -50,14 +50,14 @@ export default function CalendarConnectionPanel({ client, workspaceId }) {
       <label className="wf-field">Test appointment start ({zone})
         <input type="datetime-local" value={start} onChange={e => { setStart(e.target.value); setChecked(null); }} />
       </label>
-      <p>The appointment is labeled â€œWelcomeFlow TEST â€” calendar connection,â€ lasts 15 minutes, and has no invitees. You can remove it in Outlook after checking it.</p>
+      <p>The appointment is labeled "WelcomeFlow TEST - calendar connection," lasts 15 minutes, and has no invitees. You can remove it in Outlook after checking it.</p>
       <button disabled={busy || !iso} onClick={() => run({ action: 'availability', start: iso, end: new Date(Date.parse(iso) + 900000).toISOString() })}>Check this time</button>
       <button disabled={busy || !iso || checked?.start !== iso || !checked?.free}
         onClick={() => { setChecked(null); run({ action: 'book_test', id: crypto.randomUUID(), start: iso }); }}>Create test appointment in Outlook</button>
     </>}
     {message && <p role="status">{message}</p>}
     {(status.tests || []).map(test => <article className="wf-card" key={test.id}>
-      <strong>{new Date(test.start).toLocaleString()} Â· {test.status === 'verified' ? 'Confirmed in Outlook' : test.status === 'failed' ? 'Not created' : 'Awaiting verification'}</strong>
+      <strong>{new Date(test.start).toLocaleString()} - {test.status === 'verified' ? 'Confirmed in Outlook' : test.status === 'failed' ? 'Not created' : 'Awaiting verification'}</strong>
       {test.status !== 'failed' && <button disabled={busy} onClick={() => run({ action: 'reconcile', id: test.id })}>Check saved test appointment</button>}
       {['pending', 'unknown', 'created'].includes(test.status) && <p>The request is saved. Check it here before creating another appointment.</p>}
     </article>)}
