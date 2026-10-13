@@ -363,7 +363,32 @@ function applyCommand(input, command, context) {
         j.completedAt = now;
       }
     });
-  if (command.type === "configure_policy") {
+  if (command.type === "process_queued_delivery") {
+    const j = state.jobs.find((item) => item.id === p.jobId),
+      r = state.requisitions.find((item) => item.id === j?.requisitionId),
+      c = state.cases.find((item) => item.id === j?.caseId);
+    need(
+      j && r && c && p.caseId === c.id,
+      "INVALID_JOB",
+      "The pending email was not found.",
+      404,
+    );
+    need(
+      canRecruit(actor, r) || j.recipientId === actor.userId,
+      "FORBIDDEN",
+      "This pending email is outside your authorized scope.",
+      403,
+    );
+    need(
+      j.status === "queued" && j.dueAt <= now,
+      "STALE_JOB",
+      "This email is no longer waiting to be processed.",
+    );
+    event("communication.processing_requested", r.id, c.id, {
+      jobId: j.id,
+      kind: j.kind,
+    });
+  } else if (command.type === "configure_policy") {
     need(
       actor.role === "admin",
       "FORBIDDEN",

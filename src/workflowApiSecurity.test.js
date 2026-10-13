@@ -209,3 +209,15 @@ test('reviewed submission processes only its persisted candidate case after the 
   expect(mockWorker.mock.calls[0][0].body).toEqual({workspaceId:'test',caseId:'persisted-case'});
   expect(mockStore.execute.mock.invocationCallOrder[0]).toBeLessThan(mockWorker.mock.invocationCallOrder[0]);
 });
+
+test('authorized pending-email recovery targets exactly one durable job', async () => {
+  const actor = {userId:'u',role:'manager',active:true};
+  const snap = {members:[actor],state:{cases:[{id:'case'}]}};
+  mockStore.snapshot.mockResolvedValue(snap);
+  mockStore.execute.mockResolvedValue({actor,snapshot:snap,duplicate:false});
+  mockStore.view.mockReturnValue({cases:snap.state.cases});
+  const output = res();
+  await handler(req({id:'process-command',type:'process_queued_delivery',payload:{caseId:'case',jobId:'case:-1:decision_request:'}}),output);
+  expect(output.statusCode).toBe(200);
+  expect(mockWorker.mock.calls[0][0].body).toEqual({workspaceId:'test',caseId:'case',jobId:'case:-1:decision_request:'});
+});

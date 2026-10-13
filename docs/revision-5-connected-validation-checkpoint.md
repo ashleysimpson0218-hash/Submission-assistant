@@ -143,3 +143,30 @@ Automatic approval review rejected `git push origin HEAD:refs/heads/codex/revisi
 Approval needed: publish the reviewed Revision 5 branch and this infrastructure correction/checkpoint to the existing repository the existing connected `Submission-assistant` repository, branch `codex/revision-5-workflow-foundation`, solely to support the isolated test runtime. Do not push main, change production, or connect another project.
 
 After approval, verify the exact remote commit, establish Preview-only deployment in the dedicated project, configure test-only secrets/provider and synthetic identities, verify all runtime/database/membership/role/worker/recipient guards, and execute A01–A15. Do not treat the saved Vercel configuration as a running runtime. A test origin is not yet established. Production and unrelated Vercel projects remained unchanged.
+
+## Restart-plan reconciliation — October 13, 2026
+
+This section supersedes the earlier blocker summary without rewriting the historical record above.
+
+### Confirmed progress
+
+- The isolated Preview deployment now exists for commit `f8d153e` and the connected synthetic workspace is available at the protected `/workflow` route.
+- The synthetic recruiter, manager, and candidate identities and exact recipient allowlist are configured for the approved test addresses.
+- The Outlook test mailbox was connected, a free time was checked, and an isolated 15-minute test appointment was created and confirmed in Outlook. This proves the test connector path only; it does not prove candidate interview booking, conflict prevention, cancellation, or rescheduling.
+- Candidate scheduling, candidate hold/review, facility booking confirmation, candidate booking/preparation/reminder, and manager held/interviewed reminder email content is implemented and reviewed. Content approval is not delivery evidence.
+- A connected manager decision request was persisted for case `wf-067fab050e742468fc22fe6f62df69fa`. Its durable email job remains `queued` with zero attempts. No provider acceptance, inbox receipt, action-link execution, or resulting candidate scheduling has been confirmed for that job.
+- Preview email execution flags are enabled. A fresh Supabase sign-in email was temporarily rate-limited during the connected test, preventing a new authenticated session; this is an authentication-email limit, not evidence that the queued manager email failed.
+
+### Recovery control added
+
+The workflow now lets an authorized recruiter, administrator, or the intended recipient process one due queued email by exact case and job ID. The command reuses the existing durable job and invokes the worker with that exact scope. It does not create a second handoff, increment attempts before the worker runs, or permit replay after provider acceptance. Unknown provider results still require reconciliation rather than blind resend.
+
+### AI and automation boundary
+
+- **Implemented:** resume import can use the deterministic WelcomeFlow local parser or the configured Affinda adapter. It returns normalized fields, confidence, and warnings for recruiter review before saving. The extracted source remains reviewable draft information.
+- **Implemented:** email templates, routing, state transitions, reminders, authorization, deduplication, and recovery are deterministic workflow rules. Human managers and recruiters make candidate, interview, hold, decline, offer, and disposition decisions.
+- **Not implemented:** no generative model is connected to the live workflow to summarize screening or feedback, draft new decision context, or advance a candidate. Provider, prompt, output schema, approval boundary, and audit evidence for any future generative feature remain proposals.
+
+### Current acceptance position
+
+The prior connected count of `0` is no longer a complete description of setup progress, but it must not be replaced with a passing A01–A15 count without scenario-by-scenario connected evidence. The next connected action is to authenticate after the Supabase email limit clears, process the exact queued manager job once, verify provider acceptance and inbox receipt, execute the manager Proceed link, and confirm that the correct case advances to candidate scheduling without a duplicate job or state change. Candidate response, calendar booking, facility confirmation, hold/decline routing, failure visibility, and retry behavior remain live-test items after that checkpoint.

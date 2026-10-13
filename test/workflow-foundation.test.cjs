@@ -768,6 +768,17 @@ test('manager submission contains reviewed packet and four candidate-specific HT
   assert.ok(batchMail.html.includes('candidate: Proceed'));
 });
 
+test('a queued approved email can be restarted only by recruiting or its recipient', () => {
+  const f = fixture();
+  const job = f.state.jobs.find(item => item.kind === 'decision_request');
+  const attempts = job.attempts;
+  const output = f.action('process_queued_delivery', {jobId:job.id}, 'manager');
+  assert.ok(output.events.some(event => event.type === 'communication.processing_requested'));
+  assert.equal(f.state.jobs.find(item => item.id === job.id).status, 'queued');
+  assert.equal(f.state.jobs.find(item => item.id === job.id).attempts, attempts);
+  assert.throws(() => f.action('process_queued_delivery', {jobId:job.id}, 'other'), /outside your authorized scope/);
+});
+
 test('manual Proceed and offered times commit together; invalid times never record Proceed', () => {
   const f = fixture();
   const before = JSON.stringify(f.state);

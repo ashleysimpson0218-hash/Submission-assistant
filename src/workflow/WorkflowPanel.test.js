@@ -209,3 +209,24 @@ test('manager-selected times record Proceed and send the invitation in one comma
   expect(command.payload.caseId).toBe('case');
   expect(command.payload.slots).toHaveLength(1);
 });
+
+test('the queued manager email can be processed without creating a second handoff', async () => {
+  const queuedView = {
+    ...view,
+    jobs: [{
+      id:'case:-1:decision_request:',
+      kind:'decision_request',
+      caseId:'case',
+      recipientId:'manager',
+      status:'queued',
+      dueAt:'2020-01-01T00:00:00.000Z',
+    }],
+  };
+  global.fetch = jest.fn(async () => response({view:queuedView}));
+  render(<WorkflowPanel client={client} workspaceId="test" />);
+  fireEvent.click(await screen.findByRole('button',{name:'Process pending email'}));
+  await waitFor(() => expect(global.fetch.mock.calls.some(([,options]) => options.method === 'POST')).toBe(true));
+  const command = JSON.parse(global.fetch.mock.calls.find(([,options]) => options.method === 'POST')[1].body);
+  expect(command.type).toBe('process_queued_delivery');
+  expect(command.payload).toEqual({caseId:'case',jobId:'case:-1:decision_request:'});
+});

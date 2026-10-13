@@ -76,7 +76,9 @@ module.exports = async function handler(req, res) {
         );
     const confirmationCaseId = req.body?.confirmationCaseId;
     const requestedCaseId = req.body?.caseId;
+    const requestedJobId = req.body?.jobId;
     need(!Object.prototype.hasOwnProperty.call(req.body || {}, "caseId") || isId(requestedCaseId), "CASE_REQUIRED", "A candidate case is required for targeted delivery.", 400);
+    need(!Object.prototype.hasOwnProperty.call(req.body || {}, "jobId") || isId(requestedJobId), "JOB_REQUIRED", "A pending email is required for targeted delivery.", 400);
     if (!confirmationCaseId) await run("tick", {});
     // Timers and recovery are operational even when outbound email is deliberately disabled.
     if (
@@ -102,6 +104,7 @@ module.exports = async function handler(req, res) {
             (j) =>
               j.status === "provider_accepted" &&
               (!requestedCaseId || j.caseId === requestedCaseId) &&
+              (!requestedJobId || j.id === requestedJobId) &&
               j.providerId &&
               (!j.providerCheckedAt ||
                 Date.now() - Date.parse(j.providerCheckedAt) > 5 * 60000),
@@ -147,7 +150,8 @@ module.exports = async function handler(req, res) {
             x.status === "queued" &&
             x.dueAt <= now &&
             (!confirmationCaseId || x.caseId === confirmationCaseId) &&
-            (!requestedCaseId || x.caseId === requestedCaseId),
+            (!requestedCaseId || x.caseId === requestedCaseId) &&
+            (!requestedJobId || x.id === requestedJobId),
         )
         .slice(0, 50)) {
         const check = eligible(j, snap.state, snap.members, now);
@@ -159,7 +163,7 @@ module.exports = async function handler(req, res) {
           });
       }
       snap = await snapshot(client, workspaceId);
-      const group = deliveryGroups(snap.state, snap.members, now).map(g => ({...g, jobs: g.jobs.filter(j => !requestedCaseId || j.caseId === requestedCaseId)})).filter(g => g.jobs.length).find(
+      const group = deliveryGroups(snap.state, snap.members, now).map(g => ({...g, jobs: g.jobs.filter(j => (!requestedCaseId || j.caseId === requestedCaseId) && (!requestedJobId || j.id === requestedJobId))})).filter(g => g.jobs.length).find(
         (g) =>
           !confirmationCaseId ||
           g.jobs.some(

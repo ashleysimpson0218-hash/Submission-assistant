@@ -22,6 +22,7 @@ const USER_COMMANDS = new Set([
   "complete_interview",
   "feedback",
   "withdraw",
+  "process_queued_delivery",
   "recover_delivery",
   "resolve_exception",
   "update_contact",
@@ -197,7 +198,7 @@ module.exports = async function handler(req, res) {
           403,
         );
       const result = await execute(client, workspaceId, cmd, actor);
-      if (["book", "handoff", "decision", "offer_slots", "decline_follow_up", "proceed_with_slots"].includes(cmd.type)) {
+      if (["book", "handoff", "decision", "offer_slots", "decline_follow_up", "proceed_with_slots", "process_queued_delivery"].includes(cmd.type)) {
         // The reservation and outbox commit first. A transport failure cannot undo the booking.
         // Replayed booking requests use the same durable outbox; accepted/unknown sends are not replayed.
         const worker = require("./workflow-worker");
@@ -207,7 +208,13 @@ module.exports = async function handler(req, res) {
             headers: {
               authorization: `Bearer ${process.env.WELCOMEFLOW_WORKFLOW_WORKER_SECRET || ""}`,
             },
-            body: cmd.type === "book" ? {workspaceId, confirmationCaseId: actor.caseId} : {workspaceId, caseId: cmd.payload.caseId || result.snapshot.state.cases.find(c => c.candidateId === cmd.payload.candidateId && c.requisitionId === cmd.payload.requisitionId)?.id},
+            body: cmd.type === "book"
+              ? {workspaceId, confirmationCaseId: actor.caseId}
+              : {
+                  workspaceId,
+                  caseId: cmd.payload.caseId || result.snapshot.state.cases.find(c => c.candidateId === cmd.payload.candidateId && c.requisitionId === cmd.payload.requisitionId)?.id,
+                  ...(cmd.type === "process_queued_delivery" ? {jobId: cmd.payload.jobId} : {}),
+                },
           },
           { setHeader() {}, end() {}, statusCode: 0 },
         );
