@@ -702,6 +702,20 @@ function applyCommand(input, command, context) {
           );
         }
       }
+      if (
+        c.status === "held" &&
+        c.lastDecision?.recordedAt &&
+        now >= addWorkingDays(c.lastDecision.recordedAt, state.policy.reminderDays, state.policy)
+      )
+        job(
+          "decision_reminder",
+          c,
+          r,
+          currentOwner(c, r),
+          c.stageIndex,
+          now,
+          c.lastDecision.recordedAt,
+        );
     });
     state.jobs
       .filter((j) => j.status === "sending" && j.leaseUntil < now)
@@ -990,7 +1004,21 @@ function applyCommand(input, command, context) {
         c.status = "declined";
         c.finalReason = clean(p.reason);
         c.finalAt = now;
-        exception("DECLINE_FOLLOW_UP_REQUIRED", c, r, "The manager declined to proceed. Recruiting must choose candidate follow-up through WelcomeFlow or the company ATS.");
+        c.disposition = {
+          status: "not_selected",
+          reason: clean(p.reason),
+          comment: clean(p.comment),
+          recordedAt: now,
+          recordedBy: actor.userId,
+          atsUpdateRequired: true,
+        };
+        c.declineFollowUp = {
+          channel: "ats",
+          actorId: actor.userId,
+          recordedAt: now,
+          automatic: true,
+        };
+        exception("ATS_DECLINE_FOLLOW_UP_REQUIRED", c, r, "WelcomeFlow recorded the manager disposition. Recruiting must update the company ATS; no candidate disposition email was generated.");
         job("recruiter_decline", c, r, c.recruiterId, c.stageIndex, now, String(c.version));
       } else {
         if (s) {
@@ -1030,12 +1058,11 @@ function applyCommand(input, command, context) {
       });
     } else if (command.type === "decline_follow_up") {
       need(canRecruit(actor, r) && c.status === "declined", "FORBIDDEN", "Only recruiting can choose follow-up for a declined candidate.", 403);
-      need(["welcomeflow", "ats"].includes(p.channel), "INVALID_CHANNEL", "Choose WelcomeFlow or your company ATS.", 400);
+      need(p.channel === "ats", "INVALID_CHANNEL", "Candidate disposition communication stays in the company ATS; WelcomeFlow does not send it.", 400);
       need(!c.declineFollowUp, "FOLLOW_UP_ALREADY_CHOSEN", "Candidate follow-up has already been assigned. Check the recorded delivery before choosing again.");
       c.declineFollowUp = {channel: p.channel, actorId: actor.userId, recordedAt: now};
-      if (p.channel === "welcomeflow") job("candidate_decline", c, r, "candidate", c.stageIndex);
       resolveFor(c.id, ["DECLINE_FOLLOW_UP_REQUIRED"]);
-      if (p.channel === "ats") exception("ATS_DECLINE_FOLLOW_UP_REQUIRED", c, r, "Recruiting chose the company ATS. Copy the recorded decline note and send the candidate follow-up there; no external ATS write was made.");
+      exception("ATS_DECLINE_FOLLOW_UP_REQUIRED", c, r, "Copy the recorded disposition note into the company ATS. No candidate disposition email was generated.");
       event("decline.follow_up_assigned", r.id, c.id, {channel: p.channel});
     } else if (command.type === "offer_slots") {
       need(
@@ -1146,6 +1173,13 @@ function applyCommand(input, command, context) {
       s.bookedAt = now;
       s.communicationPolicyVersion = state.policy.version;
       job("confirmation", c, r, "candidate");
+      job(
+        "facility_booking_confirmation",
+        c,
+        r,
+        s.ownerId,
+        c.stageIndex,
+      );
       job(
         "manager_interview",
         c,

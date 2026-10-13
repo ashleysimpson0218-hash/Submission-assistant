@@ -930,11 +930,7 @@ function CaseCard({ c, send, disabled, view, entryAction = "" }) {
         <h4>Manager declined to proceed</h4>
         <p>Reason: {c.lastDecision?.reason || c.finalReason}</p>
         {c.lastDecision?.comment ? <p>Manager comment: {c.lastDecision.comment}</p> : null}
-        {c.declineFollowUp ? <p role="status">Follow-up assigned to {c.declineFollowUp.channel === "ats" ? "your company ATS. Send the candidate response there and record completion." : "WelcomeFlow. Check the recorded email outcome."}</p> : <>
-          <p>Choose where to follow up with the candidate. Internal manager comments stay with recruiting.</p>
-          <button disabled={disabled} onClick={() => act("decline_follow_up", {channel: "welcomeflow"})}>Send candidate follow-up through WelcomeFlow</button>
-          <button disabled={disabled} onClick={() => act("decline_follow_up", {channel: "ats"})}>Handle follow-up in company ATS</button>
-        </>}
+        <p role="status">Disposition recorded in WelcomeFlow. Update the company ATS using the note below. WelcomeFlow does not send candidate disposition emails.</p>
         <details><summary>ATS note to copy</summary><p className="wf-prewrap">{`Candidate: ${c.name}\nOutcome: Manager declined to proceed\nReason: ${c.lastDecision?.reason || c.finalReason}\nManager comment: ${c.lastDecision?.comment || "None"}\nRecorded: ${c.lastDecision?.recordedAt || c.finalAt}\nCandidate follow-up: ${c.declineFollowUp?.channel || "Not assigned"}`}</p></details>
       </section> : null}
       {c.status === "offer_ready" ? (
