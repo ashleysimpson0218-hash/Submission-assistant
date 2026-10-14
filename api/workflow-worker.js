@@ -10,6 +10,7 @@ const {
   buildMessage,
 } = require("../server/workflow/communications");
 const { need, isId } = require("../src/workflow/engine");
+const INTERNAL_INVOCATION = Symbol("welcomeflow-internal-worker");
 function authorized(req) {
   const expected = process.env.WELCOMEFLOW_WORKFLOW_WORKER_SECRET,
     provided = String(req.headers?.authorization || "").replace(/^Bearer /, "");
@@ -34,7 +35,7 @@ function allowedRecipient(email) {
     )
   );
 }
-module.exports = async function handler(req, res) {
+async function handler(req, res) {
   const send = (status, body) => {
     res.statusCode = status;
     res.setHeader("Content-Type", "application/json");
@@ -44,7 +45,7 @@ module.exports = async function handler(req, res) {
   try {
     need(req.method === "POST", "METHOD", "Use POST.", 405);
     need(
-      authorized(req),
+      req[INTERNAL_INVOCATION] === true || authorized(req),
       "FORBIDDEN",
       "Worker authorization is required.",
       403,
@@ -90,9 +91,10 @@ module.exports = async function handler(req, res) {
     need(
       /^https:\/\/[^/]+$/.test(origin || "") &&
         process.env.RESEND_API_KEY &&
-        process.env.RESEND_FROM_EMAIL,
+        process.env.RESEND_FROM_EMAIL &&
+        process.env.WELCOMEFLOW_CANDIDATE_LINK_SECRET?.length >= 32,
       "DELIVERY_UNCONFIGURED",
-      "Email and secure action origin must be configured.",
+      "Email, secure action origin, and link signing must be configured.",
       503,
     );
     let processed = 0;
@@ -263,4 +265,27 @@ module.exports = async function handler(req, res) {
         : "Worker paused. Pending actions remain durable; sending leases require reconciliation.",
     });
   }
+}
+
+handler.runInternal = async function runInternal(body) {
+  let responseBody;
+  const response = {
+    statusCode: 0,
+    setHeader() {},
+    end(value) {
+      responseBody = JSON.parse(value);
+    },
+  };
+  await handler(
+    {
+      method: "POST",
+      headers: {},
+      body,
+      [INTERNAL_INVOCATION]: true,
+    },
+    response,
+  );
+  return { status: response.statusCode, ...responseBody };
 };
+
+module.exports = handler;

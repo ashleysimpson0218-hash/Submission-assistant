@@ -10,6 +10,8 @@ const mockStore = { snapshot: jest.fn(), execute: jest.fn(), view: jest.fn() };
 jest.mock("../server/welcomeflowApiSecurity", () => mockSecurity);
 jest.mock("../server/workflow/store", () => mockStore);
 const mockWorker = jest.fn();
+const mockWorkerRunInternal = jest.fn();
+mockWorker.runInternal = mockWorkerRunInternal;
 jest.mock("../api/workflow-worker", () => mockWorker);
 const handler = require("../api/workflow");
 const { signCapability } = require("../server/workflow/capabilities");
@@ -37,7 +39,7 @@ function req(body, token) {
 }
 beforeEach(() => {
   jest.clearAllMocks();
-  mockWorker.mockResolvedValue(undefined);
+  mockWorkerRunInternal.mockResolvedValue({status:200,ok:true,processed:1});
   process.env.WELCOMEFLOW_MAINTENANCE_MODE = "false";
   process.env.WELCOMEFLOW_API_WORKSPACE_IDS = "test";
   process.env.WELCOMEFLOW_CANDIDATE_LINK_SECRET = "x".repeat(40);
@@ -186,13 +188,13 @@ test("successful candidate booking attempts its durable confirmation before retu
   );
   expect(output.statusCode).toBe(200);
   expect(output.body.completed).toBe(true);
-  expect(mockWorker).toHaveBeenCalledTimes(1);
-  expect(mockWorker.mock.calls[0][0].body).toEqual({
+  expect(mockWorkerRunInternal).toHaveBeenCalledTimes(1);
+  expect(mockWorkerRunInternal.mock.calls[0][0]).toEqual({
     workspaceId: "test",
     confirmationCaseId: "case",
   });
   expect(mockStore.execute.mock.invocationCallOrder[0]).toBeLessThan(
-    mockWorker.mock.invocationCallOrder[0],
+    mockWorkerRunInternal.mock.invocationCallOrder[0],
   );
   expect(JSON.stringify(output.body)).not.toMatch(/Bearer|secret/);
 });
@@ -206,8 +208,8 @@ test('reviewed submission processes only its persisted candidate case after the 
   const output = res();
   await handler(req({id:'handoff-command',type:'handoff',payload:{candidateId:'candidate',requisitionId:'req'}}),output);
   expect(output.statusCode).toBe(200);
-  expect(mockWorker.mock.calls[0][0].body).toEqual({workspaceId:'test',caseId:'persisted-case'});
-  expect(mockStore.execute.mock.invocationCallOrder[0]).toBeLessThan(mockWorker.mock.invocationCallOrder[0]);
+  expect(mockWorkerRunInternal.mock.calls[0][0]).toEqual({workspaceId:'test',caseId:'persisted-case'});
+  expect(mockStore.execute.mock.invocationCallOrder[0]).toBeLessThan(mockWorkerRunInternal.mock.invocationCallOrder[0]);
 });
 
 test('authorized pending-email recovery targets exactly one durable job', async () => {
@@ -219,5 +221,17 @@ test('authorized pending-email recovery targets exactly one durable job', async 
   const output = res();
   await handler(req({id:'process-command',type:'process_queued_delivery',payload:{caseId:'case',jobId:'case:-1:decision_request:'}}),output);
   expect(output.statusCode).toBe(200);
-  expect(mockWorker.mock.calls[0][0].body).toEqual({workspaceId:'test',caseId:'case',jobId:'case:-1:decision_request:'});
+  expect(mockWorkerRunInternal.mock.calls[0][0]).toEqual({workspaceId:'test',caseId:'case',jobId:'case:-1:decision_request:'});
+});
+
+test('worker configuration failures remain visible while the durable email stays pending', async () => {
+  const actor = {userId:'u',role:'manager',active:true};
+  const snap = {members:[actor],state:{cases:[{id:'case'}]}};
+  mockStore.snapshot.mockResolvedValue(snap);
+  mockStore.execute.mockResolvedValue({actor,snapshot:snap,duplicate:false});
+  mockWorkerRunInternal.mockResolvedValueOnce({status:503,ok:false,code:'DELIVERY_UNCONFIGURED',error:'Email configuration is incomplete.'});
+  const output = res();
+  await handler(req({id:'process-command',type:'process_queued_delivery',payload:{caseId:'case',jobId:'case:-1:decision_request:'}}),output);
+  expect(output.statusCode).toBe(503);
+  expect(output.body).toMatchObject({code:'DELIVERY_UNCONFIGURED',error:'Email configuration is incomplete.'});
 });

@@ -202,21 +202,22 @@ module.exports = async function handler(req, res) {
         // The reservation and outbox commit first. A transport failure cannot undo the booking.
         // Replayed booking requests use the same durable outbox; accepted/unknown sends are not replayed.
         const worker = require("./workflow-worker");
-        await worker(
-          {
-            method: "POST",
-            headers: {
-              authorization: `Bearer ${process.env.WELCOMEFLOW_WORKFLOW_WORKER_SECRET || ""}`,
-            },
-            body: cmd.type === "book"
-              ? {workspaceId, confirmationCaseId: actor.caseId}
-              : {
-                  workspaceId,
-                  caseId: cmd.payload.caseId || result.snapshot.state.cases.find(c => c.candidateId === cmd.payload.candidateId && c.requisitionId === cmd.payload.requisitionId)?.id,
-                  ...(cmd.type === "process_queued_delivery" ? {jobId: cmd.payload.jobId} : {}),
-                },
-          },
-          { setHeader() {}, end() {}, statusCode: 0 },
+        const workerResult = await worker.runInternal(
+          cmd.type === "book"
+            ? {workspaceId, confirmationCaseId: actor.caseId}
+            : {
+                workspaceId,
+                caseId: cmd.payload.caseId || result.snapshot.state.cases.find(c => c.candidateId === cmd.payload.candidateId && c.requisitionId === cmd.payload.requisitionId)?.id,
+                ...(cmd.type === "process_queued_delivery" ? {jobId: cmd.payload.jobId} : {}),
+              },
+        );
+        need(
+          workerResult?.ok && workerResult.outbound !== "disabled",
+          workerResult?.code || "WORKER_FAILED",
+          workerResult?.outbound === "disabled"
+            ? "Email actions are disabled. The pending email remains queued."
+            : workerResult?.error || "The pending email could not be processed safely.",
+          workerResult?.status >= 400 ? workerResult.status : 503,
         );
       }
       snap = await snapshot(client, workspaceId);
