@@ -806,6 +806,16 @@ test('manual Proceed and offered times commit together; invalid times never reco
   const before = JSON.stringify(f.state);
   assert.throws(() => f.action('proceed_with_slots', {slots:[]}), /one or more/);
   assert.equal(JSON.stringify(f.state), before);
+  assert.throws(
+    () => f.action('proceed_with_slots', {
+      slots: Array.from({length:201}, (_, index) => ({
+        start: new Date(Date.parse('2026-09-28T14:00:00Z') + index * 900000).toISOString(),
+        end: new Date(Date.parse('2026-09-28T14:30:00Z') + index * 900000).toISOString(),
+      })),
+    }),
+    /one or more/,
+  );
+  assert.equal(JSON.stringify(f.state), before);
   const revision = f.state.revision;
   f.action('proceed_with_slots', {slots:[{start:'2026-09-28T14:00:00Z',end:'2026-09-28T15:00:00Z'}], location:'Facility', instructions:'Bring questions'});
   assert.equal(f.c.status, 'selection_pending');

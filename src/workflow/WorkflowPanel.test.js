@@ -215,9 +215,9 @@ test('manager-selected times record Proceed and send the invitation in one comma
   expect([...screen.getByLabelText('Interview length').options].map((option) => option.value)).toEqual(['15','20','30','45','60']);
   fireEvent.change(screen.getByLabelText('Interview length'),{target:{value:'60'}});
   fireEvent.click(screen.getByRole('button',{name:'Select 10:00 AM start time'}));
-  fireEvent.click(screen.getByRole('button',{name:'Anytime'}));
+  fireEvent.click(screen.getByRole('button',{name:'Afternoon'}));
   fireEvent.click(screen.getByRole('button',{name:'Select 1:00 PM start time'}));
-  expect(screen.getByText('Review offered times (6 of 10)')).toBeInTheDocument();
+  expect(screen.getByText('Review offered times (6 selected)')).toBeInTheDocument();
   fireEvent.click(screen.getAllByRole('button',{name:'Edit'})[0]);
   fireEvent.change(screen.getByLabelText('Start'),{target:{value:'10:15'}});
   fireEvent.change(screen.getByLabelText('Length'),{target:{value:'45'}});
@@ -262,13 +262,36 @@ test('manager can assign different time ranges to individual selected dates', as
   fireEvent.click(screen.getByRole('button',{name:'Mar 15'}));
   fireEvent.click(screen.getByRole('button',{name:'Afternoon'}));
   fireEvent.click(screen.getByRole('button',{name:'Select 1:00 PM start time'}));
-  expect(screen.getByText('Review offered times (2 of 10)')).toBeInTheDocument();
+  expect(screen.getByText('Review offered times (2 selected)')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button',{name:'Proceed and send interview invitation'}));
   await waitFor(() => expect(global.fetch.mock.calls.some(([,o]) => o.method === 'POST')).toBe(true));
   const command = JSON.parse(global.fetch.mock.calls.find(([,o]) => o.method === 'POST')[1].body);
   expect(command.payload.slots).toHaveLength(2);
   expect(command.payload.slots[0].start).not.toBe(command.payload.slots[1].start);
   expect(command.payload.slots.map((slot) => (Date.parse(slot.end) - Date.parse(slot.start)) / 60000)).toEqual([45,45]);
+});
+
+test('manager can select working hours or all times in a day period', async () => {
+  global.fetch = jest.fn(async () => response({view}));
+  render(<WorkflowPanel client={client} workspaceId="test" entry={{caseId:'case',action:'proceed-times',version:'1'}} />);
+  await screen.findByLabelText('Calendar month');
+  fireEvent.change(screen.getByLabelText('Calendar month'),{target:{value:'2027-03'}});
+  fireEvent.click(screen.getByRole('button',{name:'Select Monday, March 1, 2027'}));
+  fireEvent.change(screen.getByLabelText('Interview length'),{target:{value:'60'}});
+
+  const workingHours = screen.getByLabelText('Available anytime during working hours (8:00 AM–5:00 PM)');
+  fireEvent.click(workingHours);
+  expect(screen.getByText('Review offered times (33 selected)')).toBeInTheDocument();
+  expect(screen.queryByRole('button',{name:'Anytime'})).not.toBeInTheDocument();
+  fireEvent.click(workingHours);
+  expect(screen.queryByText(/Review offered times/)).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByLabelText('Select all morning options'));
+  expect(screen.getByText('Review offered times (24 selected)')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button',{name:'Afternoon'}));
+  expect(screen.getByLabelText('Select all afternoon options')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button',{name:'Evening'}));
+  expect(screen.getByLabelText('Select all evening options')).toBeInTheDocument();
 });
 
 test('manager scheduling reuses location and preparation from a prior candidate on the requisition', async () => {

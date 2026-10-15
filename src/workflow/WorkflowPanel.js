@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import "./workflow.css";
-import AvailabilityPicker from "./AvailabilityPicker";
+import AvailabilityPicker, { MAX_INTERVIEW_SLOTS } from "./AvailabilityPicker";
 const uid = () => crypto.randomUUID();
 function readableError(value, fallback) {
   if (typeof value === "string" && value.trim()) return value;
@@ -930,7 +930,7 @@ function CaseCard({ c, send, disabled, view, entryAction = "" }) {
               onTimezoneChange={setSchedulingTimezone}
               disabled={disabled}
             />
-            <button disabled={disabled || !slots.length || slots.length > 10}>
+            <button disabled={disabled || !slots.length || slots.length > MAX_INTERVIEW_SLOTS}>
               {["manager_decision", "feedback_due", "held"].includes(c.status) ? "Proceed and send interview invitation" : "Send offered times"}
             </button>
           </form>

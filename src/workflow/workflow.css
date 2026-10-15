@@ -207,9 +207,15 @@
 }
 .wf-time-period-tabs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(90px, 1fr));
+  grid-template-columns: repeat(3, minmax(90px, 1fr));
   gap: 7px;
   max-width: 560px;
+}
+.wf-select-all-times {
+  padding: 10px 12px;
+  border: 1px solid #d8caeb;
+  border-radius: 8px;
+  background: #fbf8ff;
 }
 .wf-workflow .wf-time-period-tabs button {
   color: #241246;

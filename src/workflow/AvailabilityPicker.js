@@ -5,6 +5,7 @@ const dateKey = (date) =>
   `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 const rangeKey = (range) => `${range.start}-${range.end}`;
 const DEFAULT_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+export const MAX_INTERVIEW_SLOTS = 200;
 const TIMEZONE_OPTIONS = [
   ["America/New_York", "Eastern Time"],
   ["America/Chicago", "Central Time"],
@@ -33,7 +34,6 @@ const TIME_GROUPS = [
   { key: "morning", label: "Morning", options: TIME_OPTIONS.filter((option) => option.value < "12:00") },
   { key: "afternoon", label: "Afternoon", options: TIME_OPTIONS.filter((option) => option.value >= "12:00" && option.value < "17:00") },
   { key: "evening", label: "Evening", options: TIME_OPTIONS.filter((option) => option.value >= "17:00" && option.value < "22:00") },
-  { key: "anytime", label: "Anytime", options: TIME_OPTIONS.filter((option) => option.value < "22:00") },
 ];
 
 function addMinutes(time, duration) {
@@ -282,6 +282,43 @@ export default function AvailabilityPicker({
     if (!dates.length && activeDate) setActiveDate("");
   }, [activeDate, dates]);
 
+  const selectedRanges = applyToAll
+    ? sharedTimes
+    : timesByDate[activeDate] || [];
+
+  const setSelectedRanges = (ranges) => {
+    if (applyToAll) {
+      setSharedTimes(sortedRanges(ranges));
+      return;
+    }
+    if (!activeDate) return;
+    setTimesByDate({
+      ...timesByDate,
+      [activeDate]: sortedRanges(ranges),
+    });
+  };
+
+  const setStartTimes = (options, checked) => {
+    if (!dates.length || (!applyToAll && !activeDate)) return;
+    const starts = new Set(options.map((option) => option.value));
+    if (!checked) {
+      setSelectedRanges(
+        selectedRanges.filter((range) => !starts.has(range.start)),
+      );
+      return;
+    }
+    const byStart = new Map(
+      selectedRanges.map((range) => [range.start, range]),
+    );
+    options.forEach((option) => {
+      byStart.set(option.value, {
+        start: option.value,
+        end: addMinutes(option.value, duration),
+      });
+    });
+    setSelectedRanges([...byStart.values()]);
+  };
+
   const toggleStartTime = (start) => {
     if (!dates.length || (!applyToAll && !activeDate)) return;
     const range = { start, end: addMinutes(start, duration) };
@@ -398,6 +435,22 @@ export default function AvailabilityPicker({
 
   const activeTimeGroup =
     TIME_GROUPS.find((group) => group.key === period) || TIME_GROUPS[0];
+  const workingHoursOptions = TIME_OPTIONS.filter(
+    (option) =>
+      option.value >= "08:00" &&
+      option.value < "17:00" &&
+      addMinutes(option.value, duration) <= "17:00",
+  );
+  const workingHoursSelected =
+    workingHoursOptions.length > 0 &&
+    workingHoursOptions.every((option) =>
+      selectedRanges.some((range) => range.start === option.value),
+    );
+  const activePeriodSelected =
+    activeTimeGroup.options.length > 0 &&
+    activeTimeGroup.options.every((option) =>
+      selectedRanges.some((range) => range.start === option.value),
+    );
   const reviewGroups = applyToAll
     ? [
         {
@@ -451,6 +504,17 @@ export default function AvailabilityPicker({
           onChange={(event) => setMode(event.target.checked)}
         />
         <span>Apply selected times to all selected days</span>
+      </label>
+      <label className="wf-checkbox">
+        <input
+          type="checkbox"
+          checked={workingHoursSelected}
+          disabled={disabled || !dates.length || (!applyToAll && !activeDate)}
+          onChange={(event) =>
+            setStartTimes(workingHoursOptions, event.target.checked)
+          }
+        />
+        <span>Available anytime during working hours (8:00 AM–5:00 PM)</span>
       </label>
       {!applyToAll && dates.length ? (
         <div className="wf-date-tabs" aria-label="Choose a date to set its times">
@@ -508,6 +572,17 @@ export default function AvailabilityPicker({
             </button>
           ))}
         </div>
+        <label className="wf-checkbox wf-select-all-times">
+          <input
+            type="checkbox"
+            checked={activePeriodSelected}
+            disabled={disabled || !dates.length || (!applyToAll && !activeDate)}
+            onChange={(event) =>
+              setStartTimes(activeTimeGroup.options, event.target.checked)
+            }
+          />
+          <span>Select all {activeTimeGroup.label.toLowerCase()} options</span>
+        </label>
         <div className="wf-time-options">
           {activeTimeGroup.options.map((option) => {
             const ranges = applyToAll ? sharedTimes : timesByDate[activeDate] || [];
@@ -529,12 +604,12 @@ export default function AvailabilityPicker({
         </div>
       </div>
       <p>The end time is calculated automatically from the selected interview length.</p>
-      {slots.length > 10 ? (
-        <p role="alert" className="wf-alert">Choose no more than 10 total interview times.</p>
+      {slots.length > MAX_INTERVIEW_SLOTS ? (
+        <p role="alert" className="wf-alert">Choose no more than {MAX_INTERVIEW_SLOTS} total interview times.</p>
       ) : null}
       {slots.length ? (
         <div className="wf-slot-review">
-          <h4>Review offered times ({slots.length} of 10)</h4>
+          <h4>Review offered times ({slots.length} selected)</h4>
           {reviewGroups.map(({ day, label, ranges }) => {
             if (!ranges.length) return null;
             return (

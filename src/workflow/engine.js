@@ -1099,7 +1099,7 @@ function applyCommand(input, command, context) {
         403,
       );
       need(
-        Array.isArray(p.slots) && p.slots.length > 0 && p.slots.length <= 10,
+        Array.isArray(p.slots) && p.slots.length > 0 && p.slots.length <= 200,
         "INVALID_SLOTS",
         "Provide one or more interview slots.",
         400,
