@@ -195,19 +195,29 @@
   width: 20px;
   height: 20px;
 }
-.wf-duration-row {
-  max-width: 260px;
+.wf-scheduling-settings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  gap: 10px;
+  max-width: 560px;
 }
 .wf-time-groups {
   display: grid;
   gap: 12px;
 }
-.wf-time-group {
+.wf-time-period-tabs {
   display: grid;
-  gap: 8px;
+  grid-template-columns: repeat(4, minmax(90px, 1fr));
+  gap: 7px;
+  max-width: 560px;
 }
-.wf-time-group h5 {
-  margin: 0;
+.wf-workflow .wf-time-period-tabs button {
+  color: #241246;
+  background: #fff;
+}
+.wf-workflow .wf-time-period-tabs button.is-selected {
+  color: #fff;
+  background: #5f2c91;
 }
 .wf-time-options {
   display: grid;
@@ -236,12 +246,30 @@
   padding-top: 8px;
   border-top: 1px solid #ddd3ee;
 }
-.wf-slot-day p {
+.wf-slot-entry {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 10px;
   margin-top: 8px;
+  padding: 8px 0;
+  border-top: 1px solid #eee8f5;
+}
+.wf-slot-entry-actions {
+  display: flex;
+  gap: 7px;
+}
+.wf-slot-editor {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(130px, 1fr)) auto auto;
+  gap: 8px;
+  align-items: end;
+  width: 100%;
+}
+.wf-slot-editor label {
+  display: grid;
+  gap: 5px;
+  font-weight: 600;
 }
 .wf-card a {
   display: inline-block;
@@ -272,6 +300,13 @@
   }
   .wf-month-jump {
     grid-template-columns: 1fr;
+  }
+  .wf-scheduling-settings,
+  .wf-slot-editor {
+    grid-template-columns: 1fr;
+  }
+  .wf-time-period-tabs {
+    grid-template-columns: repeat(2, 1fr);
   }
   .wf-calendar-grid {
     gap: 3px;

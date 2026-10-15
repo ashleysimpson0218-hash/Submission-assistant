@@ -1110,8 +1110,15 @@ function applyCommand(input, command, context) {
         "Provide joining details and preparation information before offering interview times.",
         400,
       );
+      need(
+        !p.timezone || zoneValid(p.timezone),
+        "INVALID_TIMEZONE",
+        "Choose a valid interview timezone.",
+        400,
+      );
       s.location = clean(p.location, 1000);
       s.instructions = clean(p.instructions, 2000);
+      s.timezone = clean(p.timezone, 100) || state.policy.timezone;
       s.slots = p.slots.map((v, i) => {
         need(
           validTime(v.start) &&

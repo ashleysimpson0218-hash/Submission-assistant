@@ -3,8 +3,17 @@ import React, { useEffect, useMemo, useState } from "react";
 const pad = (value) => String(value).padStart(2, "0");
 const dateKey = (date) =>
   `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-const timeKey = (date) => `${pad(date.getHours())}:${pad(date.getMinutes())}`;
 const rangeKey = (range) => `${range.start}-${range.end}`;
+const DEFAULT_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const TIMEZONE_OPTIONS = [
+  ["America/New_York", "Eastern Time"],
+  ["America/Chicago", "Central Time"],
+  ["America/Denver", "Mountain Time"],
+  ["America/Phoenix", "Arizona Time"],
+  ["America/Los_Angeles", "Pacific Time"],
+  ["America/Anchorage", "Alaska Time"],
+  ["Pacific/Honolulu", "Hawaii Time"],
+];
 
 const TIME_OPTIONS = Array.from({ length: 65 }, (_, index) => {
   const minutes = 6 * 60 + index * 15;
@@ -21,9 +30,10 @@ const TIME_OPTIONS = Array.from({ length: 65 }, (_, index) => {
 });
 const INTERVIEW_LENGTHS = [15, 20, 30, 45, 60];
 const TIME_GROUPS = [
-  { label: "Morning", options: TIME_OPTIONS.filter((option) => option.value < "12:00") },
-  { label: "Afternoon", options: TIME_OPTIONS.filter((option) => option.value >= "12:00" && option.value < "17:00") },
-  { label: "Evening", options: TIME_OPTIONS.filter((option) => option.value >= "17:00" && option.value < "22:00") },
+  { key: "morning", label: "Morning", options: TIME_OPTIONS.filter((option) => option.value < "12:00") },
+  { key: "afternoon", label: "Afternoon", options: TIME_OPTIONS.filter((option) => option.value >= "12:00" && option.value < "17:00") },
+  { key: "evening", label: "Evening", options: TIME_OPTIONS.filter((option) => option.value >= "17:00" && option.value < "22:00") },
+  { key: "anytime", label: "Anytime", options: TIME_OPTIONS.filter((option) => option.value < "22:00") },
 ];
 
 function addMinutes(time, duration) {
@@ -36,7 +46,43 @@ function sortedRanges(ranges = []) {
   return [...ranges].sort((a, b) => rangeKey(a).localeCompare(rangeKey(b)));
 }
 
-function initialAvailability(slots = []) {
+function zonedParts(date, timeZone) {
+  return Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(date)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value]),
+  );
+}
+
+function zonedDateTimeToIso(day, time, timeZone) {
+  const [year, month, date] = day.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  const desired = Date.UTC(year, month - 1, date, hour, minute);
+  let guess = desired;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const parts = zonedParts(new Date(guess), timeZone);
+    const displayed = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour),
+      Number(parts.minute),
+    );
+    guess += desired - displayed;
+  }
+  return new Date(guess).toISOString();
+}
+
+function initialAvailability(slots = [], timeZone = DEFAULT_TIMEZONE) {
   const timesByDate = {};
   const durations = [];
   slots.forEach((slot) => {
@@ -44,10 +90,15 @@ function initialAvailability(slots = []) {
     const end = new Date(slot.end);
     if (Number.isNaN(start.valueOf()) || Number.isNaN(end.valueOf())) return;
     durations.push((end.valueOf() - start.valueOf()) / 60000);
-    const day = dateKey(start);
+    const startParts = zonedParts(start, timeZone);
+    const endParts = zonedParts(end, timeZone);
+    const day = `${startParts.year}-${startParts.month}-${startParts.day}`;
     timesByDate[day] = sortedRanges([
       ...(timesByDate[day] || []),
-      { start: timeKey(start), end: timeKey(end) },
+      {
+        start: `${startParts.hour}:${startParts.minute}`,
+        end: `${endParts.hour}:${endParts.minute}`,
+      },
     ]);
   });
   const dates = Object.keys(timesByDate).sort();
@@ -77,13 +128,14 @@ export function buildAvailabilitySlots({
   applyToAll,
   sharedTimes,
   timesByDate,
+  timeZone = DEFAULT_TIMEZONE,
 }) {
   return dates
     .flatMap((day) => {
       const ranges = applyToAll ? sharedTimes : timesByDate[day] || [];
       return ranges.map((range) => ({
-        start: new Date(`${day}T${range.start}:00`).toISOString(),
-        end: new Date(`${day}T${range.end}:00`).toISOString(),
+        start: zonedDateTimeToIso(day, range.start, timeZone),
+        end: zonedDateTimeToIso(day, range.end, timeZone),
       }));
     })
     .filter(
@@ -185,23 +237,45 @@ function MultiDateCalendar({ dates, onChange, disabled }) {
   );
 }
 
-export default function AvailabilityPicker({ initialSlots = [], onChange, disabled }) {
-  const initial = useMemo(() => initialAvailability(initialSlots), [initialSlots]);
+export default function AvailabilityPicker({
+  initialSlots = [],
+  initialTimezone = DEFAULT_TIMEZONE,
+  onChange,
+  onTimezoneChange,
+  disabled,
+}) {
+  const initial = useMemo(
+    () => initialAvailability(initialSlots, initialTimezone),
+    [initialSlots, initialTimezone],
+  );
   const [dates, setDates] = useState(initial.dates);
   const [applyToAll, setApplyToAll] = useState(initial.applyToAll);
   const [sharedTimes, setSharedTimes] = useState(initial.sharedTimes);
   const [timesByDate, setTimesByDate] = useState(initial.timesByDate);
   const [activeDate, setActiveDate] = useState(initial.dates[0] || "");
   const [duration, setDuration] = useState(initial.duration);
+  const [timeZone, setTimeZone] = useState(initialTimezone);
+  const [period, setPeriod] = useState("morning");
+  const [editing, setEditing] = useState(null);
   const slots = useMemo(
     () =>
-      buildAvailabilitySlots({ dates, applyToAll, sharedTimes, timesByDate }),
-    [dates, applyToAll, sharedTimes, timesByDate],
+      buildAvailabilitySlots({
+        dates,
+        applyToAll,
+        sharedTimes,
+        timesByDate,
+        timeZone,
+      }),
+    [dates, applyToAll, sharedTimes, timesByDate, timeZone],
   );
 
   useEffect(() => {
     onChange(slots);
   }, [onChange, slots]);
+
+  useEffect(() => {
+    onTimezoneChange?.(timeZone);
+  }, [onTimezoneChange, timeZone]);
 
   useEffect(() => {
     if (dates.length && !dates.includes(activeDate)) setActiveDate(dates[0]);
@@ -276,6 +350,76 @@ export default function AvailabilityPicker({ initialSlots = [], onChange, disabl
     });
   };
 
+  const editRange = (day, range) => {
+    const minutes =
+      (Number(range.end.slice(0, 2)) * 60 + Number(range.end.slice(3))) -
+      (Number(range.start.slice(0, 2)) * 60 + Number(range.start.slice(3)));
+    setEditing({
+      day,
+      originalStart: range.start,
+      start: range.start,
+      duration: String(minutes),
+    });
+  };
+
+  const saveRange = () => {
+    if (!editing) return;
+    const replacement = {
+      start: editing.start,
+      end: addMinutes(editing.start, editing.duration),
+    };
+    if (applyToAll) {
+      setSharedTimes(
+        sortedRanges([
+          ...sharedTimes.filter(
+            (range) =>
+              range.start !== editing.originalStart &&
+              range.start !== editing.start,
+          ),
+          replacement,
+        ]),
+      );
+    } else {
+      const current = timesByDate[editing.day] || [];
+      setTimesByDate({
+        ...timesByDate,
+        [editing.day]: sortedRanges([
+          ...current.filter(
+            (range) =>
+              range.start !== editing.originalStart &&
+              range.start !== editing.start,
+          ),
+          replacement,
+        ]),
+      });
+    }
+    setEditing(null);
+  };
+
+  const activeTimeGroup =
+    TIME_GROUPS.find((group) => group.key === period) || TIME_GROUPS[0];
+  const reviewGroups = applyToAll
+    ? [
+        {
+          day: "all",
+          label: `Applied to ${dates.length} selected ${dates.length === 1 ? "day" : "days"}`,
+          ranges: sharedTimes,
+        },
+      ]
+    : dates.map((day) => ({
+        day,
+        label: new Date(`${day}T12:00:00`).toLocaleDateString([], {
+          weekday: "long",
+          month: "long",
+          day: "numeric",
+          year: "numeric",
+        }),
+        ranges: timesByDate[day] || [],
+      }));
+  const timezoneChoices = TIMEZONE_OPTIONS.some(([value]) => value === timeZone)
+    ? TIMEZONE_OPTIONS
+    : [[timeZone, timeZone], ...TIMEZONE_OPTIONS];
+
   return (
     <section className="wf-availability" aria-label="Interview availability">
       <h4>Select one or more interview dates</h4>
@@ -326,7 +470,19 @@ export default function AvailabilityPicker({ initialSlots = [], onChange, disabl
           ))}
         </div>
       ) : null}
-      <div className="wf-duration-row">
+      <div className="wf-scheduling-settings">
+        <label className="wf-field">
+          <span>Interview time zone</span>
+          <select
+            value={timeZone}
+            disabled={disabled}
+            onChange={(event) => setTimeZone(event.target.value)}
+          >
+            {timezoneChoices.map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </label>
         <label className="wf-field">
           <span>Interview length</span>
           <select value={duration} disabled={disabled} onChange={(event) => changeDuration(event.target.value)}>
@@ -339,30 +495,38 @@ export default function AvailabilityPicker({ initialSlots = [], onChange, disabl
       <div className="wf-time-groups">
         <h4>Select one or more start times</h4>
         <p>Click every start time you want to offer. Click a selected time again to remove it.</p>
-        {TIME_GROUPS.map((group) => (
-          <div key={group.label} className="wf-time-group">
-            <h5>{group.label}</h5>
-            <div className="wf-time-options">
-              {group.options.map((option) => {
-                const ranges = applyToAll ? sharedTimes : timesByDate[activeDate] || [];
-                const selected = ranges.some((range) => range.start === option.value);
-                return (
-                  <button
-                    type="button"
-                    key={option.value}
-                    className={selected ? "is-selected" : ""}
-                    aria-pressed={selected}
-                    aria-label={`${selected ? "Remove" : "Select"} ${option.label} start time`}
-                    disabled={disabled || !dates.length || (!applyToAll && !activeDate)}
-                    onClick={() => toggleStartTime(option.value)}
-                  >
-                    {option.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ))}
+        <div className="wf-time-period-tabs" aria-label="Time of day">
+          {TIME_GROUPS.map((group) => (
+            <button
+              type="button"
+              key={group.key}
+              className={period === group.key ? "is-selected" : ""}
+              aria-pressed={period === group.key}
+              onClick={() => setPeriod(group.key)}
+            >
+              {group.label}
+            </button>
+          ))}
+        </div>
+        <div className="wf-time-options">
+          {activeTimeGroup.options.map((option) => {
+            const ranges = applyToAll ? sharedTimes : timesByDate[activeDate] || [];
+            const selected = ranges.some((range) => range.start === option.value);
+            return (
+              <button
+                type="button"
+                key={option.value}
+                className={selected ? "is-selected" : ""}
+                aria-pressed={selected}
+                aria-label={`${selected ? "Remove" : "Select"} ${option.label} start time`}
+                disabled={disabled || !dates.length || (!applyToAll && !activeDate)}
+                onClick={() => toggleStartTime(option.value)}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
       <p>The end time is calculated automatically from the selected interview length.</p>
       {slots.length > 10 ? (
@@ -371,27 +535,44 @@ export default function AvailabilityPicker({ initialSlots = [], onChange, disabl
       {slots.length ? (
         <div className="wf-slot-review">
           <h4>Review offered times ({slots.length} of 10)</h4>
-          {dates.map((day) => {
-            const ranges = applyToAll ? sharedTimes : timesByDate[day] || [];
+          {reviewGroups.map(({ day, label, ranges }) => {
             if (!ranges.length) return null;
             return (
               <div key={day} className="wf-slot-day">
-                <strong>{new Date(`${day}T12:00:00`).toLocaleDateString([], {
-                  weekday: "long",
-                  month: "long",
-                  day: "numeric",
-                  year: "numeric",
-                })}</strong>
+                <strong>{label}</strong>
                 {ranges.map((range) => (
-                  <p key={rangeKey(range)}>
-                    {new Date(`2000-01-01T${range.start}:00`).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
-                    {' – '}
-                    {new Date(`2000-01-01T${range.end}:00`).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
-                    {' '}
-                    <button type="button" disabled={disabled} onClick={() => removeRange(day, range)}>
-                      {applyToAll ? "Remove from all days" : "Remove"}
-                    </button>
-                  </p>
+                  <div key={rangeKey(range)} className="wf-slot-entry">
+                    {editing?.day === day && editing?.originalStart === range.start ? (
+                      <div className="wf-slot-editor">
+                        <label>
+                          <span>Start</span>
+                          <select value={editing.start} onChange={(event) => setEditing({...editing, start:event.target.value})}>
+                            {TIME_OPTIONS.slice(0, -1).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                          </select>
+                        </label>
+                        <label>
+                          <span>Length</span>
+                          <select value={editing.duration} onChange={(event) => setEditing({...editing, duration:event.target.value})}>
+                            {INTERVIEW_LENGTHS.map((minutes) => <option key={minutes} value={minutes}>{minutes} minutes</option>)}
+                          </select>
+                        </label>
+                        <button type="button" onClick={saveRange}>Save</button>
+                        <button type="button" onClick={() => setEditing(null)}>Cancel</button>
+                      </div>
+                    ) : (
+                      <>
+                        <span>
+                          {new Date(`2000-01-01T${range.start}:00`).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                          {' – '}
+                          {new Date(`2000-01-01T${range.end}:00`).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                        </span>
+                        <div className="wf-slot-entry-actions">
+                          <button type="button" disabled={disabled} onClick={() => editRange(day, range)}>Edit</button>
+                          <button type="button" disabled={disabled} onClick={() => removeRange(day, range)}>Remove</button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 ))}
               </div>
             );

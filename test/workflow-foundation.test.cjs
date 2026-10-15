@@ -152,6 +152,17 @@ test("Interview Plan defaults follow the case into scheduling", () => {
     f.c.stages[0].instructions,
     "Review the role and bring questions.",
   );
+  f.action("decision", { decision: "proceed" });
+  f.action("offer_slots", {
+    timezone: "America/Chicago",
+    slots: [
+      {
+        start: "2026-09-28T14:00:00.000Z",
+        end: "2026-09-28T14:30:00.000Z",
+      },
+    ],
+  });
+  assert.equal(f.c.stages[0].timezone, "America/Chicago");
 });
 function schedule(f, base = now) {
   f.action("decision", { decision: "proceed" }, "manager", base);

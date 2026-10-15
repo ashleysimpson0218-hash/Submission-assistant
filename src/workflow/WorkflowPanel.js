@@ -789,6 +789,9 @@ function CaseCard({ c, send, disabled, view, entryAction = "" }) {
     [location, setLocation] = useState(savedLocation),
     [instructions, setInstructions] = useState(savedInstructions),
     [slots, setSlots] = useState(schedulingStage?.slots || []),
+    [schedulingTimezone, setSchedulingTimezone] = useState(
+      schedulingStage?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+    ),
     [evidence, setEvidence] = useState(""),
     [resolution, setResolution] = useState("");
   const stage = c.stages[c.stageIndex],
@@ -879,7 +882,7 @@ function CaseCard({ c, send, disabled, view, entryAction = "" }) {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              act(["manager_decision", "feedback_due", "held"].includes(c.status) ? "proceed_with_slots" : "offer_slots", { slots, instructions, location });
+              act(["manager_decision", "feedback_due", "held"].includes(c.status) ? "proceed_with_slots" : "offer_slots", { slots, instructions, location, timezone: schedulingTimezone });
             }}
           >
             <p>
@@ -922,7 +925,9 @@ function CaseCard({ c, send, disabled, view, entryAction = "" }) {
             ) : null}
             <AvailabilityPicker
               initialSlots={schedulingStage?.slots || []}
+              initialTimezone={schedulingTimezone}
               onChange={setSlots}
+              onTimezoneChange={setSchedulingTimezone}
               disabled={disabled}
             />
             <button disabled={disabled || !slots.length || slots.length > 10}>
