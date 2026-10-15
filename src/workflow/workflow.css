@@ -195,11 +195,35 @@
   width: 20px;
   height: 20px;
 }
-.wf-time-row {
+.wf-duration-row {
+  max-width: 260px;
+}
+.wf-time-groups {
   display: grid;
-  grid-template-columns: minmax(140px, 1fr) minmax(140px, 1fr) auto;
-  gap: 10px;
-  align-items: end;
+  gap: 12px;
+}
+.wf-time-group {
+  display: grid;
+  gap: 8px;
+}
+.wf-time-group h5 {
+  margin: 0;
+}
+.wf-time-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 7px;
+}
+.wf-workflow .wf-time-options button {
+  min-height: 38px;
+  padding: 7px;
+  color: #241246;
+  background: #fff;
+}
+.wf-workflow .wf-time-options button.is-selected {
+  color: #fff;
+  background: #5f2c91;
+  box-shadow: inset 0 0 0 2px #fff;
 }
 .wf-slot-review {
   display: grid;
@@ -238,9 +262,6 @@
   }
   .wf-actions > * {
     width: 100%;
-  }
-  .wf-time-row {
-    grid-template-columns: 1fr;
   }
   .wf-calendar-heading {
     grid-template-columns: 1fr 1fr;

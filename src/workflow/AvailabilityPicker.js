@@ -20,6 +20,11 @@ const TIME_OPTIONS = Array.from({ length: 65 }, (_, index) => {
   };
 });
 const INTERVIEW_LENGTHS = [15, 20, 30, 45, 60];
+const TIME_GROUPS = [
+  { label: "Morning", options: TIME_OPTIONS.filter((option) => option.value < "12:00") },
+  { label: "Afternoon", options: TIME_OPTIONS.filter((option) => option.value >= "12:00" && option.value < "17:00") },
+  { label: "Evening", options: TIME_OPTIONS.filter((option) => option.value >= "17:00" && option.value < "22:00") },
+];
 
 function addMinutes(time, duration) {
   const [hours, minutes] = time.split(":").map(Number);
@@ -33,10 +38,12 @@ function sortedRanges(ranges = []) {
 
 function initialAvailability(slots = []) {
   const timesByDate = {};
+  const durations = [];
   slots.forEach((slot) => {
     const start = new Date(slot.start);
     const end = new Date(slot.end);
     if (Number.isNaN(start.valueOf()) || Number.isNaN(end.valueOf())) return;
+    durations.push((end.valueOf() - start.valueOf()) / 60000);
     const day = dateKey(start);
     timesByDate[day] = sortedRanges([
       ...(timesByDate[day] || []),
@@ -56,6 +63,12 @@ function initialAvailability(slots = []) {
     timesByDate,
     applyToAll: slots.length === 0 || shared,
     sharedTimes: shared ? firstRanges : [],
+    duration:
+      durations.length &&
+      durations.every((value) => value === durations[0]) &&
+      INTERVIEW_LENGTHS.includes(durations[0])
+        ? String(durations[0])
+        : "30",
   };
 }
 
@@ -179,9 +192,7 @@ export default function AvailabilityPicker({ initialSlots = [], onChange, disabl
   const [sharedTimes, setSharedTimes] = useState(initial.sharedTimes);
   const [timesByDate, setTimesByDate] = useState(initial.timesByDate);
   const [activeDate, setActiveDate] = useState(initial.dates[0] || "");
-  const [start, setStart] = useState("09:00");
-  const [duration, setDuration] = useState("30");
-  const [error, setError] = useState("");
+  const [duration, setDuration] = useState(initial.duration);
   const slots = useMemo(
     () =>
       buildAvailabilitySlots({ dates, applyToAll, sharedTimes, timesByDate }),
@@ -197,28 +208,45 @@ export default function AvailabilityPicker({ initialSlots = [], onChange, disabl
     if (!dates.length && activeDate) setActiveDate("");
   }, [activeDate, dates]);
 
-  const addRange = () => {
-    if (!dates.length) {
-      setError("Select at least one interview date first.");
-      return;
-    }
+  const toggleStartTime = (start) => {
+    if (!dates.length || (!applyToAll && !activeDate)) return;
     const range = { start, end: addMinutes(start, duration) };
     if (applyToAll) {
-      if (!sharedTimes.some((item) => rangeKey(item) === rangeKey(range)))
-        setSharedTimes(sortedRanges([...sharedTimes, range]));
+      setSharedTimes(
+        sharedTimes.some((item) => item.start === start)
+          ? sharedTimes.filter((item) => item.start !== start)
+          : sortedRanges([...sharedTimes, range]),
+      );
     } else {
-      if (!activeDate) {
-        setError("Choose the date that should receive this time.");
-        return;
-      }
       const current = timesByDate[activeDate] || [];
-      if (!current.some((item) => rangeKey(item) === rangeKey(range)))
-        setTimesByDate({
-          ...timesByDate,
-          [activeDate]: sortedRanges([...current, range]),
-        });
+      setTimesByDate({
+        ...timesByDate,
+        [activeDate]: current.some((item) => item.start === start)
+          ? current.filter((item) => item.start !== start)
+          : sortedRanges([...current, range]),
+      });
     }
-    setError("");
+  };
+
+  const changeDuration = (nextDuration) => {
+    setDuration(nextDuration);
+    setSharedTimes(
+      sharedTimes.map((range) => ({
+        ...range,
+        end: addMinutes(range.start, nextDuration),
+      })),
+    );
+    setTimesByDate(
+      Object.fromEntries(
+        Object.entries(timesByDate).map(([day, ranges]) => [
+          day,
+          ranges.map((range) => ({
+            ...range,
+            end: addMinutes(range.start, nextDuration),
+          })),
+        ]),
+      ),
+    );
   };
 
   const setMode = (checked) => {
@@ -233,7 +261,6 @@ export default function AvailabilityPicker({ initialSlots = [], onChange, disabl
     if (checked && !sharedTimes.length && activeDate)
       setSharedTimes(timesByDate[activeDate] || []);
     setApplyToAll(checked);
-    setError("");
   };
 
   const removeRange = (day, range) => {
@@ -299,29 +326,45 @@ export default function AvailabilityPicker({ initialSlots = [], onChange, disabl
           ))}
         </div>
       ) : null}
-      <div className="wf-time-row">
-        <label className="wf-field">
-          <span>Start time</span>
-          <select value={start} disabled={disabled} onChange={(event) => setStart(event.target.value)}>
-            {TIME_OPTIONS.slice(0, -1).map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </label>
+      <div className="wf-duration-row">
         <label className="wf-field">
           <span>Interview length</span>
-          <select value={duration} disabled={disabled} onChange={(event) => setDuration(event.target.value)}>
+          <select value={duration} disabled={disabled} onChange={(event) => changeDuration(event.target.value)}>
             {INTERVIEW_LENGTHS.map((minutes) => (
               <option key={minutes} value={minutes}>{minutes} minutes</option>
             ))}
           </select>
         </label>
-        <button type="button" disabled={disabled || !dates.length} onClick={addRange}>
-          Add time block
-        </button>
+      </div>
+      <div className="wf-time-groups">
+        <h4>Select one or more start times</h4>
+        <p>Click every start time you want to offer. Click a selected time again to remove it.</p>
+        {TIME_GROUPS.map((group) => (
+          <div key={group.label} className="wf-time-group">
+            <h5>{group.label}</h5>
+            <div className="wf-time-options">
+              {group.options.map((option) => {
+                const ranges = applyToAll ? sharedTimes : timesByDate[activeDate] || [];
+                const selected = ranges.some((range) => range.start === option.value);
+                return (
+                  <button
+                    type="button"
+                    key={option.value}
+                    className={selected ? "is-selected" : ""}
+                    aria-pressed={selected}
+                    aria-label={`${selected ? "Remove" : "Select"} ${option.label} start time`}
+                    disabled={disabled || !dates.length || (!applyToAll && !activeDate)}
+                    onClick={() => toggleStartTime(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
       <p>The end time is calculated automatically from the selected interview length.</p>
-      {error ? <p role="alert" className="wf-alert">{error}</p> : null}
       {slots.length > 10 ? (
         <p role="alert" className="wf-alert">Choose no more than 10 total interview times.</p>
       ) : null}
