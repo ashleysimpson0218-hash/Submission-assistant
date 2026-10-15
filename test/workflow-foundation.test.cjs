@@ -88,6 +88,8 @@ function fixture(count = 1) {
       name: `Interview ${i + 1}`,
       ownerId: "manager",
       interviewerIds: ["panel"],
+      location: "https://video.example.test/interview",
+      instructions: "Review the role and bring questions.",
     })),
   });
   const handoff = (id = "candidate") =>
@@ -142,6 +144,15 @@ function fixture(count = 1) {
     },
   };
 }
+
+test("Interview Plan defaults follow the case into scheduling", () => {
+  const f = fixture();
+  assert.equal(f.c.stages[0].location, "https://video.example.test/interview");
+  assert.equal(
+    f.c.stages[0].instructions,
+    "Review the role and bring questions.",
+  );
+});
 function schedule(f, base = now) {
   f.action("decision", { decision: "proceed" }, "manager", base);
   const start = new Date(Date.parse(base) + 4 * 86400000).toISOString(),

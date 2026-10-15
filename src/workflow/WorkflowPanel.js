@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import "./workflow.css";
+import AvailabilityPicker from "./AvailabilityPicker";
 const uid = () => crypto.randomUUID();
 function readableError(value, fallback) {
   if (typeof value === "string" && value.trim()) return value;
@@ -45,6 +46,16 @@ function SelectMember({ members, value, onChange, label }) {
       </select>
     </Field>
   );
+}
+function interviewStage(values = {}) {
+  return {
+    id: values.id || uid(),
+    name: values.name || "",
+    ownerId: values.ownerId || "",
+    interviewerIds: values.interviewerIds || [],
+    location: values.location || "",
+    instructions: values.instructions || "",
+  };
 }
 export async function workflowRequest({
   client,
@@ -425,13 +436,21 @@ function Setup({ view, send, disabled }) {
     [recruiter, setRecruiter] = useState(""),
     [ownerReason, setOwnerReason] = useState(""),
     [stages, setStages] = useState([
-      {
-        id: uid(),
-        name: "Hiring manager interview",
-        ownerId: "",
-        interviewerIds: [],
-      },
+      interviewStage({ name: "Hiring manager interview" }),
     ]);
+  useEffect(() => {
+    if (!req) return;
+    const configured = view.requisitions.find((item) => item.id === req);
+    if (configured) {
+      setManager(configured.managerId || "");
+      setRecruiter(configured.recruiterIds?.[0] || "");
+      setStages(configured.stages.map((stage) => interviewStage(stage)));
+      return;
+    }
+    setManager("");
+    setRecruiter("");
+    setStages([interviewStage({ name: "Hiring manager interview" })]);
+  }, [req, view.requisitions]);
   return (
     <details>
       <summary>Client policy and Interview Plans</summary>
@@ -520,6 +539,34 @@ function Setup({ view, send, disabled }) {
                   ))}
               </select>
             </Field>
+            <Field label="Default interview location or joining link (optional)">
+              <input
+                value={stage.location}
+                onChange={(e) =>
+                  setStages(
+                    stages.map((s, j) =>
+                      j === i ? { ...s, location: e.target.value } : s,
+                    ),
+                  )
+                }
+              />
+            </Field>
+            <Field label="Default preparation information (optional)">
+              <textarea
+                maxLength={2000}
+                value={stage.instructions}
+                onChange={(e) =>
+                  setStages(
+                    stages.map((s, j) =>
+                      j === i ? { ...s, instructions: e.target.value } : s,
+                    ),
+                  )
+                }
+              />
+            </Field>
+            <small>
+              WelcomeFlow reuses these details when a manager schedules this stage. The manager can review or edit them before sending.
+            </small>
             {stages.length > 1 ? (
               <button
                 type="button"
@@ -536,7 +583,7 @@ function Setup({ view, send, disabled }) {
           onClick={() =>
             setStages([
               ...stages,
-              { id: uid(), name: "", ownerId: "", interviewerIds: [] },
+              interviewStage(),
             ])
           }
         >
@@ -690,6 +737,44 @@ export function SubmissionWorkflowHandoff({client, workspaceId, candidateId}) {
   </section>;
 }
 function CaseCard({ c, send, disabled, view, entryAction = "" }) {
+  const decisionStatus = ["manager_decision", "feedback_due", "held"].includes(
+    c.status,
+  );
+  const schedulingStageIndex = decisionStatus
+    ? c.stageIndex + 1
+    : c.stageIndex;
+  const schedulingStage = c.stages[schedulingStageIndex];
+  const priorCaseStage = c.requisitionId
+    ? [...view.cases]
+        .reverse()
+        .filter(
+          (candidateCase) =>
+            candidateCase.id !== c.id &&
+            candidateCase.requisitionId === c.requisitionId,
+        )
+        .map(
+          (candidateCase) =>
+            candidateCase.stages[schedulingStageIndex] ||
+            candidateCase.stages.find(
+              (stage) => stage.name === schedulingStage?.name,
+            ),
+        )
+        .find((stage) => stage?.location || stage?.instructions)
+    : null;
+  const previousInterviewDetails = [...c.stages]
+    .slice(0, Math.max(0, schedulingStageIndex))
+    .reverse()
+    .find((stage) => stage.location || stage.instructions);
+  const savedLocation =
+    schedulingStage?.location ||
+    priorCaseStage?.location ||
+    previousInterviewDetails?.location ||
+    "";
+  const savedInstructions =
+    schedulingStage?.instructions ||
+    priorCaseStage?.instructions ||
+    previousInterviewDetails?.instructions ||
+    "";
   const [reason, setReason] = useState(""),
     [declineOpen, setDeclineOpen] = useState(entryAction === "decline"),
     [manualSchedule, setManualSchedule] = useState(entryAction === "proceed-times"),
@@ -701,13 +786,9 @@ function CaseCard({ c, send, disabled, view, entryAction = "" }) {
     }),
     [replacement, setReplacement] = useState(""),
     [feedback, setFeedback] = useState(""),
-    [location, setLocation] = useState(["slots_needed", "selection_pending"].includes(c.status) ? c.stages[c.stageIndex]?.location || "" : ""),
-    [instructions, setInstructions] = useState(
-      ["slots_needed", "selection_pending"].includes(c.status) ? c.stages[c.stageIndex]?.instructions || "" : "",
-    ),
-    [slotStart, setSlotStart] = useState(""),
-    [slotEnd, setSlotEnd] = useState(""),
-    [slots, setSlots] = useState([]),
+    [location, setLocation] = useState(savedLocation),
+    [instructions, setInstructions] = useState(savedInstructions),
+    [slots, setSlots] = useState(schedulingStage?.slots || []),
     [evidence, setEvidence] = useState(""),
     [resolution, setResolution] = useState("");
   const stage = c.stages[c.stageIndex],
@@ -748,7 +829,7 @@ function CaseCard({ c, send, disabled, view, entryAction = "" }) {
               ? "Proceed toward offer handoff"
               : "Proceed"}
           </button>
-          {c.stageIndex < c.stages.length - 1 ? <button disabled={disabled} onClick={() => {setManualSchedule(true); setLocation(""); setInstructions(""); setSlots([]);}}>Proceed but select your time your way</button> : null}
+          {c.stageIndex < c.stages.length - 1 ? <button disabled={disabled} onClick={() => setManualSchedule(true)}>Proceed but select your time your way</button> : null}
           {c.stageIndex < c.stages.length - 1 ? <small>Proceed uses the leadership calendar when connected. Manager-selected times let you offer days and times for the candidate to choose.</small> : null}
           <button
             disabled={disabled || c.status === "held"}
@@ -824,50 +905,27 @@ function CaseCard({ c, send, disabled, view, entryAction = "" }) {
                 onChange={(e) => setInstructions(e.target.value)}
               />
             </Field>
-            <Field label="Slot start">
-              <input
-                type="datetime-local"
-                value={slotStart}
-                onChange={(e) => setSlotStart(e.target.value)}
-              />
-            </Field>
-            <Field label="Slot end">
-              <input
-                type="datetime-local"
-                value={slotEnd}
-                onChange={(e) => setSlotEnd(e.target.value)}
-              />
-            </Field>
-            <button
-              type="button"
-              disabled={!slotStart || !slotEnd || disabled}
-              onClick={() => {
-                setSlots([
-                  ...slots,
-                  {
-                    start: new Date(slotStart).toISOString(),
-                    end: new Date(slotEnd).toISOString(),
-                  },
-                ]);
-                setSlotStart("");
-                setSlotEnd("");
-              }}
-            >
-              Add time
-            </button>
-            {slots.map((s, i) => (
-              <p key={i}>
-                {new Date(s.start).toLocaleString()} –{" "}
-                {new Date(s.end).toLocaleTimeString()}{" "}
+            {savedLocation || savedInstructions ? (
+              <div className="wf-saved-details">
+                <strong>Saved Interview Plan details are available.</strong>
                 <button
                   type="button"
-                  onClick={() => setSlots(slots.filter((_, j) => j !== i))}
+                  disabled={disabled}
+                  onClick={() => {
+                    setLocation(savedLocation);
+                    setInstructions(savedInstructions);
+                  }}
                 >
-                  Remove
+                  Restore saved location and preparation
                 </button>
-              </p>
-            ))}
-            <button disabled={disabled || !slots.length}>
+              </div>
+            ) : null}
+            <AvailabilityPicker
+              initialSlots={schedulingStage?.slots || []}
+              onChange={setSlots}
+              disabled={disabled}
+            />
+            <button disabled={disabled || !slots.length || slots.length > 10}>
               {["manager_decision", "feedback_due", "held"].includes(c.status) ? "Proceed and send interview invitation" : "Send offered times"}
             </button>
           </form>

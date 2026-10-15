@@ -191,15 +191,30 @@ test('old email version requires current review before a manager can submit', as
 });
 
 test('manager-selected times record Proceed and send the invitation in one command', async () => {
-  global.fetch = jest.fn(async () => response({view}));
+  const schedulingView = {
+    ...view,
+    cases: [{
+      ...view.cases[0],
+      stages: [{
+        ...view.cases[0].stages[0],
+        location: 'https://teams.example.test/interview',
+        instructions: 'Bring your license and questions.',
+      }],
+    }],
+  };
+  global.fetch = jest.fn(async () => response({view:schedulingView}));
   render(<WorkflowPanel client={client} workspaceId="test" entry={{caseId:'case',action:'proceed-times',version:'1'}} />);
-  await screen.findByLabelText('Interview location or joining link');
+  expect(await screen.findByLabelText('Interview location or joining link')).toHaveValue('https://teams.example.test/interview');
+  expect(screen.getByLabelText('Preparation information')).toHaveValue('Bring your license and questions.');
   expect(global.fetch.mock.calls.every(([,o]) => o.method === 'GET')).toBe(true);
-  fireEvent.change(screen.getByLabelText('Interview location or joining link'),{target:{value:'Demo Facility'}});
-  fireEvent.change(screen.getByLabelText('Preparation information'),{target:{value:'Bring questions'}});
-  fireEvent.change(screen.getByLabelText('Slot start'),{target:{value:'2027-01-05T10:00'}});
-  fireEvent.change(screen.getByLabelText('Slot end'),{target:{value:'2027-01-05T11:00'}});
-  fireEvent.click(screen.getByRole('button',{name:'Add time'}));
+  fireEvent.change(screen.getByLabelText('Calendar month'),{target:{value:'2027-03'}});
+  fireEvent.click(screen.getByRole('button',{name:'Select Monday, March 1, 2027'}));
+  fireEvent.click(screen.getByRole('button',{name:'Select Monday, March 15, 2027'}));
+  fireEvent.click(screen.getByRole('button',{name:'Select Sunday, March 21, 2027'}));
+  fireEvent.change(screen.getByLabelText('Start time'),{target:{value:'10:00'}});
+  fireEvent.change(screen.getByLabelText('End time'),{target:{value:'11:00'}});
+  fireEvent.click(screen.getByRole('button',{name:'Add time range'}));
+  expect(screen.getByText('Review offered times (3 of 10)')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button',{name:'Proceed and send interview invitation'}));
   await waitFor(() => expect(global.fetch.mock.calls.some(([,o]) => o.method === 'POST')).toBe(true));
   const commands = global.fetch.mock.calls.filter(([,o]) => o.method === 'POST');
@@ -207,7 +222,66 @@ test('manager-selected times record Proceed and send the invitation in one comma
   const command = JSON.parse(commands[0][1].body);
   expect(command.type).toBe('proceed_with_slots');
   expect(command.payload.caseId).toBe('case');
-  expect(command.payload.slots).toHaveLength(1);
+  expect(command.payload.location).toBe('https://teams.example.test/interview');
+  expect(command.payload.instructions).toBe('Bring your license and questions.');
+  expect(command.payload.slots).toHaveLength(3);
+});
+
+test('manager can assign different time ranges to individual selected dates', async () => {
+  const schedulingView = {
+    ...view,
+    cases: [{
+      ...view.cases[0],
+      stages: [{
+        ...view.cases[0].stages[0],
+        location: 'Demo Facility',
+        instructions: 'Bring questions.',
+      }],
+    }],
+  };
+  global.fetch = jest.fn(async () => response({view:schedulingView}));
+  render(<WorkflowPanel client={client} workspaceId="test" entry={{caseId:'case',action:'proceed-times',version:'1'}} />);
+  await screen.findByLabelText('Calendar month');
+  fireEvent.change(screen.getByLabelText('Calendar month'),{target:{value:'2027-03'}});
+  fireEvent.click(screen.getByRole('button',{name:'Select Monday, March 1, 2027'}));
+  fireEvent.click(screen.getByRole('button',{name:'Select Monday, March 15, 2027'}));
+  fireEvent.click(screen.getByLabelText('Apply selected times to all selected days'));
+  fireEvent.click(screen.getByRole('button',{name:'Mar 1'}));
+  fireEvent.change(screen.getByLabelText('Start time'),{target:{value:'09:00'}});
+  fireEvent.change(screen.getByLabelText('End time'),{target:{value:'10:00'}});
+  fireEvent.click(screen.getByRole('button',{name:'Add time range'}));
+  fireEvent.click(screen.getByRole('button',{name:'Mar 15'}));
+  fireEvent.change(screen.getByLabelText('Start time'),{target:{value:'13:00'}});
+  fireEvent.change(screen.getByLabelText('End time'),{target:{value:'14:00'}});
+  fireEvent.click(screen.getByRole('button',{name:'Add time range'}));
+  expect(screen.getByText('Review offered times (2 of 10)')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button',{name:'Proceed and send interview invitation'}));
+  await waitFor(() => expect(global.fetch.mock.calls.some(([,o]) => o.method === 'POST')).toBe(true));
+  const command = JSON.parse(global.fetch.mock.calls.find(([,o]) => o.method === 'POST')[1].body);
+  expect(command.payload.slots).toHaveLength(2);
+  expect(command.payload.slots[0].start).not.toBe(command.payload.slots[1].start);
+});
+
+test('manager scheduling reuses location and preparation from a prior candidate on the requisition', async () => {
+  const target = {
+    ...view.cases[0],
+    requisitionId: 'req-1',
+    stages: [{...view.cases[0].stages[0], location:'', instructions:''}],
+  };
+  const prior = {
+    ...view.cases[0],
+    id: 'prior-case',
+    requisitionId: 'req-1',
+    stages: [{
+      ...view.cases[0].stages[0],
+      location: 'Facility conference room',
+      instructions: 'Ask for the nursing director at reception.',
+    }],
+  };
+  global.fetch = jest.fn(async () => response({view:{...view,cases:[target,prior]}}));
+  render(<WorkflowPanel client={client} workspaceId="test" entry={{caseId:'case',action:'proceed-times',version:'1'}} />);
+  expect(await screen.findByLabelText('Interview location or joining link')).toHaveValue('Facility conference room');
+  expect(screen.getByLabelText('Preparation information')).toHaveValue('Ask for the nursing director at reception.');
 });
 
 test('the queued manager email can be processed without creating a second handoff', async () => {

@@ -512,6 +512,8 @@ function applyCommand(input, command, context) {
         name: clean(s.name, 120),
         ownerId: s.ownerId,
         interviewerIds,
+        location: clean(s.location, 1000),
+        instructions: clean(s.instructions, 2000),
         order: i,
       };
     });
