@@ -19,6 +19,13 @@ const TIME_OPTIONS = Array.from({ length: 65 }, (_, index) => {
     }),
   };
 });
+const INTERVIEW_LENGTHS = [15, 20, 30, 45, 60];
+
+function addMinutes(time, duration) {
+  const [hours, minutes] = time.split(":").map(Number);
+  const total = hours * 60 + minutes + Number(duration);
+  return `${pad(Math.floor(total / 60))}:${pad(total % 60)}`;
+}
 
 function sortedRanges(ranges = []) {
   return [...ranges].sort((a, b) => rangeKey(a).localeCompare(rangeKey(b)));
@@ -173,7 +180,7 @@ export default function AvailabilityPicker({ initialSlots = [], onChange, disabl
   const [timesByDate, setTimesByDate] = useState(initial.timesByDate);
   const [activeDate, setActiveDate] = useState(initial.dates[0] || "");
   const [start, setStart] = useState("09:00");
-  const [end, setEnd] = useState("09:30");
+  const [duration, setDuration] = useState("30");
   const [error, setError] = useState("");
   const slots = useMemo(
     () =>
@@ -195,11 +202,7 @@ export default function AvailabilityPicker({ initialSlots = [], onChange, disabl
       setError("Select at least one interview date first.");
       return;
     }
-    if (end <= start) {
-      setError("Choose an end time after the start time.");
-      return;
-    }
-    const range = { start, end };
+    const range = { start, end: addMinutes(start, duration) };
     if (applyToAll) {
       if (!sharedTimes.some((item) => rangeKey(item) === rangeKey(range)))
         setSharedTimes(sortedRanges([...sharedTimes, range]));
@@ -306,17 +309,18 @@ export default function AvailabilityPicker({ initialSlots = [], onChange, disabl
           </select>
         </label>
         <label className="wf-field">
-          <span>End time</span>
-          <select value={end} disabled={disabled} onChange={(event) => setEnd(event.target.value)}>
-            {TIME_OPTIONS.slice(1).map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+          <span>Interview length</span>
+          <select value={duration} disabled={disabled} onChange={(event) => setDuration(event.target.value)}>
+            {INTERVIEW_LENGTHS.map((minutes) => (
+              <option key={minutes} value={minutes}>{minutes} minutes</option>
             ))}
           </select>
         </label>
         <button type="button" disabled={disabled || !dates.length} onClick={addRange}>
-          Add time range
+          Add time block
         </button>
       </div>
+      <p>The end time is calculated automatically from the selected interview length.</p>
       {error ? <p role="alert" className="wf-alert">{error}</p> : null}
       {slots.length > 10 ? (
         <p role="alert" className="wf-alert">Choose no more than 10 total interview times.</p>

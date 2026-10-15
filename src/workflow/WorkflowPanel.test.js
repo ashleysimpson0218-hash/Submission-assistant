@@ -212,8 +212,9 @@ test('manager-selected times record Proceed and send the invitation in one comma
   fireEvent.click(screen.getByRole('button',{name:'Select Monday, March 15, 2027'}));
   fireEvent.click(screen.getByRole('button',{name:'Select Sunday, March 21, 2027'}));
   fireEvent.change(screen.getByLabelText('Start time'),{target:{value:'10:00'}});
-  fireEvent.change(screen.getByLabelText('End time'),{target:{value:'11:00'}});
-  fireEvent.click(screen.getByRole('button',{name:'Add time range'}));
+  expect([...screen.getByLabelText('Interview length').options].map((option) => option.value)).toEqual(['15','20','30','45','60']);
+  fireEvent.change(screen.getByLabelText('Interview length'),{target:{value:'60'}});
+  fireEvent.click(screen.getByRole('button',{name:'Add time block'}));
   expect(screen.getByText('Review offered times (3 of 10)')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button',{name:'Proceed and send interview invitation'}));
   await waitFor(() => expect(global.fetch.mock.calls.some(([,o]) => o.method === 'POST')).toBe(true));
@@ -225,6 +226,7 @@ test('manager-selected times record Proceed and send the invitation in one comma
   expect(command.payload.location).toBe('https://teams.example.test/interview');
   expect(command.payload.instructions).toBe('Bring your license and questions.');
   expect(command.payload.slots).toHaveLength(3);
+  expect(command.payload.slots.every((slot) => Date.parse(slot.end) - Date.parse(slot.start) === 60 * 60000)).toBe(true);
 });
 
 test('manager can assign different time ranges to individual selected dates', async () => {
@@ -248,18 +250,19 @@ test('manager can assign different time ranges to individual selected dates', as
   fireEvent.click(screen.getByLabelText('Apply selected times to all selected days'));
   fireEvent.click(screen.getByRole('button',{name:'Mar 1'}));
   fireEvent.change(screen.getByLabelText('Start time'),{target:{value:'09:00'}});
-  fireEvent.change(screen.getByLabelText('End time'),{target:{value:'10:00'}});
-  fireEvent.click(screen.getByRole('button',{name:'Add time range'}));
+  fireEvent.change(screen.getByLabelText('Interview length'),{target:{value:'60'}});
+  fireEvent.click(screen.getByRole('button',{name:'Add time block'}));
   fireEvent.click(screen.getByRole('button',{name:'Mar 15'}));
   fireEvent.change(screen.getByLabelText('Start time'),{target:{value:'13:00'}});
-  fireEvent.change(screen.getByLabelText('End time'),{target:{value:'14:00'}});
-  fireEvent.click(screen.getByRole('button',{name:'Add time range'}));
+  fireEvent.change(screen.getByLabelText('Interview length'),{target:{value:'45'}});
+  fireEvent.click(screen.getByRole('button',{name:'Add time block'}));
   expect(screen.getByText('Review offered times (2 of 10)')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button',{name:'Proceed and send interview invitation'}));
   await waitFor(() => expect(global.fetch.mock.calls.some(([,o]) => o.method === 'POST')).toBe(true));
   const command = JSON.parse(global.fetch.mock.calls.find(([,o]) => o.method === 'POST')[1].body);
   expect(command.payload.slots).toHaveLength(2);
   expect(command.payload.slots[0].start).not.toBe(command.payload.slots[1].start);
+  expect(command.payload.slots.map((slot) => (Date.parse(slot.end) - Date.parse(slot.start)) / 60000)).toEqual([60,45]);
 });
 
 test('manager scheduling reuses location and preparation from a prior candidate on the requisition', async () => {
