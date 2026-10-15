@@ -23,6 +23,19 @@ const DECLINE_REASONS = [
   "Availability/schedule mismatch",
   "Other",
 ];
+function deliveryWindowLabel(deliveryWindow) {
+  if (!deliveryWindow?.nextSendAt || !deliveryWindow?.timezone)
+    return "the next approved sending window";
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: deliveryWindow.timezone,
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(new Date(deliveryWindow.nextSendAt));
+}
 function Field({ label, children }) {
   return (
     <label className="wf-field">
@@ -1161,26 +1174,34 @@ function CaseCard({ c, send, disabled, view, entryAction = "" }) {
             Date.parse(j.dueAt) <= Date.now() &&
             (c.canRecruit || j.recipientId === view.actor.userId),
         )
-        .map((j) => (
-          <div key={j.id} className="wf-alert">
-            <strong>{j.kind.replaceAll("_", " ")} is ready to send</strong>
-            <p>
-              This approved email is still queued. Processing it uses the same
-              durable job and cannot resend after provider acceptance.
-            </p>
-            <button
-              disabled={disabled}
-              onClick={() =>
-                send("process_queued_delivery", {
-                  caseId: c.id,
-                  jobId: j.id,
-                })
-              }
-            >
-              Process pending email
-            </button>
-          </div>
-        ))}
+        .map((j) => {
+          const waitingForWindow = j.deliveryWindow?.open === false;
+          return (
+            <div key={j.id} className="wf-alert">
+              <strong>
+                {j.kind.replaceAll("_", " ")} is {waitingForWindow ? "queued for approved sending hours" : "ready to send"}
+              </strong>
+              <p>
+                {waitingForWindow
+                  ? `This approved email will become eligible on ${deliveryWindowLabel(j.deliveryWindow)}. It will send automatically; processing now cannot bypass the configured delivery window.`
+                  : "This approved email is still queued. Processing it uses the same durable job and cannot resend after provider acceptance."}
+              </p>
+              {!waitingForWindow ? (
+                <button
+                  disabled={disabled}
+                  onClick={() =>
+                    send("process_queued_delivery", {
+                      caseId: c.id,
+                      jobId: j.id,
+                    })
+                  }
+                >
+                  Process pending email
+                </button>
+              ) : null}
+            </div>
+          );
+        })}
       {c.canRecruit
         ? view.jobs
             .filter(

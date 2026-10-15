@@ -5,6 +5,7 @@ const {
   applyCommand,
   stateView,
   withinWindow,
+  nextWindowStart,
   addWorkingDays,
 } = require("../src/workflow/engine");
 const {
@@ -486,6 +487,14 @@ test("policy is recipient local, configurable, DST safe and not role tiered", ()
       f.state.policy,
     ),
     false,
+  );
+  assert.equal(
+    nextWindowStart(
+      "2026-09-24T04:45:00.000Z",
+      "America/New_York",
+      f.state.policy,
+    ),
+    "2026-09-24T11:00:00.000Z",
   );
   assert.equal(
     withinWindow(

@@ -336,3 +336,28 @@ test('the queued manager email can be processed without creating a second handof
   expect(command.type).toBe('process_queued_delivery');
   expect(command.payload).toEqual({caseId:'case',jobId:'case:-1:decision_request:'});
 });
+
+test('an email waiting for approved hours shows its scheduled window instead of a send button', async () => {
+  const queuedView = {
+    ...view,
+    cases:[{...view.cases[0],canRecruit:true}],
+    jobs: [{
+      id:'case:0:slot_selection:2',
+      kind:'slot_selection',
+      caseId:'case',
+      recipientId:'candidate',
+      status:'queued',
+      dueAt:'2026-10-15T04:43:46.096Z',
+      deliveryWindow:{
+        open:false,
+        nextSendAt:'2026-10-15T11:00:00.000Z',
+        timezone:'America/New_York',
+      },
+    }],
+  };
+  global.fetch = jest.fn(async () => response({view:queuedView}));
+  render(<WorkflowPanel client={client} workspaceId="test" />);
+  expect(await screen.findByText('slot selection is queued for approved sending hours')).toBeInTheDocument();
+  expect(screen.getByText(/Thursday, October 15 at 7:00 AM EDT/)).toBeInTheDocument();
+  expect(screen.queryByRole('button',{name:'Process pending email'})).not.toBeInTheDocument();
+});

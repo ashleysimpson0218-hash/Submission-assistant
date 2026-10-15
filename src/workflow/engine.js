@@ -61,6 +61,68 @@ function withinWindow(now, zone, policy) {
     p.minute < policy.sendEnd
   );
 }
+function nextWindowStart(now, zone, policy) {
+  if (!validTime(now) || !zoneValid(zone) || !policy?.workingDays?.length)
+    return null;
+  if (withinWindow(now, zone, policy)) return new Date(now).toISOString();
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(new Date(now))
+      .map((part) => [part.type, part.value]),
+  );
+  const localDate = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+  );
+  const currentMinute = Number(parts.hour) * 60 + Number(parts.minute);
+  for (let offset = 0; offset < 8; offset += 1) {
+    const day = new Date(localDate + offset * 86400000);
+    if (!policy.workingDays.includes(day.getUTCDay())) continue;
+    if (offset === 0 && currentMinute >= policy.sendStart) continue;
+    const desired = Date.UTC(
+      day.getUTCFullYear(),
+      day.getUTCMonth(),
+      day.getUTCDate(),
+      Math.floor(policy.sendStart / 60),
+      policy.sendStart % 60,
+    );
+    let guess = desired;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const displayed = Object.fromEntries(
+        new Intl.DateTimeFormat("en-US", {
+          timeZone: zone,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          hourCycle: "h23",
+        })
+          .formatToParts(new Date(guess))
+          .map((part) => [part.type, part.value]),
+      );
+      const wall = Date.UTC(
+        Number(displayed.year),
+        Number(displayed.month) - 1,
+        Number(displayed.day),
+        Number(displayed.hour),
+        Number(displayed.minute),
+      );
+      guess += desired - wall;
+    }
+    return new Date(guess).toISOString();
+  }
+  return null;
+}
 function addWorkingDays(now, days, policy) {
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone: policy.timezone,
@@ -151,7 +213,7 @@ function canReadCase(actor, req, c) {
 function currentOwner(c, req) {
   return c.stageIndex < 0 ? req.managerId : c.stages[c.stageIndex]?.ownerId;
 }
-function stateView(state, actor, members = []) {
+function stateView(state, actor, members = [], now = new Date().toISOString()) {
   const requisitions = state.requisitions.filter(
     (r) => canRecruit(actor, r) || canManage(actor, r),
   );
@@ -200,12 +262,30 @@ function stateView(state, actor, members = []) {
         (actor.role === "recruiter" && reqIds.has(e.requisitionId))),
   );
   const allowedCases = new Set(cases.map((c) => c.id));
-  const jobs = state.jobs.filter(
-    (j) =>
-      actor.role === "admin" ||
-      (actor.role === "recruiter" && allowedCases.has(j.caseId)) ||
-      (j.recipientId === actor.userId && reqIds.has(j.requisitionId)),
-  );
+  const jobs = state.jobs
+    .filter(
+      (j) =>
+        actor.role === "admin" ||
+        (actor.role === "recruiter" && allowedCases.has(j.caseId)) ||
+        (j.recipientId === actor.userId && reqIds.has(j.requisitionId)),
+    )
+    .map((job) => {
+      if (job.status !== "queued" || !state.policy) return job;
+      const workflowCase = state.cases.find((item) => item.id === job.caseId);
+      const recipient =
+        job.recipientId === "candidate"
+          ? workflowCase
+          : member(members, job.recipientId);
+      if (!zoneValid(recipient?.timezone)) return job;
+      return {
+        ...job,
+        deliveryWindow: {
+          open: withinWindow(now, recipient.timezone, state.policy),
+          nextSendAt: nextWindowStart(now, recipient.timezone, state.policy),
+          timezone: recipient.timezone,
+        },
+      };
+    });
   return {
     revision: state.revision,
     lastWorkerAt: state.lastWorkerAt || null,
@@ -1565,6 +1645,7 @@ module.exports = {
   canReadCase,
   currentOwner,
   withinWindow,
+  nextWindowStart,
   zoneValid,
   addWorkingDays,
   localParts,
