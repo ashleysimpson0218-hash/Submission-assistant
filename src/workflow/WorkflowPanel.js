@@ -1,6 +1,12 @@
 import React, { useCallback, useEffect, useState } from "react";
 import "./workflow.css";
+import AvailabilityPicker, { MAX_INTERVIEW_SLOTS } from "./AvailabilityPicker";
 const uid = () => crypto.randomUUID();
+function readableError(value, fallback) {
+  if (typeof value === "string" && value.trim()) return value;
+  if (typeof value?.message === "string" && value.message.trim()) return value.message;
+  return fallback;
+}
 const WITHDRAWAL_REASONS = [
   "Accepted another position",
   "Staying with current employer",
@@ -17,6 +23,19 @@ const DECLINE_REASONS = [
   "Availability/schedule mismatch",
   "Other",
 ];
+function deliveryWindowLabel(deliveryWindow) {
+  if (!deliveryWindow?.nextSendAt || !deliveryWindow?.timezone)
+    return "the next approved sending window";
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: deliveryWindow.timezone,
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(new Date(deliveryWindow.nextSendAt));
+}
 function Field({ label, children }) {
   return (
     <label className="wf-field">
@@ -40,6 +59,16 @@ function SelectMember({ members, value, onChange, label }) {
       </select>
     </Field>
   );
+}
+function interviewStage(values = {}) {
+  return {
+    id: values.id || uid(),
+    name: values.name || "",
+    ownerId: values.ownerId || "",
+    interviewerIds: values.interviewerIds || [],
+    location: values.location || "",
+    instructions: values.instructions || "",
+  };
 }
 export async function workflowRequest({
   client,
@@ -67,19 +96,20 @@ export async function workflowRequest({
   });
   const result = await response.json();
   if (!response.ok || !result.ok) {
-    const e = new Error(result.error || "The workflow could not be confirmed.");
+    const e = new Error(readableError(result.error, "The workflow could not be confirmed. Refresh and try again."));
     e.definitive = response.status >= 400 && response.status < 500;
     e.code = result.code;
     throw e;
   }
   return result;
 }
-export default function WorkflowPanel({ client, workspaceId, token = "" }) {
+export default function WorkflowPanel({ client, workspaceId, token = "", entry = {} }) {
   const [view, setView] = useState(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [pending, setPending] = useState(null),
-    [done, setDone] = useState(false);
+    [done, setDone] = useState(null),
+    [entryReviewed, setEntryReviewed] = useState(false);
   const load = useCallback(async () => {
     setBusy(true);
     setError("");
@@ -114,9 +144,10 @@ export default function WorkflowPanel({ client, workspaceId, token = "" }) {
     setError("");
     try {
       const r = await workflowRequest({ client, workspaceId, token, command });
-      if (r.completed) setDone(true);
+      if (r.completed) setDone({ calendar: r.calendar || null });
       else setView(r.view);
       setPending(null);
+      setEntryReviewed(true);
     } catch (e) {
       setError(e.message);
       if (e.definitive) setPending(null);
@@ -124,6 +155,8 @@ export default function WorkflowPanel({ client, workspaceId, token = "" }) {
       setBusy(false);
     }
   }
+  const entryCase = view?.cases?.find(c => c.id === entry.caseId);
+  const staleEntry = Boolean(entryCase && entry.version && String(entryCase.version) !== entry.version && !entryReviewed);
   const disabled = busy || Boolean(pending);
   return (
     <section className="wf-workflow" aria-label="Interview workflow">
@@ -158,7 +191,13 @@ export default function WorkflowPanel({ client, workspaceId, token = "" }) {
       ) : null}
       {busy ? <p role="status">Checking the shared workflow…</p> : null}
       {done ? (
-        <p role="status">Thank you. Your response has been recorded.</p>
+        <p role="status">
+          {!done.calendar
+            ? "Thank you. Your response has been recorded."
+            : done.calendar.status === "created"
+            ? "Your interview is confirmed. The Outlook invitation was created, and your confirmation email includes calendar-saving options."
+            : "Your response has been recorded. Your confirmation email includes calendar-saving options; recruiting can see that the connected Outlook invitation still needs attention."}
+        </p>
       ) : token && view ? (
         <CandidateAction view={view} send={send} disabled={disabled} />
       ) : null}
@@ -166,8 +205,9 @@ export default function WorkflowPanel({ client, workspaceId, token = "" }) {
         <>
           {!view.policy ? (
             <p className="wf-alert">
-              A client administrator needs to confirm the communication policy
-              and accountable owner before interview work begins.
+              Workspace setup is incomplete. A client administrator must confirm
+              the communication policy and accountable owner before interview actions begin.
+              This does not affect your sign-in.
             </p>
           ) : null}
           {view.jobs.some((j) => j.status === "queued") &&
@@ -223,14 +263,17 @@ export default function WorkflowPanel({ client, workspaceId, token = "" }) {
               ) : null}
             </article>
           ))}
+          {entry.caseId && !entryCase ? <p role="alert">This candidate action is unavailable or outside your current access. No decision has been recorded.</p> : null}
+          {staleEntry ? <div role="alert"><p>This email refers to an older version. Review the current candidate and recorded outcome before deciding.</p><button disabled={disabled} onClick={() => setEntryReviewed(true)}>Review current candidate</button></div> : null}
           <div className="wf-case-list">
-            {view.cases.map((c) => (
+            {view.cases.filter(c => !entry.caseId || c.id === entry.caseId).map((c) => (
               <CaseCard
                 key={`${c.id}:${c.stageIndex}`}
                 c={c}
                 send={send}
-                disabled={disabled}
+                disabled={disabled || staleEntry}
                 view={view}
+                entryAction={entry.action}
               />
             ))}
           </div>
@@ -412,13 +455,21 @@ function Setup({ view, send, disabled }) {
     [recruiter, setRecruiter] = useState(""),
     [ownerReason, setOwnerReason] = useState(""),
     [stages, setStages] = useState([
-      {
-        id: uid(),
-        name: "Hiring manager interview",
-        ownerId: "",
-        interviewerIds: [],
-      },
+      interviewStage({ name: "Hiring manager interview" }),
     ]);
+  useEffect(() => {
+    if (!req) return;
+    const configured = view.requisitions.find((item) => item.id === req);
+    if (configured) {
+      setManager(configured.managerId || "");
+      setRecruiter(configured.recruiterIds?.[0] || "");
+      setStages(configured.stages.map((stage) => interviewStage(stage)));
+      return;
+    }
+    setManager("");
+    setRecruiter("");
+    setStages([interviewStage({ name: "Hiring manager interview" })]);
+  }, [req, view.requisitions]);
   return (
     <details>
       <summary>Client policy and Interview Plans</summary>
@@ -507,6 +558,34 @@ function Setup({ view, send, disabled }) {
                   ))}
               </select>
             </Field>
+            <Field label="Default interview location or joining link (optional)">
+              <input
+                value={stage.location}
+                onChange={(e) =>
+                  setStages(
+                    stages.map((s, j) =>
+                      j === i ? { ...s, location: e.target.value } : s,
+                    ),
+                  )
+                }
+              />
+            </Field>
+            <Field label="Default preparation information (optional)">
+              <textarea
+                maxLength={2000}
+                value={stage.instructions}
+                onChange={(e) =>
+                  setStages(
+                    stages.map((s, j) =>
+                      j === i ? { ...s, instructions: e.target.value } : s,
+                    ),
+                  )
+                }
+              />
+            </Field>
+            <small>
+              WelcomeFlow reuses these details when a manager schedules this stage. The manager can review or edit them before sending.
+            </small>
             {stages.length > 1 ? (
               <button
                 type="button"
@@ -523,7 +602,7 @@ function Setup({ view, send, disabled }) {
           onClick={() =>
             setStages([
               ...stages,
-              { id: uid(), name: "", ownerId: "", interviewerIds: [] },
+              interviewStage(),
             ])
           }
         >
@@ -560,15 +639,15 @@ function Setup({ view, send, disabled }) {
     </details>
   );
 }
-function Enrollment({ view, send, disabled }) {
-  const [id, setId] = useState(""),
+function Enrollment({ view, send, disabled, candidateId = "" }) {
+  const [id, setId] = useState(candidateId),
     [zone, setZone] = useState(""),
     [reviewed, setReviewed] = useState(false),
     [contact, setContact] = useState(false);
   const c = view.catalog.candidates.find((x) => x.id === id);
   return (
     <details>
-      <summary>Start a reviewed candidate handoff</summary>
+      <summary>Send submission with manager actions</summary>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -640,14 +719,84 @@ function Enrollment({ view, send, disabled }) {
           Candidate email contact is permitted.
         </label>
         <button disabled={disabled || !c || !reviewed}>
-          Approve post-screen handoff
+          Send submission with manager actions
         </button>
       </form>
     </details>
   );
 }
-function CaseCard({ c, send, disabled, view }) {
+export function SubmissionWorkflowHandoff({client, workspaceId, candidateId}) {
+  const [view, setView] = useState(null), [error, setError] = useState(""), [busy, setBusy] = useState(false), [pending, setPending] = useState(null);
+  useEffect(() => {
+    let live = true;
+    workflowRequest({client, workspaceId}).then(r => {if (live) setView(r.view);}).catch(e => {if (live) setError(e.message);});
+    return () => {live = false;};
+  }, [client, workspaceId, candidateId]);
+  async function send(type, payload, retry = false) {
+    if (busy || (!retry && pending)) return;
+    const command = retry ? pending : {id: uid(), type, payload};
+    setPending(command); setBusy(true); setError("");
+    try {
+      const r = await workflowRequest({client, workspaceId, command});
+      setView(r.view); setPending(null);
+    } catch (e) {setError(e.message); if(e.definitive) setPending(null);}
+    finally {setBusy(false);}
+  }
+  const c = view?.cases.find(c => c.candidateId === candidateId);
+  const candidate = view?.catalog?.candidates.find(c => c.id === candidateId);
+  return <section className="wf-workflow" aria-label="Automatic manager submission">
+    <h3>Automatic manager submission</h3>
+    <p>Sends the reviewed packet with manager decision links. The recorded manager choice drives the interview workflow.</p>
+    {error ? <p role="alert">{error}</p> : null}
+    {pending && !busy ? <button onClick={() => send("", {}, true)}>Check and retry pending submission</button> : null}
+    {busy ? <p role="status">Recording the submission and checking email processing…</p> : null}
+    {c ? <><p role="status">Submission recorded. Current workflow: {c.status.replaceAll("_", " ")}.</p>
+      {view.jobs.filter(j => j.caseId === c.id && j.kind === "decision_request").map(j => <p key={j.id}>Manager email: {j.status.replaceAll("_", " ")}.</p>)}
+      <a href={`/workflow?workspace=${encodeURIComponent(workspaceId)}&case=${encodeURIComponent(c.id)}`}>Open this candidate's workflow</a></> : candidate ? <Enrollment key={candidateId} view={view} candidateId={candidateId} send={send} disabled={busy || Boolean(pending)} /> : view ? <p>The administrator must configure the active requisition's manager and Interview Plan before this saved packet can send an automatic decision request.</p> : !error ? <p>Checking the saved packet and assigned manager…</p> : null}
+  </section>;
+}
+function CaseCard({ c, send, disabled, view, entryAction = "" }) {
+  const decisionStatus = ["manager_decision", "feedback_due", "held"].includes(
+    c.status,
+  );
+  const schedulingStageIndex = decisionStatus
+    ? c.stageIndex + 1
+    : c.stageIndex;
+  const schedulingStage = c.stages[schedulingStageIndex];
+  const priorCaseStage = c.requisitionId
+    ? [...view.cases]
+        .reverse()
+        .filter(
+          (candidateCase) =>
+            candidateCase.id !== c.id &&
+            candidateCase.requisitionId === c.requisitionId,
+        )
+        .map(
+          (candidateCase) =>
+            candidateCase.stages[schedulingStageIndex] ||
+            candidateCase.stages.find(
+              (stage) => stage.name === schedulingStage?.name,
+            ),
+        )
+        .find((stage) => stage?.location || stage?.instructions)
+    : null;
+  const previousInterviewDetails = [...c.stages]
+    .slice(0, Math.max(0, schedulingStageIndex))
+    .reverse()
+    .find((stage) => stage.location || stage.instructions);
+  const savedLocation =
+    schedulingStage?.location ||
+    priorCaseStage?.location ||
+    previousInterviewDetails?.location ||
+    "";
+  const savedInstructions =
+    schedulingStage?.instructions ||
+    priorCaseStage?.instructions ||
+    previousInterviewDetails?.instructions ||
+    "";
   const [reason, setReason] = useState(""),
+    [declineOpen, setDeclineOpen] = useState(entryAction === "decline"),
+    [manualSchedule, setManualSchedule] = useState(entryAction === "proceed-times"),
     [comment, setComment] = useState(""),
     [contact, setContact] = useState({
       email: c.email || "",
@@ -656,13 +805,12 @@ function CaseCard({ c, send, disabled, view }) {
     }),
     [replacement, setReplacement] = useState(""),
     [feedback, setFeedback] = useState(""),
-    [location, setLocation] = useState(c.stages[c.stageIndex]?.location || ""),
-    [instructions, setInstructions] = useState(
-      c.stages[c.stageIndex]?.instructions || "",
+    [location, setLocation] = useState(savedLocation),
+    [instructions, setInstructions] = useState(savedInstructions),
+    [slots, setSlots] = useState(schedulingStage?.slots || []),
+    [schedulingTimezone, setSchedulingTimezone] = useState(
+      schedulingStage?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
     ),
-    [slotStart, setSlotStart] = useState(""),
-    [slotEnd, setSlotEnd] = useState(""),
-    [slots, setSlots] = useState([]),
     [evidence, setEvidence] = useState(""),
     [resolution, setResolution] = useState("");
   const stage = c.stages[c.stageIndex],
@@ -671,6 +819,7 @@ function CaseCard({ c, send, disabled, view }) {
   return (
     <article id={`wf-case-${c.id}`} className="wf-card">
       <h3>{c.name}</h3>
+      {entryAction ? <p>Review this candidate and confirm your choice below. Opening an email link does not record a decision.</p> : null}
       <p>
         <strong>{stage?.name || "Post-screen manager review"}</strong> ·{" "}
         {c.status.replaceAll("_", " ")}
@@ -696,18 +845,22 @@ function CaseCard({ c, send, disabled, view }) {
         <div className="wf-actions">
           <button
             disabled={disabled}
-            onClick={() => act("decision", { decision: "proceed" })}
+            onClick={() => act("decision", { decision: "proceed", schedulingMode: c.stageIndex === c.stages.length - 1 ? undefined : "calendar" })}
           >
             {c.stageIndex === c.stages.length - 1
               ? "Proceed toward offer handoff"
               : "Proceed"}
           </button>
+          {c.stageIndex < c.stages.length - 1 ? <button disabled={disabled} onClick={() => setManualSchedule(true)}>Proceed but select your time your way</button> : null}
+          {c.stageIndex < c.stages.length - 1 ? <small>Proceed uses the leadership calendar when connected. Manager-selected times let you offer days and times for the candidate to choose.</small> : null}
           <button
             disabled={disabled || c.status === "held"}
             onClick={() => act("decision", { decision: "hold" })}
           >
-            Hold
+            Hold for other candidate review
           </button>
+          <button disabled={disabled} onClick={() => setDeclineOpen(!declineOpen)}>Decline to proceed</button>
+          {declineOpen ? <div>
           <Field label="Decline reason">
             <select value={reason} onChange={(e) => setReason(e.target.value)}>
               <option value="">Choose a short reason</option>
@@ -729,16 +882,17 @@ function CaseCard({ c, send, disabled, view }) {
               act("decision", { decision: "decline", reason, comment })
             }
           >
-            Decline
+            Record decline and notify recruiter
           </button>
+          </div> : null}
           <small>
-            Hold sends an active-review note without a promised decision date.
+            Hold sends an active-review email. Candidate replies go to recruiting; no interview or decision date is promised.
           </small>
         </div>
       ) : null}
       {c.canDecide &&
-      ["slots_needed", "selection_pending"].includes(c.status) ? (
-        <details open={c.status === "slots_needed"}>
+      (["slots_needed", "selection_pending"].includes(c.status) || (manualSchedule && ["manager_decision", "feedback_due", "held"].includes(c.status) && c.stageIndex < c.stages.length - 1)) ? (
+        <details open={c.status === "slots_needed" || manualSchedule}>
           <summary>
             {c.status === "selection_pending"
               ? "Replace offered interview times"
@@ -747,7 +901,7 @@ function CaseCard({ c, send, disabled, view }) {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              act("offer_slots", { slots, instructions, location });
+              act(["manager_decision", "feedback_due", "held"].includes(c.status) ? "proceed_with_slots" : "offer_slots", { slots, instructions, location, timezone: schedulingTimezone });
             }}
           >
             <p>
@@ -773,57 +927,56 @@ function CaseCard({ c, send, disabled, view }) {
                 onChange={(e) => setInstructions(e.target.value)}
               />
             </Field>
-            <Field label="Slot start">
-              <input
-                type="datetime-local"
-                value={slotStart}
-                onChange={(e) => setSlotStart(e.target.value)}
-              />
-            </Field>
-            <Field label="Slot end">
-              <input
-                type="datetime-local"
-                value={slotEnd}
-                onChange={(e) => setSlotEnd(e.target.value)}
-              />
-            </Field>
-            <button
-              type="button"
-              disabled={!slotStart || !slotEnd || disabled}
-              onClick={() => {
-                setSlots([
-                  ...slots,
-                  {
-                    start: new Date(slotStart).toISOString(),
-                    end: new Date(slotEnd).toISOString(),
-                  },
-                ]);
-                setSlotStart("");
-                setSlotEnd("");
-              }}
-            >
-              Add time
-            </button>
-            {slots.map((s, i) => (
-              <p key={i}>
-                {new Date(s.start).toLocaleString()} –{" "}
-                {new Date(s.end).toLocaleTimeString()}{" "}
+            {savedLocation || savedInstructions ? (
+              <div className="wf-saved-details">
+                <strong>Saved Interview Plan details are available.</strong>
                 <button
                   type="button"
-                  onClick={() => setSlots(slots.filter((_, j) => j !== i))}
+                  disabled={disabled}
+                  onClick={() => {
+                    setLocation(savedLocation);
+                    setInstructions(savedInstructions);
+                  }}
                 >
-                  Remove
+                  Restore saved location and preparation
                 </button>
-              </p>
-            ))}
-            <button disabled={disabled || !slots.length}>
-              Send offered times
+              </div>
+            ) : null}
+            <AvailabilityPicker
+              initialSlots={schedulingStage?.slots || []}
+              initialTimezone={schedulingTimezone}
+              onChange={setSlots}
+              onTimezoneChange={setSchedulingTimezone}
+              disabled={disabled}
+            />
+            <button disabled={disabled || !slots.length || slots.length > MAX_INTERVIEW_SLOTS}>
+              {["manager_decision", "feedback_due", "held"].includes(c.status) ? "Proceed and send interview invitation" : "Send offered times"}
             </button>
           </form>
         </details>
       ) : null}
       {stage?.booking ? (
-        <p>Interview: {new Date(stage.booking.start).toLocaleString()}</p>
+        <>
+          <p>Interview: {new Date(stage.booking.start).toLocaleString()}</p>
+          <p role="status">
+            {stage.calendarSync?.status === "created"
+              ? "Calendar invitation created in the connected Outlook calendar."
+              : stage.calendarSync?.status === "unknown"
+                ? "Calendar result needs verification before another invitation is created."
+                : "The interview is saved, but the connected Outlook invitation still needs attention."}
+          </p>
+          {(c.canDecide || c.canRecruit) && stage.calendarSync?.status !== "created" ? (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => act("sync_calendar")}
+            >
+              {stage.calendarSync?.status === "unknown"
+                ? "Check connected Outlook invitation"
+                : "Create Outlook calendar invitation"}
+            </button>
+          ) : null}
+        </>
       ) : null}
       {c.canParticipate && c.status === "scheduled" ? (
         <button
@@ -875,6 +1028,13 @@ function CaseCard({ c, send, disabled, view }) {
             ))}
         </details>
       ) : null}
+      {c.canRecruit && c.status === "declined" ? <section aria-label="Declined candidate follow-up">
+        <h4>Manager declined to proceed</h4>
+        <p>Reason: {c.lastDecision?.reason || c.finalReason}</p>
+        {c.lastDecision?.comment ? <p>Manager comment: {c.lastDecision.comment}</p> : null}
+        <p role="status">Disposition recorded in WelcomeFlow. Update the company ATS using the note below. WelcomeFlow does not send candidate disposition emails.</p>
+        <details><summary>ATS note to copy</summary><p className="wf-prewrap">{`Candidate: ${c.name}\nOutcome: Manager declined to proceed\nReason: ${c.lastDecision?.reason || c.finalReason}\nManager comment: ${c.lastDecision?.comment || "None"}\nRecorded: ${c.lastDecision?.recordedAt || c.finalAt}\nCandidate follow-up: ${c.declineFollowUp?.channel || "Not assigned"}`}</p></details>
+      </section> : null}
       {c.status === "offer_ready" ? (
         <p role="status">
           Final required interview decision recorded. Ready for the configured
@@ -1032,6 +1192,42 @@ function CaseCard({ c, send, disabled, view }) {
           )}
         </details>
       ) : null}
+      {view.jobs
+        .filter(
+          (j) =>
+            j.caseId === c.id &&
+            j.status === "queued" &&
+            Date.parse(j.dueAt) <= Date.now() &&
+            (c.canRecruit || j.recipientId === view.actor.userId),
+        )
+        .map((j) => {
+          const waitingForWindow = j.deliveryWindow?.open === false;
+          return (
+            <div key={j.id} className="wf-alert">
+              <strong>
+                {j.kind.replaceAll("_", " ")} is {waitingForWindow ? "queued for approved sending hours" : "ready to send"}
+              </strong>
+              <p>
+                {waitingForWindow
+                  ? `This approved email will become eligible on ${deliveryWindowLabel(j.deliveryWindow)}. It will send automatically; processing now cannot bypass the configured delivery window.`
+                  : "This approved email is still queued. Processing it uses the same durable job and cannot resend after provider acceptance."}
+              </p>
+              {!waitingForWindow ? (
+                <button
+                  disabled={disabled}
+                  onClick={() =>
+                    send("process_queued_delivery", {
+                      caseId: c.id,
+                      jobId: j.id,
+                    })
+                  }
+                >
+                  Process pending email
+                </button>
+              ) : null}
+            </div>
+          );
+        })}
       {c.canRecruit
         ? view.jobs
             .filter(

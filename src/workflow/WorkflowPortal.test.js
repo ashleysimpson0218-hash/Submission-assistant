@@ -1,0 +1,74 @@
+import React from 'react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import WorkflowPortal from './WorkflowPortal';
+const mockClient = {auth:{getSession:jest.fn(),onAuthStateChange:jest.fn(),resetPasswordForEmail:jest.fn(),updateUser:jest.fn(),signInWithPassword:jest.fn(),signOut:jest.fn()}};
+jest.mock('../runtimeConfig',()=>({readRuntimeConfig:()=>({workspaceId:'test'})}));
+jest.mock('../supabaseRuntimeClient',()=>({getRuntimeSupabaseClient:()=>mockClient}));
+jest.mock('./WorkflowPanel',()=>()=> <div>Workflow content</div>);
+jest.mock('./CalendarConnectionPanel',()=>()=> <div>Outlook account connection</div>);
+beforeEach(()=>{jest.clearAllMocks();process.env.REACT_APP_WELCOMEFLOW_WORKFLOW_ENABLED='true';window.location.hash='';mockClient.auth.onAuthStateChange.mockReturnValue({data:{subscription:{unsubscribe:jest.fn()}}});mockClient.auth.getSession.mockResolvedValue({data:{session:null}});mockClient.auth.updateUser.mockResolvedValue({});mockClient.auth.resetPasswordForEmail.mockResolvedValue({});mockClient.auth.signOut.mockResolvedValue({});});
+afterEach(()=>{window.location.hash='';});
+test('setup email requires an explicit click and uses current workflow origin',async()=>{
+  render(<WorkflowPortal/>);expect(mockClient.auth.resetPasswordForEmail).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText('Email'),{target:{value:'owner@example.test'}});
+  fireEvent.click(screen.getByText('Set or reset password'));
+  await waitFor(()=>expect(mockClient.auth.resetPasswordForEmail).toHaveBeenCalledWith('owner@example.test',{redirectTo:`${window.location.origin}/workflow?setup=password`}));
+});
+test('invite allows password setup only with an authenticated invite session',async()=>{
+  window.location.hash='#type=invite';mockClient.auth.getSession.mockResolvedValue({data:{session:null}});
+  render(<WorkflowPortal/>);fireEvent.change(screen.getByLabelText('New password'),{target:{value:'synthetic-test-password'}});fireEvent.change(screen.getByLabelText('Confirm new password'),{target:{value:'synthetic-test-password'}});fireEvent.click(screen.getByText('Save password'));
+  expect(await screen.findByText('Open your WelcomeFlow setup email link first.')).toBeInTheDocument();expect(mockClient.auth.updateUser).not.toHaveBeenCalled();
+});
+test('verified invite session can set a password without signup or membership changes',async()=>{
+  window.location.hash='#type=invite';mockClient.auth.getSession.mockResolvedValue({data:{session:{user:{email:'owner@example.test'}}}});render(<WorkflowPortal/>);
+  fireEvent.change(screen.getByLabelText('New password'),{target:{value:'synthetic-test-password'}});fireEvent.change(screen.getByLabelText('Confirm new password'),{target:{value:'synthetic-test-password'}});fireEvent.click(screen.getByText('Save password'));
+  await waitFor(()=>expect(mockClient.auth.updateUser).toHaveBeenCalledWith({password:'synthetic-test-password'}));
+  expect(await screen.findByText('Your password has been updated')).toBeInTheDocument();
+  expect(screen.queryByText('Workflow content')).not.toBeInTheDocument();
+});
+
+test('password confirmation must match before saving',async()=>{
+  window.location.hash='#type=invite';mockClient.auth.getSession.mockResolvedValue({data:{session:{}}});render(<WorkflowPortal/>);
+  fireEvent.change(screen.getByLabelText('New password'),{target:{value:'synthetic-test-password'}});fireEvent.change(screen.getByLabelText('Confirm new password'),{target:{value:'different-test-password'}});fireEvent.click(screen.getByText('Save password'));
+  expect(await screen.findByText('The passwords do not match. Re-enter both passwords.')).toBeInTheDocument();
+  expect(mockClient.auth.updateUser).not.toHaveBeenCalled();
+});
+
+test('reused password shows a specific correction instead of requesting another link',async()=>{
+  window.location.hash='#type=recovery';mockClient.auth.getSession.mockResolvedValue({data:{session:{}}});
+  mockClient.auth.updateUser.mockResolvedValue({error:{message:'New password should be different from the old password.'}});
+  render(<WorkflowPortal/>);
+  fireEvent.change(screen.getByLabelText('New password'),{target:{value:'synthetic-test-password'}});fireEvent.change(screen.getByLabelText('Confirm new password'),{target:{value:'synthetic-test-password'}});fireEvent.click(screen.getByText('Save password'));
+  expect(await screen.findByText('Choose a new password you have not used for this account before.')).toBeInTheDocument();
+  expect(screen.queryByText(/Request a new setup link/)).not.toBeInTheDocument();
+});
+
+test('interview work stays hidden until a user is authenticated',async()=>{
+  render(<WorkflowPortal/>);
+  await waitFor(()=>expect(mockClient.auth.getSession).toHaveBeenCalled());
+  expect(screen.queryByText('Workflow content')).not.toBeInTheDocument();
+});
+
+test('signed-in account owns calendar connection outside interview work',async()=>{
+  const session={user:{email:'owner@example.test'}};
+  mockClient.auth.getSession.mockResolvedValue({data:{session}});
+  render(<WorkflowPortal/>);
+  expect(await screen.findByText('Account & calendar')).toBeInTheDocument();
+  expect(screen.getByText('Signed in as owner@example.test.')).toBeInTheDocument();
+  expect(screen.getByText('Outlook account connection')).toBeInTheDocument();
+  expect(screen.getByText('Workflow content')).toBeInTheDocument();
+  expect(screen.queryByText('Sign in')).not.toBeInTheDocument();
+});
+
+test('email rate limit never reports a setup email as requested',async()=>{
+  mockClient.auth.resetPasswordForEmail.mockResolvedValue({error:{code:'over_email_send_rate_limit',status:429}});
+  render(<WorkflowPortal/>);fireEvent.change(screen.getByLabelText('Email'),{target:{value:'owner@example.test'}});fireEvent.click(screen.getByText('Set or reset password'));
+  expect(await screen.findByText(/No setup email was sent/)).toBeInTheDocument();
+  expect(screen.queryByText(/a setup email has been requested/)).not.toBeInTheDocument();
+});
+test('explicit password destination survives recovery event already consumed',()=>{
+  window.history.replaceState({},'', '/workflow?setup=password');
+  render(<WorkflowPortal/>);expect(screen.getByLabelText('New password')).toBeInTheDocument();
+  window.history.replaceState({},'', '/workflow');
+});
+

@@ -61,6 +61,68 @@ function withinWindow(now, zone, policy) {
     p.minute < policy.sendEnd
   );
 }
+function nextWindowStart(now, zone, policy) {
+  if (!validTime(now) || !zoneValid(zone) || !policy?.workingDays?.length)
+    return null;
+  if (withinWindow(now, zone, policy)) return new Date(now).toISOString();
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(new Date(now))
+      .map((part) => [part.type, part.value]),
+  );
+  const localDate = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+  );
+  const currentMinute = Number(parts.hour) * 60 + Number(parts.minute);
+  for (let offset = 0; offset < 8; offset += 1) {
+    const day = new Date(localDate + offset * 86400000);
+    if (!policy.workingDays.includes(day.getUTCDay())) continue;
+    if (offset === 0 && currentMinute >= policy.sendStart) continue;
+    const desired = Date.UTC(
+      day.getUTCFullYear(),
+      day.getUTCMonth(),
+      day.getUTCDate(),
+      Math.floor(policy.sendStart / 60),
+      policy.sendStart % 60,
+    );
+    let guess = desired;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const displayed = Object.fromEntries(
+        new Intl.DateTimeFormat("en-US", {
+          timeZone: zone,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          hourCycle: "h23",
+        })
+          .formatToParts(new Date(guess))
+          .map((part) => [part.type, part.value]),
+      );
+      const wall = Date.UTC(
+        Number(displayed.year),
+        Number(displayed.month) - 1,
+        Number(displayed.day),
+        Number(displayed.hour),
+        Number(displayed.minute),
+      );
+      guess += desired - wall;
+    }
+    return new Date(guess).toISOString();
+  }
+  return null;
+}
 function addWorkingDays(now, days, policy) {
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone: policy.timezone,
@@ -151,7 +213,7 @@ function canReadCase(actor, req, c) {
 function currentOwner(c, req) {
   return c.stageIndex < 0 ? req.managerId : c.stages[c.stageIndex]?.ownerId;
 }
-function stateView(state, actor, members = []) {
+function stateView(state, actor, members = [], now = new Date().toISOString()) {
   const requisitions = state.requisitions.filter(
     (r) => canRecruit(actor, r) || canManage(actor, r),
   );
@@ -200,12 +262,30 @@ function stateView(state, actor, members = []) {
         (actor.role === "recruiter" && reqIds.has(e.requisitionId))),
   );
   const allowedCases = new Set(cases.map((c) => c.id));
-  const jobs = state.jobs.filter(
-    (j) =>
-      actor.role === "admin" ||
-      (actor.role === "recruiter" && allowedCases.has(j.caseId)) ||
-      (j.recipientId === actor.userId && reqIds.has(j.requisitionId)),
-  );
+  const jobs = state.jobs
+    .filter(
+      (j) =>
+        actor.role === "admin" ||
+        (actor.role === "recruiter" && allowedCases.has(j.caseId)) ||
+        (j.recipientId === actor.userId && reqIds.has(j.requisitionId)),
+    )
+    .map((job) => {
+      if (job.status !== "queued" || !state.policy) return job;
+      const workflowCase = state.cases.find((item) => item.id === job.caseId);
+      const recipient =
+        job.recipientId === "candidate"
+          ? workflowCase
+          : member(members, job.recipientId);
+      if (!zoneValid(recipient?.timezone)) return job;
+      return {
+        ...job,
+        deliveryWindow: {
+          open: withinWindow(now, recipient.timezone, state.policy),
+          nextSendAt: nextWindowStart(now, recipient.timezone, state.policy),
+          timezone: recipient.timezone,
+        },
+      };
+    });
   return {
     revision: state.revision,
     lastWorkerAt: state.lastWorkerAt || null,
@@ -248,6 +328,15 @@ function stateView(state, actor, members = []) {
   };
 }
 function applyCommand(input, command, context) {
+  if (command.type === "proceed_with_slots") {
+    const p = command.payload || {};
+    const first = applyCommand(input, {...command, type: "decision", payload: {...p, decision: "proceed", schedulingMode: "manager_times"}}, context);
+    const c = first.state.cases.find(c => c.id === p.caseId);
+    need(c?.status === "slots_needed", "SCHEDULING_NOT_REQUIRED", "The final stage proceeds toward offer handoff, not another interview.", 409);
+    const second = applyCommand(first.state, {...command, type: "offer_slots", payload: {...p, expectedVersion: c.version}}, context);
+    second.state.revision = input.revision + 1;
+    return {state: second.state, events: [...first.events, ...second.events]};
+  }
   const state = clone(input),
     { actor, members = [], now } = context;
   need(
@@ -354,7 +443,32 @@ function applyCommand(input, command, context) {
         j.completedAt = now;
       }
     });
-  if (command.type === "configure_policy") {
+  if (command.type === "process_queued_delivery") {
+    const j = state.jobs.find((item) => item.id === p.jobId),
+      r = state.requisitions.find((item) => item.id === j?.requisitionId),
+      c = state.cases.find((item) => item.id === j?.caseId);
+    need(
+      j && r && c && p.caseId === c.id,
+      "INVALID_JOB",
+      "The pending email was not found.",
+      404,
+    );
+    need(
+      canRecruit(actor, r) || j.recipientId === actor.userId,
+      "FORBIDDEN",
+      "This pending email is outside your authorized scope.",
+      403,
+    );
+    need(
+      j.status === "queued" && j.dueAt <= now,
+      "STALE_JOB",
+      "This email is no longer waiting to be processed.",
+    );
+    event("communication.processing_requested", r.id, c.id, {
+      jobId: j.id,
+      kind: j.kind,
+    });
+  } else if (command.type === "configure_policy") {
     need(
       actor.role === "admin",
       "FORBIDDEN",
@@ -478,6 +592,8 @@ function applyCommand(input, command, context) {
         name: clean(s.name, 120),
         ownerId: s.ownerId,
         interviewerIds,
+        location: clean(s.location, 1000),
+        instructions: clean(s.instructions, 2000),
         order: i,
       };
     });
@@ -693,6 +809,20 @@ function applyCommand(input, command, context) {
           );
         }
       }
+      if (
+        c.status === "held" &&
+        c.lastDecision?.recordedAt &&
+        now >= addWorkingDays(c.lastDecision.recordedAt, state.policy.reminderDays, state.policy)
+      )
+        job(
+          "decision_reminder",
+          c,
+          r,
+          currentOwner(c, r),
+          c.stageIndex,
+          now,
+          c.lastDecision.recordedAt,
+        );
     });
     state.jobs
       .filter((j) => j.status === "sending" && j.leaseUntil < now)
@@ -905,6 +1035,60 @@ function applyCommand(input, command, context) {
       outcome: p.outcome,
       evidence: clean(p.evidence),
     });
+  } else if (command.type === "record_calendar_sync") {
+    need(
+      actor.role === "system",
+      "FORBIDDEN",
+      "Only the protected calendar worker may record calendar results.",
+      403,
+    );
+    const c = state.cases.find((x) => x.id === p.caseId),
+      r = state.requisitions.find((x) => x.id === c?.requisitionId),
+      s = c?.stages[p.stageIndex];
+    need(c && r && s?.booking && s.calendarSync, "CALENDAR_BOOKING_REQUIRED", "The saved interview booking was not found.", 404);
+    need(
+      s.calendarSync.bookingId === p.bookingId,
+      "CALENDAR_BOOKING_CHANGED",
+      "The interview booking changed before calendar synchronization completed.",
+    );
+    need(
+      ["created", "failed", "unknown"].includes(p.status),
+      "INVALID_CALENDAR_RESULT",
+      "Choose a supported calendar result.",
+      400,
+    );
+    if (s.calendarSync.status === "created") {
+      need(
+        p.status === "created" && (!p.eventId || p.eventId === s.calendarSync.eventId),
+        "CALENDAR_ALREADY_CREATED",
+        "The calendar invitation is already recorded.",
+      );
+    } else {
+      s.calendarSync.status = p.status;
+      s.calendarSync.updatedAt = now;
+      s.calendarSync.provider = clean(p.provider, 40);
+      s.calendarSync.eventId = clean(p.eventId, 500);
+      s.calendarSync.code = clean(p.code, 100);
+    }
+    if (p.status === "created") {
+      resolveFor(c.id, ["CALENDAR_BOOKING_REQUIRED"]);
+    } else {
+      exception(
+        "CALENDAR_BOOKING_REQUIRED",
+        c,
+        r,
+        p.status === "unknown"
+          ? "The Outlook result is uncertain. Check the connected calendar before retrying."
+          : "The interview is saved, but its Outlook invitation still needs attention.",
+      );
+    }
+    event("calendar.booking_synced", r.id, c.id, {
+      stageIndex: p.stageIndex,
+      status: p.status,
+      provider: s.calendarSync.provider,
+      eventId: s.calendarSync.eventId,
+      code: s.calendarSync.code,
+    });
   } else {
     const c = state.cases.find((x) => x.id === p.caseId),
       r = state.requisitions.find((x) => x.id === c?.requisitionId);
@@ -957,6 +1141,8 @@ function applyCommand(input, command, context) {
           "INTERVIEW_INCOMPLETE",
           "Confirm that the interview occurred before recording its decision.",
         );
+      need(p.decision !== "proceed" || p.schedulingMode !== "calendar" || c.stageIndex + 1 === c.stages.length,
+        "CALENDAR_CONNECTION_REQUIRED", "Leadership calendar booking is not connected yet. Use manager-selected interview times, or ask your administrator to connect the leadership calendar.", 409);
       invalidate(c);
       resolveFor(c.id, ["DECISION_OVERDUE"]);
       if (p.decision === "hold") {
@@ -979,6 +1165,22 @@ function applyCommand(input, command, context) {
         c.status = "declined";
         c.finalReason = clean(p.reason);
         c.finalAt = now;
+        c.disposition = {
+          status: "not_selected",
+          reason: clean(p.reason),
+          comment: clean(p.comment),
+          recordedAt: now,
+          recordedBy: actor.userId,
+          atsUpdateRequired: true,
+        };
+        c.declineFollowUp = {
+          channel: "ats",
+          actorId: actor.userId,
+          recordedAt: now,
+          automatic: true,
+        };
+        exception("ATS_DECLINE_FOLLOW_UP_REQUIRED", c, r, "WelcomeFlow recorded the manager disposition. Recruiting must update the company ATS; no candidate disposition email was generated.");
+        job("recruiter_decline", c, r, c.recruiterId, c.stageIndex, now, String(c.version));
       } else {
         if (s) {
           s.status = "completed";
@@ -1015,6 +1217,14 @@ function applyCommand(input, command, context) {
         reason: clean(p.reason),
         comment: clean(p.comment),
       });
+    } else if (command.type === "decline_follow_up") {
+      need(canRecruit(actor, r) && c.status === "declined", "FORBIDDEN", "Only recruiting can choose follow-up for a declined candidate.", 403);
+      need(p.channel === "ats", "INVALID_CHANNEL", "Candidate disposition communication stays in the company ATS; WelcomeFlow does not send it.", 400);
+      need(!c.declineFollowUp, "FOLLOW_UP_ALREADY_CHOSEN", "Candidate follow-up has already been assigned. Check the recorded delivery before choosing again.");
+      c.declineFollowUp = {channel: p.channel, actorId: actor.userId, recordedAt: now};
+      resolveFor(c.id, ["DECLINE_FOLLOW_UP_REQUIRED"]);
+      exception("ATS_DECLINE_FOLLOW_UP_REQUIRED", c, r, "Copy the recorded disposition note into the company ATS. No candidate disposition email was generated.");
+      event("decline.follow_up_assigned", r.id, c.id, {channel: p.channel});
     } else if (command.type === "offer_slots") {
       need(
         isOwner && ["slots_needed", "selection_pending"].includes(c.status),
@@ -1023,7 +1233,7 @@ function applyCommand(input, command, context) {
         403,
       );
       need(
-        Array.isArray(p.slots) && p.slots.length > 0 && p.slots.length <= 10,
+        Array.isArray(p.slots) && p.slots.length > 0 && p.slots.length <= 200,
         "INVALID_SLOTS",
         "Provide one or more interview slots.",
         400,
@@ -1034,8 +1244,15 @@ function applyCommand(input, command, context) {
         "Provide joining details and preparation information before offering interview times.",
         400,
       );
+      need(
+        !p.timezone || zoneValid(p.timezone),
+        "INVALID_TIMEZONE",
+        "Choose a valid interview timezone.",
+        400,
+      );
       s.location = clean(p.location, 1000);
       s.instructions = clean(p.instructions, 2000);
+      s.timezone = clean(p.timezone, 100) || state.policy.timezone;
       s.slots = p.slots.map((v, i) => {
         need(
           validTime(v.start) &&
@@ -1111,6 +1328,15 @@ function applyCommand(input, command, context) {
         "That slot is reserved. Choose another offered time.",
       );
       s.booking = slot;
+      s.calendarSync = {
+        bookingId: `${c.id}:${s.id}:${c.version}`,
+        status: "pending",
+        requestedAt: now,
+        updatedAt: now,
+        provider: "",
+        eventId: "",
+        code: "",
+      };
       s.status = "scheduled";
       c.status = "scheduled";
       invalidate(c);
@@ -1124,6 +1350,13 @@ function applyCommand(input, command, context) {
       s.bookedAt = now;
       s.communicationPolicyVersion = state.policy.version;
       job("confirmation", c, r, "candidate");
+      job(
+        "facility_booking_confirmation",
+        c,
+        r,
+        s.ownerId,
+        c.stageIndex,
+      );
       job(
         "manager_interview",
         c,
@@ -1167,6 +1400,38 @@ function applyCommand(input, command, context) {
         stageIndex: c.stageIndex,
         start: slot.start,
         end: slot.end,
+      });
+    } else if (command.type === "sync_calendar") {
+      need(
+        s?.booking && c.status === "scheduled" && (isOwner || canRecruit(actor, r)),
+        "FORBIDDEN",
+        "Only the stage owner or recruiting can synchronize this interview calendar.",
+        403,
+      );
+      need(
+        s.calendarSync?.status !== "created",
+        "CALENDAR_ALREADY_CREATED",
+        "The Outlook calendar invitation is already recorded.",
+      );
+      if (!s.calendarSync) {
+        s.calendarSync = {
+          bookingId: `${c.id}:${s.id}:${c.version}`,
+          status: "pending",
+          requestedAt: now,
+          updatedAt: now,
+          provider: "",
+          eventId: "",
+          code: "",
+        };
+      } else if (s.calendarSync.status !== "unknown") {
+        s.calendarSync.status = "pending";
+        s.calendarSync.updatedAt = now;
+        s.calendarSync.code = "";
+      }
+      event("calendar.booking_sync_requested", r.id, c.id, {
+        stageIndex: c.stageIndex,
+        bookingId: s.calendarSync.bookingId,
+        reconciliationOnly: s.calendarSync.status === "unknown",
       });
     } else if (command.type === "complete_interview") {
       need(
@@ -1475,6 +1740,7 @@ module.exports = {
   canReadCase,
   currentOwner,
   withinWindow,
+  nextWindowStart,
   zoneValid,
   addWorkingDays,
   localParts,

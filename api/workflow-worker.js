@@ -9,7 +9,8 @@ const {
   deliveryGroups,
   buildMessage,
 } = require("../server/workflow/communications");
-const { need } = require("../src/workflow/engine");
+const { need, isId } = require("../src/workflow/engine");
+const INTERNAL_INVOCATION = Symbol("welcomeflow-internal-worker");
 function authorized(req) {
   const expected = process.env.WELCOMEFLOW_WORKFLOW_WORKER_SECRET,
     provided = String(req.headers?.authorization || "").replace(/^Bearer /, "");
@@ -34,7 +35,7 @@ function allowedRecipient(email) {
     )
   );
 }
-module.exports = async function handler(req, res) {
+async function handler(req, res) {
   const send = (status, body) => {
     res.statusCode = status;
     res.setHeader("Content-Type", "application/json");
@@ -44,7 +45,7 @@ module.exports = async function handler(req, res) {
   try {
     need(req.method === "POST", "METHOD", "Use POST.", 405);
     need(
-      authorized(req),
+      req[INTERNAL_INVOCATION] === true || authorized(req),
       "FORBIDDEN",
       "Worker authorization is required.",
       403,
@@ -75,6 +76,10 @@ module.exports = async function handler(req, res) {
           SYSTEM,
         );
     const confirmationCaseId = req.body?.confirmationCaseId;
+    const requestedCaseId = req.body?.caseId;
+    const requestedJobId = req.body?.jobId;
+    need(!Object.prototype.hasOwnProperty.call(req.body || {}, "caseId") || isId(requestedCaseId), "CASE_REQUIRED", "A candidate case is required for targeted delivery.", 400);
+    need(!Object.prototype.hasOwnProperty.call(req.body || {}, "jobId") || isId(requestedJobId), "JOB_REQUIRED", "A pending email is required for targeted delivery.", 400);
     if (!confirmationCaseId) await run("tick", {});
     // Timers and recovery are operational even when outbound email is deliberately disabled.
     if (
@@ -86,9 +91,10 @@ module.exports = async function handler(req, res) {
     need(
       /^https:\/\/[^/]+$/.test(origin || "") &&
         process.env.RESEND_API_KEY &&
-        process.env.RESEND_FROM_EMAIL,
+        process.env.RESEND_FROM_EMAIL &&
+        process.env.WELCOMEFLOW_CANDIDATE_LINK_SECRET?.length >= 32,
       "DELIVERY_UNCONFIGURED",
-      "Email and secure action origin must be configured.",
+      "Email, secure action origin, and link signing must be configured.",
       503,
     );
     let processed = 0;
@@ -99,6 +105,8 @@ module.exports = async function handler(req, res) {
           .filter(
             (j) =>
               j.status === "provider_accepted" &&
+              (!requestedCaseId || j.caseId === requestedCaseId) &&
+              (!requestedJobId || j.id === requestedJobId) &&
               j.providerId &&
               (!j.providerCheckedAt ||
                 Date.now() - Date.parse(j.providerCheckedAt) > 5 * 60000),
@@ -143,7 +151,9 @@ module.exports = async function handler(req, res) {
           (x) =>
             x.status === "queued" &&
             x.dueAt <= now &&
-            (!confirmationCaseId || x.caseId === confirmationCaseId),
+            (!confirmationCaseId || x.caseId === confirmationCaseId) &&
+            (!requestedCaseId || x.caseId === requestedCaseId) &&
+            (!requestedJobId || x.id === requestedJobId),
         )
         .slice(0, 50)) {
         const check = eligible(j, snap.state, snap.members, now);
@@ -155,7 +165,7 @@ module.exports = async function handler(req, res) {
           });
       }
       snap = await snapshot(client, workspaceId);
-      const group = deliveryGroups(snap.state, snap.members, now).find(
+      const group = deliveryGroups(snap.state, snap.members, now).map(g => ({...g, jobs: g.jobs.filter(j => (!requestedCaseId || j.caseId === requestedCaseId) && (!requestedJobId || j.id === requestedJobId))})).filter(g => g.jobs.length).find(
         (g) =>
           !confirmationCaseId ||
           g.jobs.some(
@@ -190,7 +200,7 @@ module.exports = async function handler(req, res) {
         });
         continue;
       }
-      if (!message || !allowedRecipient(message.to)) {
+      if (!message || !allowedRecipient(message.to) || (message.replyTo && !allowedRecipient(message.replyTo))) {
         await run("record_delivery", {
           jobIds: group.jobs.map((j) => j.id),
           leaseId,
@@ -217,6 +227,9 @@ module.exports = async function handler(req, res) {
             to: [message.to],
             subject: message.subject,
             text: message.text,
+            html: message.html,
+            ...(message.replyTo ? {reply_to: message.replyTo} : {}),
+            ...(message.attachments ? {attachments: message.attachments} : {}),
           }),
         });
         const data = await response.json().catch(() => ({}));
@@ -253,4 +266,27 @@ module.exports = async function handler(req, res) {
         : "Worker paused. Pending actions remain durable; sending leases require reconciliation.",
     });
   }
+}
+
+handler.runInternal = async function runInternal(body) {
+  let responseBody;
+  const response = {
+    statusCode: 0,
+    setHeader() {},
+    end(value) {
+      responseBody = JSON.parse(value);
+    },
+  };
+  await handler(
+    {
+      method: "POST",
+      headers: {},
+      body,
+      [INTERNAL_INVOCATION]: true,
+    },
+    response,
+  );
+  return { status: response.statusCode, ...responseBody };
 };
+
+module.exports = handler;
