@@ -1035,6 +1035,60 @@ function applyCommand(input, command, context) {
       outcome: p.outcome,
       evidence: clean(p.evidence),
     });
+  } else if (command.type === "record_calendar_sync") {
+    need(
+      actor.role === "system",
+      "FORBIDDEN",
+      "Only the protected calendar worker may record calendar results.",
+      403,
+    );
+    const c = state.cases.find((x) => x.id === p.caseId),
+      r = state.requisitions.find((x) => x.id === c?.requisitionId),
+      s = c?.stages[p.stageIndex];
+    need(c && r && s?.booking && s.calendarSync, "CALENDAR_BOOKING_REQUIRED", "The saved interview booking was not found.", 404);
+    need(
+      s.calendarSync.bookingId === p.bookingId,
+      "CALENDAR_BOOKING_CHANGED",
+      "The interview booking changed before calendar synchronization completed.",
+    );
+    need(
+      ["created", "failed", "unknown"].includes(p.status),
+      "INVALID_CALENDAR_RESULT",
+      "Choose a supported calendar result.",
+      400,
+    );
+    if (s.calendarSync.status === "created") {
+      need(
+        p.status === "created" && (!p.eventId || p.eventId === s.calendarSync.eventId),
+        "CALENDAR_ALREADY_CREATED",
+        "The calendar invitation is already recorded.",
+      );
+    } else {
+      s.calendarSync.status = p.status;
+      s.calendarSync.updatedAt = now;
+      s.calendarSync.provider = clean(p.provider, 40);
+      s.calendarSync.eventId = clean(p.eventId, 500);
+      s.calendarSync.code = clean(p.code, 100);
+    }
+    if (p.status === "created") {
+      resolveFor(c.id, ["CALENDAR_BOOKING_REQUIRED"]);
+    } else {
+      exception(
+        "CALENDAR_BOOKING_REQUIRED",
+        c,
+        r,
+        p.status === "unknown"
+          ? "The Outlook result is uncertain. Check the connected calendar before retrying."
+          : "The interview is saved, but its Outlook invitation still needs attention.",
+      );
+    }
+    event("calendar.booking_synced", r.id, c.id, {
+      stageIndex: p.stageIndex,
+      status: p.status,
+      provider: s.calendarSync.provider,
+      eventId: s.calendarSync.eventId,
+      code: s.calendarSync.code,
+    });
   } else {
     const c = state.cases.find((x) => x.id === p.caseId),
       r = state.requisitions.find((x) => x.id === c?.requisitionId);
@@ -1274,6 +1328,15 @@ function applyCommand(input, command, context) {
         "That slot is reserved. Choose another offered time.",
       );
       s.booking = slot;
+      s.calendarSync = {
+        bookingId: `${c.id}:${s.id}:${c.version}`,
+        status: "pending",
+        requestedAt: now,
+        updatedAt: now,
+        provider: "",
+        eventId: "",
+        code: "",
+      };
       s.status = "scheduled";
       c.status = "scheduled";
       invalidate(c);
@@ -1337,6 +1400,38 @@ function applyCommand(input, command, context) {
         stageIndex: c.stageIndex,
         start: slot.start,
         end: slot.end,
+      });
+    } else if (command.type === "sync_calendar") {
+      need(
+        s?.booking && c.status === "scheduled" && (isOwner || canRecruit(actor, r)),
+        "FORBIDDEN",
+        "Only the stage owner or recruiting can synchronize this interview calendar.",
+        403,
+      );
+      need(
+        s.calendarSync?.status !== "created",
+        "CALENDAR_ALREADY_CREATED",
+        "The Outlook calendar invitation is already recorded.",
+      );
+      if (!s.calendarSync) {
+        s.calendarSync = {
+          bookingId: `${c.id}:${s.id}:${c.version}`,
+          status: "pending",
+          requestedAt: now,
+          updatedAt: now,
+          provider: "",
+          eventId: "",
+          code: "",
+        };
+      } else if (s.calendarSync.status !== "unknown") {
+        s.calendarSync.status = "pending";
+        s.calendarSync.updatedAt = now;
+        s.calendarSync.code = "";
+      }
+      event("calendar.booking_sync_requested", r.id, c.id, {
+        stageIndex: c.stageIndex,
+        bookingId: s.calendarSync.bookingId,
+        reconciliationOnly: s.calendarSync.status === "unknown",
       });
     } else if (command.type === "complete_interview") {
       need(

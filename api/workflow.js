@@ -7,6 +7,7 @@ const {
   serviceSupabaseClient,
 } = require("../server/welcomeflowApiSecurity");
 const { snapshot, execute, view } = require("../server/workflow/store");
+const { syncInterviewCalendar } = require("../server/workflow/calendarBooking");
 const { verifyCapability } = require("../server/workflow/capabilities");
 const { need, isId } = require("../src/workflow/engine");
 const USER_COMMANDS = new Set([
@@ -19,6 +20,7 @@ const USER_COMMANDS = new Set([
   "decline_follow_up",
   "proceed_with_slots",
   "offer_slots",
+  "sync_calendar",
   "complete_interview",
   "feedback",
   "withdraw",
@@ -198,6 +200,14 @@ module.exports = async function handler(req, res) {
           403,
         );
       const result = await execute(client, workspaceId, cmd, actor);
+      let calendarSync = null;
+      if (["book", "sync_calendar"].includes(cmd.type)) {
+        calendarSync = await syncInterviewCalendar({
+          client,
+          workspaceId,
+          caseId: cmd.payload.caseId,
+        });
+      }
       if (["book", "handoff", "decision", "offer_slots", "decline_follow_up", "proceed_with_slots", "process_queued_delivery"].includes(cmd.type)) {
         // The reservation and outbox commit first. A transport failure cannot undo the booking.
         // Replayed booking requests use the same durable outbox; accepted/unknown sends are not replayed.
@@ -227,6 +237,7 @@ module.exports = async function handler(req, res) {
           ok: true,
           duplicate: result.duplicate,
           completed: true,
+          calendar: calendarSync,
         });
       return json(res, 200, {
         ok: true,

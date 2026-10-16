@@ -108,7 +108,7 @@ export default function WorkflowPanel({ client, workspaceId, token = "", entry =
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [pending, setPending] = useState(null),
-    [done, setDone] = useState(false),
+    [done, setDone] = useState(null),
     [entryReviewed, setEntryReviewed] = useState(false);
   const load = useCallback(async () => {
     setBusy(true);
@@ -144,7 +144,7 @@ export default function WorkflowPanel({ client, workspaceId, token = "", entry =
     setError("");
     try {
       const r = await workflowRequest({ client, workspaceId, token, command });
-      if (r.completed) setDone(true);
+      if (r.completed) setDone({ calendar: r.calendar || null });
       else setView(r.view);
       setPending(null);
       setEntryReviewed(true);
@@ -191,7 +191,13 @@ export default function WorkflowPanel({ client, workspaceId, token = "", entry =
       ) : null}
       {busy ? <p role="status">Checking the shared workflow…</p> : null}
       {done ? (
-        <p role="status">Thank you. Your response has been recorded.</p>
+        <p role="status">
+          {!done.calendar
+            ? "Thank you. Your response has been recorded."
+            : done.calendar.status === "created"
+            ? "Your interview is confirmed. The Outlook invitation was created, and your confirmation email includes calendar-saving options."
+            : "Your response has been recorded. Your confirmation email includes calendar-saving options; recruiting can see that the connected Outlook invitation still needs attention."}
+        </p>
       ) : token && view ? (
         <CandidateAction view={view} send={send} disabled={disabled} />
       ) : null}
@@ -950,7 +956,27 @@ function CaseCard({ c, send, disabled, view, entryAction = "" }) {
         </details>
       ) : null}
       {stage?.booking ? (
-        <p>Interview: {new Date(stage.booking.start).toLocaleString()}</p>
+        <>
+          <p>Interview: {new Date(stage.booking.start).toLocaleString()}</p>
+          <p role="status">
+            {stage.calendarSync?.status === "created"
+              ? "Calendar invitation created in the connected Outlook calendar."
+              : stage.calendarSync?.status === "unknown"
+                ? "Calendar result needs verification before another invitation is created."
+                : "The interview is saved, but the connected Outlook invitation still needs attention."}
+          </p>
+          {(c.canDecide || c.canRecruit) && stage.calendarSync?.status !== "created" ? (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => act("sync_calendar")}
+            >
+              {stage.calendarSync?.status === "unknown"
+                ? "Check connected Outlook invitation"
+                : "Create Outlook calendar invitation"}
+            </button>
+          ) : null}
+        </>
       ) : null}
       {c.canParticipate && c.status === "scheduled" ? (
         <button

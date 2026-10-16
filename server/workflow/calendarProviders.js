@@ -26,16 +26,16 @@ function graphTime(value) {
 }
 function graphDate(date) { return { dateTime: date.slice(0, -1), timeZone: 'UTC' }; }
 
-/** binding must come from a trusted server record, scoped to workspace and member.
- * This adapter is intentionally not activated by the workflow API until durable
- * booking intent/reconciliation and account-consent acceptance checks are wired.
+/** Binding must come from a trusted server record scoped to the workspace and member.
+ * Interview writes require a persisted booking intent and record provider outcomes
+ * so uncertain writes are reconciled instead of repeated.
  */
 function createCalendarProvider(binding, dependencies = {}) {
   if (!binding || !SCOPES[binding.provider] || !binding.connectorId ||
       !binding.userId || !binding.workspaceId || !binding.calendarId)
     fail('CALENDAR_CONNECTION_REQUIRED', 'Connect an approved leadership calendar first.');
   if (binding.provider === 'microsoft' && binding.calendarId !== 'primary')
-    fail('UNSUPPORTED_CALENDAR', 'Outlook scheduling currently requires the connected account’s primary calendar.');
+    fail('UNSUPPORTED_CALENDAR', 'Outlook scheduling currently requires the connected accountâ€™s primary calendar.');
   if (binding.provider === 'microsoft' && !binding.email)
     fail('CALENDAR_CONNECTION_REQUIRED', 'The connected leadership mailbox must be verified.');
   const fetcher = dependencies.fetch || global.fetch;
@@ -77,6 +77,18 @@ function createCalendarProvider(binding, dependencies = {}) {
   }
   const eventsUrl = binding.provider === 'google'
     ? `${GOOGLE}/calendars/${encodeURIComponent(binding.calendarId)}/events` : `${GRAPH}/me/events`;
+
+  function eventIdentity(booking, range = interval(booking.start, booking.end)) {
+    const attendees = [...new Set(booking.attendeeEmails.map(x => x.toLowerCase()))].sort();
+    const identity = { workspaceId: binding.workspaceId, userId: binding.userId,
+      provider: binding.provider, calendarId: binding.calendarId, bookingId: booking.bookingId };
+    return {
+      attendees,
+      id: createHash('sha256').update(JSON.stringify(identity)).digest('hex'),
+      fingerprint: createHash('sha256').update(JSON.stringify({ ...range, attendees,
+        subject: booking.subject, location: booking.location, instructions: booking.instructions })).digest('hex'),
+    };
+  }
 
   async function busy(start, end) {
     const range = interval(start, end);
@@ -127,12 +139,7 @@ function createCalendarProvider(binding, dependencies = {}) {
         !Array.isArray(booking.attendeeEmails) || !booking.attendeeEmails.length ||
         booking.attendeeEmails.some(x => typeof x !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x)))
       fail('INVALID_CALENDAR_BOOKING', 'Provide reviewed interview details and attendees.');
-    const attendees = [...new Set(booking.attendeeEmails.map(x => x.toLowerCase()))].sort();
-    const identity = { workspaceId: binding.workspaceId, userId: binding.userId,
-      provider: binding.provider, calendarId: binding.calendarId, bookingId: booking.bookingId };
-    const id = createHash('sha256').update(JSON.stringify(identity)).digest('hex');
-    const fingerprint = createHash('sha256').update(JSON.stringify({ ...range, attendees,
-      subject: booking.subject, location: booking.location, instructions: booking.instructions })).digest('hex');
+    const { attendees, id, fingerprint } = eventIdentity(booking, range);
     let existing;
     if (binding.provider === 'google') {
       existing = await request(`${eventsUrl}/${id}`);
@@ -161,6 +168,37 @@ function createCalendarProvider(binding, dependencies = {}) {
     if (result.conflict || !result.id)
       fail('CALENDAR_RECONCILIATION_REQUIRED', 'Verify the provider booking before sending a confirmation.');
     return { provider: binding.provider, eventId: result.id, reused: false };
+  }
+  async function findEvent(booking) {
+    const range = interval(booking.start, booking.end), { id, fingerprint } = eventIdentity(booking, range);
+    if (binding.provider === 'google') {
+      const existing = await request(`${eventsUrl}/${id}`);
+      if (existing.missing) return null;
+      if (existing.extendedProperties?.private?.welcomeflowFingerprint !== fingerprint || existing.status === 'cancelled')
+        fail('CALENDAR_RECONCILIATION_REQUIRED', 'The existing booking needs review before retrying.');
+      return { provider: binding.provider, eventId: existing.id, verified: true };
+    }
+    const query = new URLSearchParams({ startDateTime: range.start, endDateTime: range.end,
+      '$select': 'id,transactionId,start,end,isCancelled', '$top': '100' });
+    let next = `${GRAPH}/me/calendar/calendarView?${query}`, pages = 0;
+    const seen = new Set(), matches = [];
+    while (next) {
+      const url = new URL(next);
+      if (url.origin !== 'https://graph.microsoft.com' || url.pathname !== '/v1.0/me/calendar/calendarView' ||
+          seen.has(next) || ++pages > 100)
+        fail('CALENDAR_UNAVAILABLE', 'The interview calendar result could not be fully checked.');
+      seen.add(next);
+      const data = await request(next);
+      if (!Array.isArray(data.value))
+        fail('CALENDAR_UNAVAILABLE', 'The interview calendar result could not be checked.');
+      matches.push(...data.value.filter(x => x.transactionId === id && !x.isCancelled));
+      next = data['@odata.nextLink'];
+      if (next !== undefined && typeof next !== 'string')
+        fail('CALENDAR_UNAVAILABLE', 'The interview calendar result could not be fully checked.');
+    }
+    if (matches.length > 1)
+      fail('CALENDAR_RECONCILIATION_REQUIRED', 'Multiple matching interview events need review.');
+    return matches[0] ? { provider: binding.provider, eventId: matches[0].id, verified: true } : null;
   }
   async function inspectAccount() {
     if (binding.provider !== 'microsoft') fail('UNSUPPORTED_CALENDAR', 'Use Outlook for this connection test.');
@@ -209,7 +247,7 @@ function createCalendarProvider(binding, dependencies = {}) {
     if (blocks.some(x => x.start < range.end && x.end > range.start))
       fail('CALENDAR_SLOT_UNAVAILABLE', 'This time is busy. Choose another test time.');
     const result = await request(eventsUrl, 'POST', {
-      transactionId: testId(booking), subject: 'WelcomeFlow TEST — calendar connection',
+      transactionId: testId(booking), subject: 'WelcomeFlow TEST â€” calendar connection',
       body: { contentType: 'text', content: '15-minute WelcomeFlow connector test. No candidate or interview invitation. You may remove this test appointment from Outlook after verification.' },
       start: graphDate(range.start), end: graphDate(range.end),
       showAs: 'busy', isReminderOn: false, attendees: [],
@@ -217,7 +255,7 @@ function createCalendarProvider(binding, dependencies = {}) {
     if (!result.id) fail('CALENDAR_WRITE_UNKNOWN', 'The test result needs reconciliation.');
     return { eventId: result.id };
   }
-  return { busy, createEvent, inspectAccount, createTestAppointment, findTestAppointment };
+  return { busy, createEvent, findEvent, inspectAccount, createTestAppointment, findTestAppointment };
 }
 
 module.exports = { createCalendarProvider, SCOPES };

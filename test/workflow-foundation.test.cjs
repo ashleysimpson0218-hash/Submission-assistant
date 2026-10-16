@@ -178,6 +178,24 @@ function schedule(f, base = now) {
   );
   return { start, end };
 }
+
+test("candidate booking persists calendar intent and confirmation calendar controls", () => {
+  const f = fixture();
+  schedule(f);
+  assert.equal(f.c.stages[0].calendarSync.status, "pending");
+  const group = deliveryGroups(f.state, members, now).find((item) =>
+    item.jobs.some((job) => job.kind === "confirmation"),
+  );
+  const message = buildMessage(group, f.state, members, now, {
+    origin: "https://example.com",
+    workspaceId: "test",
+  });
+  assert.match(message.text, /Add to Google Calendar/);
+  assert.match(message.text, /Add to Outlook Calendar/);
+  assert.match(message.html, /Add to Google Calendar/);
+  assert.equal(message.attachments[0].filename, "WelcomeFlow-interview.ics");
+  assert.match(Buffer.from(message.attachments[0].content, "base64").toString(), /BEGIN:VCALENDAR/);
+});
 function accepted(f, j, at = now) {
   f.run("claim_delivery", { jobIds: [j.id], leaseId: "lease" }, "system", at);
   f.run(

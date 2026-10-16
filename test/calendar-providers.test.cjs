@@ -43,6 +43,15 @@ test('Outlook uses calendarView for personal and organization accounts with a st
   await b.client.createEvent(booking);
   assert.equal(a.calls[1].body.transactionId, b.calls[1].body.transactionId);
 });
+test('Outlook uncertain-write reconciliation finds the stable transaction without another POST', async () => {
+  const created = setup('microsoft', [outlookFree, { body: { id: 'event-2' } }]);
+  await created.client.createEvent(booking);
+  const transactionId = created.calls[1].body.transactionId;
+  const checked = setup('microsoft', [{ body: { value: [{ id: 'event-2', transactionId, isCancelled: false }] } }]);
+  assert.equal((await checked.client.findEvent(booking)).eventId, 'event-2');
+  assert.equal(checked.calls.length, 1);
+  assert.equal(checked.calls[0].method, 'GET');
+});
 test('busy or out-of-office Outlook time prevents an event write', async () => {
   const { client, calls } = setup('microsoft', [{ body: { value: [{ showAs: 'oof',
     start: { dateTime: '2026-10-12T14:00:00', timeZone: 'UTC' },

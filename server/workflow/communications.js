@@ -25,6 +25,84 @@ function requisitionDetails(r) {
     jobIdentifier: jobIdentifier || r.id,
   };
 }
+function calendarAssets(c, r, stage) {
+  const details = requisitionDetails(r),
+    title = `${stage.name} | ${details.position} | ${details.facility}`,
+    description = [
+      `Candidate: ${c.name}`,
+      `Position: ${details.position}`,
+      `Facility: ${details.facility}`,
+      `Unique job identifier: ${details.jobIdentifier}`,
+      `Preparation: ${stage.instructions}`,
+    ].join("\n"),
+    compact = (value) =>
+      new Date(value)
+        .toISOString()
+        .replace(/[-:]/g, "")
+        .replace(/\.\d{3}Z$/, "Z"),
+    query = {
+      text: title,
+      dates: `${compact(stage.booking.start)}/${compact(stage.booking.end)}`,
+      details: description,
+      location: stage.location,
+    },
+    google = new URL("https://calendar.google.com/calendar/render"),
+    outlook = new URL("https://outlook.live.com/calendar/0/deeplink/compose");
+  google.search = new URLSearchParams({ action: "TEMPLATE", ...query }).toString();
+  outlook.search = new URLSearchParams({
+    path: "/calendar/action/compose",
+    rru: "addevent",
+    subject: title,
+    startdt: stage.booking.start,
+    enddt: stage.booking.end,
+    body: description,
+    location: stage.location,
+  }).toString();
+  const escapeIcs = (value) =>
+      String(value || "")
+        .replace(/\\/g, "\\\\")
+        .replace(/\r?\n/g, "\\n")
+        .replace(/,/g, "\\,")
+        .replace(/;/g, "\\;"),
+    uid = crypto
+      .createHash("sha256")
+      .update(`${c.id}|${stage.id}|${stage.booking.start}|${stage.booking.end}`)
+      .digest("hex"),
+    ics = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//WelcomeFlow//Interview//EN",
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      "BEGIN:VEVENT",
+      `UID:${uid}@welcomeflowhq.com`,
+      `DTSTAMP:${compact(stage.bookedAt || stage.booking.start)}`,
+      `DTSTART:${compact(stage.booking.start)}`,
+      `DTEND:${compact(stage.booking.end)}`,
+      `SUMMARY:${escapeIcs(title)}`,
+      `DESCRIPTION:${escapeIcs(description)}`,
+      `LOCATION:${escapeIcs(stage.location)}`,
+      "STATUS:CONFIRMED",
+      "END:VEVENT",
+      "END:VCALENDAR",
+      "",
+    ].join("\r\n");
+  return {
+    actions: [
+      { label: "Add to Google Calendar", url: google.toString() },
+      { label: "Add to Outlook Calendar", url: outlook.toString() },
+    ],
+    links: [
+      `Add to Google Calendar: ${google.toString()}`,
+      `Add to Outlook Calendar: ${outlook.toString()}`,
+    ],
+    attachment: {
+      filename: "WelcomeFlow-interview.ics",
+      content: Buffer.from(ics).toString("base64"),
+      content_type: "text/calendar; charset=UTF-8; method=PUBLISH",
+    },
+  };
+}
 function eligible(job, state, members, now) {
   const c = state.cases.find((x) => x.id === job.caseId),
     r = state.requisitions.find((x) => x.id === job.requisitionId),
@@ -137,7 +215,8 @@ function buildMessage(
     return null;
   const { c, r, recipient, stage } = first,
     lines = [],
-    actions = [];
+    actions = [],
+    attachments = [];
   const actionUrl = `${origin}/workflow?workspace=${encodeURIComponent(workspaceId)}`;
   const date = (iso) =>
     new Intl.DateTimeFormat("en-US", {
@@ -271,6 +350,9 @@ function buildMessage(
       `Interview stage: ${stage.name}`,
       `Interview time: ${date(stage.booking.start)}–${date(stage.booking.end)} (${recipient.timezone})`,
       `Location or joining information: ${stage.location}`,
+      stage.calendarSync?.status === "created"
+        ? "Calendar status: the connected Outlook invitation was created."
+        : "Calendar status: the interview is saved, but the connected Outlook invitation still needs attention in WelcomeFlow.",
       "The candidate received a confirmation. Review the booking in WelcomeFlow:",
       `${actionUrl}&case=${encodeURIComponent(c.id)}`,
     );
@@ -323,7 +405,10 @@ function buildMessage(
       );
   } else {
     const details = requisitionDetails(r);
-    if (jobs[0].kind === "confirmation")
+    if (jobs[0].kind === "confirmation") {
+      const calendar = calendarAssets(c, r, stage);
+      actions.push(...calendar.actions);
+      attachments.push(calendar.attachment);
       lines.push(
         `Hello ${c.name},`,
         "Your interview is confirmed.",
@@ -340,9 +425,13 @@ function buildMessage(
         ...(jobs.some((job) => job.kind === "interview_reminder")
           ? ["This confirmation also includes your interview reminder."]
           : []),
+        stage.calendarSync?.status === "created"
+          ? "A calendar invitation was created from the connected Outlook calendar."
+          : "Use the attached calendar file or one of the links below to save this interview to your calendar.",
+        ...calendar.links,
         "The facility has been notified of your selected time. Please contact recruiting with any questions or changes.",
       );
-    else
+    } else
       lines.push(
         `Hello ${c.name},`,
         `${jobs[0].kind === "preparation" ? "Prepare for your interview" : "Interview reminder"}: ${stage.name} | ${date(stage.booking.start)} (${recipient.timezone}).`,
@@ -362,6 +451,7 @@ function buildMessage(
     subject: `${jobs[0].kind === "experience" ? "Your interview experience" : jobs[0].kind === "confirmation" ? "Your interview is confirmed" : jobs[0].kind === "manager_interview" ? "Upcoming interview" : jobs[0].kind === "facility_booking_confirmation" ? `Candidate booked | ${c.name}` : jobs[0].kind === "decision_reminder" ? "Manager candidate reminder" : decisionKinds.has(jobs[0].kind) ? "Candidate submission for review" : jobs[0].kind === "recruiter_decline" ? "Manager disposition recorded — ATS update needed" : jobs[0].kind === "active_review" ? "Your resume is being reviewed" : jobs[0].kind === "slot_selection" ? "Choose your interview time" : "Interview update"} | ${r.title}`,
     text: lines.join("\n\n"),
     html: messageHtml(lines.join("\n\n"), actions),
+    ...(attachments.length ? { attachments } : {}),
     ...(jobs[0].recipientId === "candidate" ? {replyTo: member(members, c.recruiterId).email} : {}),
     idempotencyKey: crypto
       .createHash("sha256")

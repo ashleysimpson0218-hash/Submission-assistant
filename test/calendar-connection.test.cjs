@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { createConnectionService, subjectId } = require('../server/workflow/calendarConnection');
 const { emptyState } = require('../src/workflow/engine');
 const { createCalendarProvider } = require('../server/workflow/calendarProviders');
+const { calendarRequest } = require('../server/workflow/calendarBooking');
 function fixture() {
   let state = emptyState();
   const receipts = new Map(), writes = [];
@@ -90,4 +91,23 @@ test('provider identity requires a writable mailbox',async()=>{
   const p=createCalendarProvider({provider:'microsoft',workspaceId:'w',userId:'u',connectorId:'microsoft/test',calendarId:'primary',email:'pending'},
     {getToken:async()=> 'hidden',fetch:async(url)=>({ok:true,status:200,json:async()=>url.includes('/me?')?{id:'u',mail:'owner@example.test'}:{id:'c',canEdit:false}})});
   await assert.rejects(p.inspectAccount(),{code:'CALENDAR_CONNECTION_REQUIRED'});
+});
+test('saved interview booking becomes an Outlook event request with candidate and panel attendees',()=>{
+  const request=calendarRequest({
+    state:{
+      requisitions:[{id:'req',title:'Nurse | Test Facility | R-100'}],
+      cases:[{id:'case',requisitionId:'req',stageIndex:0,name:'Candidate',email:'candidate@example.test',stages:[{
+        id:'stage',name:'Hiring manager interview',ownerId:'manager',interviewerIds:['panel'],
+        location:'https://meeting.example.test',instructions:'Bring questions.',
+        booking:{start:'2026-11-01T15:00:00Z',end:'2026-11-01T16:00:00Z'},
+        calendarSync:{bookingId:'booking-1',status:'pending'},
+      }]}],
+      calendarConnections:[{memberId:'manager',provider:'microsoft',accountId:'account',providerCalendarId:'primary-id'}],
+    },
+    members:[{userId:'panel',email:'panel@example.test'}],
+  },'case');
+  assert.equal(request.connection.memberId,'manager');
+  assert.deepEqual(request.booking.attendeeEmails,['candidate@example.test','panel@example.test']);
+  assert.match(request.booking.subject,/Hiring manager interview \| Nurse \| Candidate/);
+  assert.match(request.booking.instructions,/Unique job identifier: R-100/);
 });

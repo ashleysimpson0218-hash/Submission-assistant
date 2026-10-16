@@ -229,6 +229,7 @@ async function handler(req, res) {
             text: message.text,
             html: message.html,
             ...(message.replyTo ? {reply_to: message.replyTo} : {}),
+            ...(message.attachments ? {attachments: message.attachments} : {}),
           }),
         });
         const data = await response.json().catch(() => ({}));

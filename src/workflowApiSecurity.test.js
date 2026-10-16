@@ -9,6 +9,10 @@ const mockSecurity = {
 const mockStore = { snapshot: jest.fn(), execute: jest.fn(), view: jest.fn() };
 jest.mock("../server/welcomeflowApiSecurity", () => mockSecurity);
 jest.mock("../server/workflow/store", () => mockStore);
+const mockCalendarSync = jest.fn();
+jest.mock("../server/workflow/calendarBooking", () => ({
+  syncInterviewCalendar: mockCalendarSync,
+}));
 const mockWorker = jest.fn();
 const mockWorkerRunInternal = jest.fn();
 mockWorker.runInternal = mockWorkerRunInternal;
@@ -39,6 +43,7 @@ function req(body, token) {
 }
 beforeEach(() => {
   jest.clearAllMocks();
+  mockCalendarSync.mockResolvedValue({status:"created",provider:"microsoft",eventId:"event-1"});
   mockWorkerRunInternal.mockResolvedValue({status:200,ok:true,processed:1});
   process.env.WELCOMEFLOW_MAINTENANCE_MODE = "false";
   process.env.WELCOMEFLOW_API_WORKSPACE_IDS = "test";
@@ -188,6 +193,8 @@ test("successful candidate booking attempts its durable confirmation before retu
   );
   expect(output.statusCode).toBe(200);
   expect(output.body.completed).toBe(true);
+  expect(output.body.calendar).toEqual({status:"created",provider:"microsoft",eventId:"event-1"});
+  expect(mockCalendarSync).toHaveBeenCalledWith({client:{},workspaceId:"test",caseId:"case"});
   expect(mockWorkerRunInternal).toHaveBeenCalledTimes(1);
   expect(mockWorkerRunInternal.mock.calls[0][0]).toEqual({
     workspaceId: "test",
