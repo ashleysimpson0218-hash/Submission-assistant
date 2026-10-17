@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 const { createCalendarProvider } = require('../server/workflow/calendarProviders');
 const start = '2026-10-12T14:00:00Z', end = '2026-10-12T14:30:00Z';
 const booking = { bookingId: 'persisted-booking-1', start, end, subject: 'Interview',
-  location: 'Facility office', instructions: 'Bring your questions.', attendeeEmails: ['candidate@example.com'] };
+  matchSubjects: ['Interview', 'Legacy interview | Facility | JOB-1'], location: 'Facility office',
+  instructions: 'Bring your questions.', attendeeEmails: ['candidate@example.com'] };
 function setup(provider, replies) {
   const calls = [], tokens = [];
   const client = createCalendarProvider({ provider, workspaceId: 'workspace-1', userId: 'leader-1',
@@ -51,6 +52,29 @@ test('Outlook uncertain-write reconciliation finds the stable transaction withou
   assert.equal((await checked.client.findEvent(booking)).eventId, 'event-2');
   assert.equal(checked.calls.length, 1);
   assert.equal(checked.calls[0].method, 'GET');
+});
+test('Outlook safely reuses an exact legacy invitation without another POST', async () => {
+  const legacy = { id: 'legacy-event', transactionId: 'older-application-id',
+    subject: 'Legacy interview | Facility | JOB-1', showAs: 'busy', isCancelled: false,
+    start: { dateTime: '2026-10-12T14:00:00', timeZone: 'UTC' },
+    end: { dateTime: '2026-10-12T14:30:00', timeZone: 'UTC' },
+    attendees: [{ emailAddress: { address: 'candidate@example.com' } }] };
+  const { client, calls } = setup('microsoft', [{ body: { value: [legacy] } }]);
+  const result = await client.createEvent(booking);
+  assert.equal(result.eventId, 'legacy-event');
+  assert.equal(result.reused, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'GET');
+});
+test('Outlook does not reuse a legacy invitation with different attendees', async () => {
+  const legacy = { id: 'legacy-event', transactionId: 'older-application-id',
+    subject: 'Legacy interview | Facility | JOB-1', showAs: 'busy', isCancelled: false,
+    start: { dateTime: '2026-10-12T14:00:00', timeZone: 'UTC' },
+    end: { dateTime: '2026-10-12T14:30:00', timeZone: 'UTC' },
+    attendees: [{ emailAddress: { address: 'someone-else@example.com' } }] };
+  const { client, calls } = setup('microsoft', [{ body: { value: [legacy] } }]);
+  await assert.rejects(client.createEvent(booking), { code: 'CALENDAR_SLOT_UNAVAILABLE' });
+  assert.equal(calls.length, 1);
 });
 test('busy or out-of-office Outlook time prevents an event write', async () => {
   const { client, calls } = setup('microsoft', [{ body: { value: [{ showAs: 'oof',

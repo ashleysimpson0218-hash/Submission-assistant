@@ -25,6 +25,8 @@ function calendarRequest(snapshotValue, caseId) {
   );
   need(connection, "CALENDAR_CONNECTION_REQUIRED", "Connect and verify the stage owner’s Outlook calendar first.", 409);
   const details = requisitionDetails(requisition);
+  const subject = `${stage.name} | ${details.position} | ${workflowCase.name}`;
+  const legacySubject = `${stage.name} | ${details.position} | ${details.facility} | ${details.jobIdentifier}`;
   const attendeeEmails = [
     workflowCase.email,
     ...stage.interviewerIds
@@ -41,7 +43,8 @@ function calendarRequest(snapshotValue, caseId) {
       bookingId: stage.calendarSync.bookingId,
       start: stage.booking.start,
       end: stage.booking.end,
-      subject: `${stage.name} | ${details.position} | ${workflowCase.name}`,
+      subject,
+      matchSubjects: [subject, legacySubject],
       location: stage.location,
       instructions: [
         `Candidate: ${workflowCase.name}`,

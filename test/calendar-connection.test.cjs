@@ -109,5 +109,6 @@ test('saved interview booking becomes an Outlook event request with candidate an
   assert.equal(request.connection.memberId,'manager');
   assert.deepEqual(request.booking.attendeeEmails,['candidate@example.test','panel@example.test']);
   assert.match(request.booking.subject,/Hiring manager interview \| Nurse \| Candidate/);
+  assert.ok(request.booking.matchSubjects.includes('Hiring manager interview | Nurse | Test Facility | R-100'));
   assert.match(request.booking.instructions,/Unique job identifier: R-100/);
 });

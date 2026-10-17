@@ -25,6 +25,12 @@ function graphTime(value) {
   return /Z$/.test(value.dateTime) ? value.dateTime : `${value.dateTime}Z`;
 }
 function graphDate(date) { return { dateTime: date.slice(0, -1), timeZone: 'UTC' }; }
+function normalizedEmails(values = []) {
+  return [...new Set(values.map(value => String(value || '').trim().toLowerCase()).filter(Boolean))].sort();
+}
+function sameValues(left, right) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
 
 /** Binding must come from a trusted server record scoped to the workspace and member.
  * Interview writes require a persisted booking intent and record provider outcomes
@@ -79,7 +85,7 @@ function createCalendarProvider(binding, dependencies = {}) {
     ? `${GOOGLE}/calendars/${encodeURIComponent(binding.calendarId)}/events` : `${GRAPH}/me/events`;
 
   function eventIdentity(booking, range = interval(booking.start, booking.end)) {
-    const attendees = [...new Set(booking.attendeeEmails.map(x => x.toLowerCase()))].sort();
+    const attendees = normalizedEmails(booking.attendeeEmails);
     const identity = { workspaceId: binding.workspaceId, userId: binding.userId,
       provider: binding.provider, calendarId: binding.calendarId, bookingId: booking.bookingId };
     return {
@@ -88,6 +94,42 @@ function createCalendarProvider(binding, dependencies = {}) {
       fingerprint: createHash('sha256').update(JSON.stringify({ ...range, attendees,
         subject: booking.subject, location: booking.location, instructions: booking.instructions })).digest('hex'),
     };
+  }
+
+  async function outlookEvents(range, message = 'The interview calendar result could not be fully checked.') {
+    const query = new URLSearchParams({ startDateTime: range.start, endDateTime: range.end,
+      '$select': 'id,transactionId,subject,start,end,isCancelled,showAs,attendees', '$top': '100' });
+    let next = `${GRAPH}/me/calendar/calendarView?${query}`, pages = 0;
+    const seen = new Set(), events = [];
+    while (next) {
+      const url = new URL(next);
+      if (url.origin !== 'https://graph.microsoft.com' || url.pathname !== '/v1.0/me/calendar/calendarView' ||
+          seen.has(next) || ++pages > 100)
+        fail('CALENDAR_UNAVAILABLE', message);
+      seen.add(next);
+      const data = await request(next);
+      if (!Array.isArray(data.value))
+        fail('CALENDAR_UNAVAILABLE', message.replace('fully ', ''));
+      events.push(...data.value);
+      next = data['@odata.nextLink'];
+      if (next !== undefined && typeof next !== 'string')
+        fail('CALENDAR_UNAVAILABLE', message);
+    }
+    return events;
+  }
+
+  function matchingOutlookEvents(events, booking, range, identity) {
+    const subjects = new Set([booking.subject, ...(booking.matchSubjects || [])]
+      .map(value => String(value || '').trim().toLowerCase()).filter(Boolean));
+    return events.filter(event => {
+      if (event.isCancelled) return false;
+      if (event.transactionId === identity.id) return true;
+      if (!subjects.has(String(event.subject || '').trim().toLowerCase())) return false;
+      if (new Date(graphTime(event.start)).toISOString() !== range.start ||
+          new Date(graphTime(event.end)).toISOString() !== range.end) return false;
+      const attendees = normalizedEmails((event.attendees || []).map(item => item?.emailAddress?.address));
+      return sameValues(attendees, identity.attendees);
+    });
   }
 
   async function busy(start, end) {
@@ -106,28 +148,9 @@ function createCalendarProvider(binding, dependencies = {}) {
     } else {
       // getSchedule excludes personal Microsoft accounts. Read only this
       // authorized account's calendarView instead, including recurring instances.
-      const query = new URLSearchParams({ startDateTime: range.start, endDateTime: range.end,
-        '$select': 'start,end,showAs,isCancelled', '$top': '100' });
-      let next = `${GRAPH}/me/calendar/calendarView?${query}`, pages = 0;
-      rows = [];
-      const seen = new Set();
-      while (next) {
-        const url = new URL(next);
-        if (url.origin !== 'https://graph.microsoft.com' ||
-            url.pathname !== '/v1.0/me/calendar/calendarView' ||
-            seen.has(next) || ++pages > 100)
-          fail('CALENDAR_UNAVAILABLE', 'Calendar availability could not be fully verified.');
-        seen.add(next);
-        const data = await request(next);
-        if (!Array.isArray(data.value))
-          fail('CALENDAR_UNAVAILABLE', 'Calendar availability could not be verified.');
-        rows.push(...data.value.filter(x => !x.isCancelled && x.showAs !== 'free').map(x => ({
-          start: graphTime(x.start), end: graphTime(x.end),
-        })));
-        next = data['@odata.nextLink'];
-        if (next !== undefined && typeof next !== 'string')
-          fail('CALENDAR_UNAVAILABLE', 'Calendar availability could not be fully verified.');
-      }
+      rows = (await outlookEvents(range, 'Calendar availability could not be fully verified.'))
+        .filter(x => !x.isCancelled && x.showAs !== 'free')
+        .map(x => ({ start: graphTime(x.start), end: graphTime(x.end) }));
     }
     return rows.map(x => interval(x.start, x.end));
   }
@@ -148,10 +171,20 @@ function createCalendarProvider(binding, dependencies = {}) {
           fail('CALENDAR_RECONCILIATION_REQUIRED', 'The existing booking needs review before retrying.');
         return { provider: binding.provider, eventId: existing.id, reused: true };
       }
+      const blocks = await busy(range.start, range.end);
+      if (blocks.some(x => Date.parse(x.start) < Date.parse(range.end) && Date.parse(x.end) > Date.parse(range.start)))
+        fail('CALENDAR_SLOT_UNAVAILABLE', 'This time is no longer available. Choose another interview time.');
+    } else {
+      const events = await outlookEvents(range);
+      const matches = matchingOutlookEvents(events, booking, range, { attendees, id });
+      if (matches.length > 1)
+        fail('CALENDAR_RECONCILIATION_REQUIRED', 'Multiple matching interview events need review.');
+      if (matches[0]) return { provider: binding.provider, eventId: matches[0].id, reused: true };
+      const blocked = events.filter(x => !x.isCancelled && x.showAs !== 'free').some(x =>
+        Date.parse(graphTime(x.start)) < Date.parse(range.end) && Date.parse(graphTime(x.end)) > Date.parse(range.start));
+      if (blocked)
+        fail('CALENDAR_SLOT_UNAVAILABLE', 'This time is no longer available. Choose another interview time.');
     }
-    const blocks = await busy(range.start, range.end);
-    if (blocks.some(x => Date.parse(x.start) < Date.parse(range.end) && Date.parse(x.end) > Date.parse(range.start)))
-      fail('CALENDAR_SLOT_UNAVAILABLE', 'This time is no longer available. Choose another interview time.');
     const body = binding.provider === 'google' ? {
       id, summary: booking.subject, description: booking.instructions, location: booking.location,
       start: { dateTime: range.start }, end: { dateTime: range.end },
@@ -178,24 +211,8 @@ function createCalendarProvider(binding, dependencies = {}) {
         fail('CALENDAR_RECONCILIATION_REQUIRED', 'The existing booking needs review before retrying.');
       return { provider: binding.provider, eventId: existing.id, verified: true };
     }
-    const query = new URLSearchParams({ startDateTime: range.start, endDateTime: range.end,
-      '$select': 'id,transactionId,start,end,isCancelled', '$top': '100' });
-    let next = `${GRAPH}/me/calendar/calendarView?${query}`, pages = 0;
-    const seen = new Set(), matches = [];
-    while (next) {
-      const url = new URL(next);
-      if (url.origin !== 'https://graph.microsoft.com' || url.pathname !== '/v1.0/me/calendar/calendarView' ||
-          seen.has(next) || ++pages > 100)
-        fail('CALENDAR_UNAVAILABLE', 'The interview calendar result could not be fully checked.');
-      seen.add(next);
-      const data = await request(next);
-      if (!Array.isArray(data.value))
-        fail('CALENDAR_UNAVAILABLE', 'The interview calendar result could not be checked.');
-      matches.push(...data.value.filter(x => x.transactionId === id && !x.isCancelled));
-      next = data['@odata.nextLink'];
-      if (next !== undefined && typeof next !== 'string')
-        fail('CALENDAR_UNAVAILABLE', 'The interview calendar result could not be fully checked.');
-    }
+    const attendees = eventIdentity(booking, range).attendees;
+    const matches = matchingOutlookEvents(await outlookEvents(range), booking, range, { attendees, id });
     if (matches.length > 1)
       fail('CALENDAR_RECONCILIATION_REQUIRED', 'Multiple matching interview events need review.');
     return matches[0] ? { provider: binding.provider, eventId: matches[0].id, verified: true } : null;
