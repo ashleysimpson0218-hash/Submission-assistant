@@ -7,6 +7,7 @@ const {
   serviceSupabaseClient,
 } = require("../server/welcomeflowApiSecurity");
 const { snapshot, execute, view } = require("../server/workflow/store");
+const { syncInterviewCalendar } = require("../server/workflow/calendarBooking");
 const { verifyCapability } = require("../server/workflow/capabilities");
 const { need, isId } = require("../src/workflow/engine");
 const USER_COMMANDS = new Set([
@@ -16,10 +17,14 @@ const USER_COMMANDS = new Set([
   "set_requisition_active",
   "handoff",
   "decision",
+  "decline_follow_up",
+  "proceed_with_slots",
   "offer_slots",
+  "sync_calendar",
   "complete_interview",
   "feedback",
   "withdraw",
+  "process_queued_delivery",
   "recover_delivery",
   "resolve_exception",
   "update_contact",
@@ -195,28 +200,44 @@ module.exports = async function handler(req, res) {
           403,
         );
       const result = await execute(client, workspaceId, cmd, actor);
-      if (cmd.type === "book") {
+      let calendarSync = null;
+      if (["book", "sync_calendar"].includes(cmd.type)) {
+        calendarSync = await syncInterviewCalendar({
+          client,
+          workspaceId,
+          caseId: cmd.payload.caseId,
+        });
+      }
+      if (["book", "handoff", "decision", "offer_slots", "decline_follow_up", "proceed_with_slots", "process_queued_delivery"].includes(cmd.type)) {
         // The reservation and outbox commit first. A transport failure cannot undo the booking.
         // Replayed booking requests use the same durable outbox; accepted/unknown sends are not replayed.
         const worker = require("./workflow-worker");
-        await worker(
-          {
-            method: "POST",
-            headers: {
-              authorization: `Bearer ${process.env.WELCOMEFLOW_WORKFLOW_WORKER_SECRET || ""}`,
-            },
-            body: { workspaceId, confirmationCaseId: actor.caseId },
-          },
-          { setHeader() {}, end() {}, statusCode: 0 },
+        const workerResult = await worker.runInternal(
+          cmd.type === "book"
+            ? {workspaceId, confirmationCaseId: actor.caseId}
+            : {
+                workspaceId,
+                caseId: cmd.payload.caseId || result.snapshot.state.cases.find(c => c.candidateId === cmd.payload.candidateId && c.requisitionId === cmd.payload.requisitionId)?.id,
+                ...(cmd.type === "process_queued_delivery" ? {jobId: cmd.payload.jobId} : {}),
+              },
+        );
+        need(
+          workerResult?.ok && workerResult.outbound !== "disabled",
+          workerResult?.code || "WORKER_FAILED",
+          workerResult?.outbound === "disabled"
+            ? "Email actions are disabled. The pending email remains queued."
+            : workerResult?.error || "The pending email could not be processed safely.",
+          workerResult?.status >= 400 ? workerResult.status : 503,
         );
       }
-      snap = result.snapshot;
+      snap = await snapshot(client, workspaceId);
       actor = result.actor;
       if (actor.role === "candidate")
         return json(res, 200, {
           ok: true,
           duplicate: result.duplicate,
           completed: true,
+          calendar: calendarSync,
         });
       return json(res, 200, {
         ok: true,
@@ -232,11 +253,14 @@ module.exports = async function handler(req, res) {
           : view(snap, actor),
     });
   } catch (e) {
+    const message = typeof e?.message === "string" && e.message.trim()
+      ? e.message
+      : "Workflow is temporarily unavailable. Your pending work remains recorded.";
     return json(res, e.status || 503, {
       ok: false,
       code: e.code || "WORKFLOW_UNAVAILABLE",
       error: e.status
-        ? e.message
+        ? message
         : "Workflow is temporarily unavailable. Your pending work remains recorded.",
     });
   }

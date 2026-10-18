@@ -5,6 +5,7 @@ const {
   applyCommand,
   stateView,
   withinWindow,
+  nextWindowStart,
   addWorkingDays,
 } = require("../src/workflow/engine");
 const {
@@ -88,6 +89,8 @@ function fixture(count = 1) {
       name: `Interview ${i + 1}`,
       ownerId: "manager",
       interviewerIds: ["panel"],
+      location: "https://video.example.test/interview",
+      instructions: "Review the role and bring questions.",
     })),
   });
   const handoff = (id = "candidate") =>
@@ -142,6 +145,26 @@ function fixture(count = 1) {
     },
   };
 }
+
+test("Interview Plan defaults follow the case into scheduling", () => {
+  const f = fixture();
+  assert.equal(f.c.stages[0].location, "https://video.example.test/interview");
+  assert.equal(
+    f.c.stages[0].instructions,
+    "Review the role and bring questions.",
+  );
+  f.action("decision", { decision: "proceed" });
+  f.action("offer_slots", {
+    timezone: "America/Chicago",
+    slots: [
+      {
+        start: "2026-09-28T14:00:00.000Z",
+        end: "2026-09-28T14:30:00.000Z",
+      },
+    ],
+  });
+  assert.equal(f.c.stages[0].timezone, "America/Chicago");
+});
 function schedule(f, base = now) {
   f.action("decision", { decision: "proceed" }, "manager", base);
   const start = new Date(Date.parse(base) + 4 * 86400000).toISOString(),
@@ -155,6 +178,24 @@ function schedule(f, base = now) {
   );
   return { start, end };
 }
+
+test("candidate booking persists calendar intent and confirmation calendar controls", () => {
+  const f = fixture();
+  schedule(f);
+  assert.equal(f.c.stages[0].calendarSync.status, "pending");
+  const group = deliveryGroups(f.state, members, now).find((item) =>
+    item.jobs.some((job) => job.kind === "confirmation"),
+  );
+  const message = buildMessage(group, f.state, members, now, {
+    origin: "https://example.com",
+    workspaceId: "test",
+  });
+  assert.match(message.text, /Add to Google Calendar/);
+  assert.match(message.text, /Add to Outlook Calendar/);
+  assert.match(message.html, /Add to Google Calendar/);
+  assert.equal(message.attachments[0].filename, "WelcomeFlow-interview.ics");
+  assert.match(Buffer.from(message.attachments[0].content, "base64").toString(), /BEGIN:VCALENDAR/);
+});
 function accepted(f, j, at = now) {
   f.run("claim_delivery", { jobIds: [j.id], leaseId: "lease" }, "system", at);
   f.run(
@@ -267,7 +308,9 @@ test("Hold produces one no-date communication; decline requires a reason", () =>
     origin: "https://example.com",
     workspaceId: "test",
   });
-  assert.match(mail.text, /in active review/);
+  assert.match(mail.text, /Congratulations—your resume/);
+  assert.match(mail.text, /Once the manager provides clear direction/);
+  assert.equal(mail.replyTo, "recruiter@example.com");
   assert.doesNotMatch(mail.text, /update you by/);
   f.action("decision", {
     decision: "decline",
@@ -464,6 +507,14 @@ test("policy is recipient local, configurable, DST safe and not role tiered", ()
     false,
   );
   assert.equal(
+    nextWindowStart(
+      "2026-09-24T04:45:00.000Z",
+      "America/New_York",
+      f.state.policy,
+    ),
+    "2026-09-24T11:00:00.000Z",
+  );
+  assert.equal(
     withinWindow(
       "2026-09-24T11:00:00.000Z",
       "America/New_York",
@@ -528,6 +579,17 @@ test("immediate after-hours confirmation includes preparation under 24 hours; ro
     ).state,
     "waiting",
   );
+  const facilityGroup = deliveryGroups(f.state, members, at).find(
+    (g) => g.jobs[0].kind === "facility_booking_confirmation",
+  );
+  const facilityMail = buildMessage(facilityGroup, f.state, members, at, {
+    origin: "https://example.com",
+    workspaceId: "test",
+  });
+  assert.equal(facilityMail.to, "manager@example.com");
+  assert.match(facilityMail.subject, /Candidate booked/);
+  assert.match(facilityMail.text, /selected an interview time and is booked/);
+  assert.match(facilityMail.text, /The candidate received a confirmation/);
   const group = deliveryGroups(f.state, members, at).find(
     (g) => g.jobs[0].kind === "confirmation",
   );
@@ -536,7 +598,7 @@ test("immediate after-hours confirmation includes preparation under 24 hours; ro
       origin: "https://example.com",
       workspaceId: "test",
     }).text,
-    /Joining details and preparation/,
+    /Preparation information/,
   );
 });
 test("48 and 24 hour boundaries avoid expired reminders, batch simultaneous content, and audit the path", () => {
@@ -731,4 +793,142 @@ test("an after-hours 24–48 hour booking sends confirmation alone and defers pr
     ).state,
     "waiting",
   );
+});
+
+test('manager submission contains reviewed packet and four candidate-specific HTML/text action links', () => {
+  const f = fixture();
+  const group = deliveryGroups(f.state, members, now).find(g => g.jobs[0].kind === 'decision_request');
+  const before = JSON.stringify(f.state);
+  const mail = buildMessage(group, f.state, members, now, {origin:'https://example.com', workspaceId:'test'});
+  assert.equal(mail.subject, 'Candidate submission for review | Driver');
+  assert.match(mail.text, /Candidate: candidate/);
+  assert.match(mail.text, /Candidate email: candidate@example.com/);
+  assert.match(mail.text, /Opening: Driver/);
+  assert.match(mail.text, /Opening a link below does not record a decision/);
+  assert.match(mail.text, /confirming queues the candidate invitation/);
+  assert.match(mail.text, /Approved packet/);
+  for (const label of ['Proceed', 'Proceed but select your time your way', 'Hold for other candidate review', 'Decline to proceed']) assert.ok(mail.html.includes(label));
+  for (const action of ['proceed-calendar', 'proceed-times', 'hold', 'decline']) assert.ok(mail.text.includes(`case=candidate&action=${action}&version=1`));
+  assert.equal(JSON.stringify(f.state), before);
+  f.handoff('second-candidate');
+  const batch = deliveryGroups(f.state, members, now).find(g => g.jobs[0].kind === 'decision_request');
+  const batchMail = buildMessage(batch, f.state, members, now, {origin:'https://example.com', workspaceId:'test'});
+  assert.ok(batchMail.text.includes('case=second-candidate&action=hold&version=1'));
+  assert.ok(batchMail.html.includes('candidate: Proceed'));
+});
+
+test('a queued approved email can be restarted only by recruiting or its recipient', () => {
+  const f = fixture();
+  const job = f.state.jobs.find(item => item.kind === 'decision_request');
+  const attempts = job.attempts;
+  const output = f.action('process_queued_delivery', {jobId:job.id}, 'manager');
+  assert.ok(output.events.some(event => event.type === 'communication.processing_requested'));
+  assert.equal(f.state.jobs.find(item => item.id === job.id).status, 'queued');
+  assert.equal(f.state.jobs.find(item => item.id === job.id).attempts, attempts);
+  assert.throws(() => f.action('process_queued_delivery', {jobId:job.id}, 'other'), /outside your authorized scope/);
+});
+
+test('manual Proceed and offered times commit together; invalid times never record Proceed', () => {
+  const f = fixture();
+  const before = JSON.stringify(f.state);
+  assert.throws(() => f.action('proceed_with_slots', {slots:[]}), /one or more/);
+  assert.equal(JSON.stringify(f.state), before);
+  assert.throws(
+    () => f.action('proceed_with_slots', {
+      slots: Array.from({length:201}, (_, index) => ({
+        start: new Date(Date.parse('2026-09-28T14:00:00Z') + index * 900000).toISOString(),
+        end: new Date(Date.parse('2026-09-28T14:30:00Z') + index * 900000).toISOString(),
+      })),
+    }),
+    /one or more/,
+  );
+  assert.equal(JSON.stringify(f.state), before);
+  const revision = f.state.revision;
+  f.action('proceed_with_slots', {slots:[{start:'2026-09-28T14:00:00Z',end:'2026-09-28T15:00:00Z'}], location:'Facility', instructions:'Bring questions'});
+  assert.equal(f.c.status, 'selection_pending');
+  assert.equal(f.c.stageIndex, 0);
+  assert.equal(f.state.revision, revision + 1);
+  assert.equal(f.state.jobs.filter(j => j.kind === 'slot_selection' && j.status === 'queued').length, 1);
+  assert.equal(f.state.jobs.filter(j => j.kind === 'slots_request' && j.status === 'queued').length, 0);
+  const group = deliveryGroups(f.state, members, now).find(g => g.jobs[0].kind === 'slot_selection');
+  const mail = buildMessage(group, f.state, members, now, {origin:'https://example.com',workspaceId:'test',linkSecret:'x'.repeat(40)});
+  assert.equal(mail.replyTo, 'recruiter@example.com');
+  assert.match(mail.text, /Select your interview time/);
+  assert.match(mail.text, /You have been invited to schedule an interview/);
+  assert.match(mail.text, /Position: Driver/);
+  assert.match(mail.text, /Unique job identifier: req/);
+  assert.match(mail.text, /Location or joining information: Facility/);
+  assert.match(mail.text, /Available interview times:/);
+});
+
+test('manager reminder groups held and interviewed candidates with the correct decisions', () => {
+  const f = fixture();
+  f.action('decision', {decision:'hold'});
+  f.handoff('interviewed-candidate');
+  const interviewed = f.state.cases.find(candidate => candidate.id === 'interviewed-candidate');
+  interviewed.stageIndex = 0;
+  interviewed.status = 'feedback_due';
+  interviewed.stages[0].status = 'feedback_due';
+  interviewed.stages[0].completedAt = now;
+  interviewed.stages[0].feedback.push({text:'Strong discussion; manager decision is still needed.', recordedAt:now});
+  f.state.jobs.push(
+    {id:'held-reminder',kind:'decision_reminder',caseId:'candidate',requisitionId:'req',stageIndex:-1,recipientId:'manager',status:'queued',dueAt:now,createdAt:now,attempts:0},
+    {id:'interviewed-reminder',kind:'decision_reminder',caseId:'interviewed-candidate',requisitionId:'req',stageIndex:0,recipientId:'manager',status:'queued',dueAt:now,createdAt:now,attempts:0},
+  );
+  const group = deliveryGroups(f.state, members, now).find(item => item.jobs.some(job => job.id === 'held-reminder'));
+  const mail = buildMessage(group, f.state, members, now, {origin:'https://example.com',workspaceId:'test'});
+  assert.equal(mail.subject, 'Manager candidate reminder | Driver');
+  assert.match(mail.text, /Hello Manager/);
+  assert.match(mail.text, /CANDIDATES CURRENTLY ON HOLD/);
+  assert.match(mail.text, /CANDIDATES INTERVIEWED — FEEDBACK NEEDED/);
+  assert.match(mail.text, /Candidate note reminder: Strong discussion/);
+  assert.match(mail.text, /Proceed but select your time your way/);
+  assert.match(mail.text, /Offer position \/ proceed to offer handoff/);
+  assert.match(mail.text, /does not create or send an offer/);
+});
+
+test('held candidates receive one manager reminder after the configured delay', () => {
+  const f = fixture();
+  f.action('decision', {decision:'hold'});
+  f.run('tick', {}, 'system', '2026-09-25T14:00:00.000Z');
+  assert.equal(f.state.jobs.filter(job => job.kind === 'decision_reminder' && job.status === 'queued').length, 1);
+  f.run('tick', {}, 'system', '2026-09-26T14:00:00.000Z');
+  assert.equal(f.state.jobs.filter(job => job.kind === 'decision_reminder' && job.status === 'queued').length, 1);
+});
+
+test('calendar Proceed cannot manufacture a booking or silently choose manual times', () => {
+  const f = fixture(); const before = JSON.stringify(f.state);
+  assert.throws(() => f.action('decision', {decision:'proceed',schedulingMode:'calendar'}), e => e.code === 'CALENDAR_CONNECTION_REQUIRED');
+  assert.equal(JSON.stringify(f.state), before);
+});
+
+test('decline records an internal disposition and routes the ATS update to recruiting only', () => {
+  const f = fixture();
+  f.action('decision', {decision:'decline',reason:'Availability mismatch',comment:'Internal manager detail'});
+  assert.equal(f.state.jobs.filter(j => j.kind === 'candidate_decline').length, 0);
+  assert.equal(f.c.disposition.status, 'not_selected');
+  assert.equal(f.c.disposition.atsUpdateRequired, true);
+  assert.equal(f.c.declineFollowUp.channel, 'ats');
+  const group = deliveryGroups(f.state, members, now).find(g => g.jobs[0].kind === 'recruiter_decline');
+  const note = buildMessage(group, f.state, members, now, {origin:'https://example.com',workspaceId:'test'});
+  assert.equal(note.to, 'recruiter@example.com'); assert.match(note.text, /Internal manager detail/);
+  assert.match(note.text, /No candidate disposition email was generated/);
+  assert.ok(f.state.exceptions.some(e => e.code === 'ATS_DECLINE_FOLLOW_UP_REQUIRED' && e.ownerId === 'recruiter'));
+  assert.throws(() => f.action('decline_follow_up', {channel:'welcomeflow'}, 'recruiter'), /does not send it/);
+  assert.equal(deliveryGroups(f.state, members, now).some(g => g.jobs[0].kind === 'candidate_decline'), false);
+});
+
+test('manager decline automatically prepares the ATS disposition without a candidate email', () => {
+  const f = fixture(); f.action('decision', {decision:'decline',reason:'Experience mismatch'});
+  assert.equal(f.c.declineFollowUp.channel, 'ats');
+  assert.equal(f.c.declineFollowUp.automatic, true);
+  assert.equal(f.state.jobs.filter(j => j.kind === 'candidate_decline').length, 0);
+  assert.ok(f.state.exceptions.some(e => e.code === 'ATS_DECLINE_FOLLOW_UP_REQUIRED' && e.ownerId === 'recruiter'));
+});
+
+test('HTML packet content is escaped and email links cannot become injected markup', () => {
+  const f = fixture(); f.state.cases[0].packet = '<script>alert("bad")</script>';
+  const group = deliveryGroups(f.state, members, now).find(g => g.jobs[0].kind === 'decision_request');
+  const mail = buildMessage(group, f.state, members, now, {origin:'https://example.com',workspaceId:'test'});
+  assert.doesNotMatch(mail.html, /<script>/); assert.match(mail.html, /&lt;script&gt;/);
 });

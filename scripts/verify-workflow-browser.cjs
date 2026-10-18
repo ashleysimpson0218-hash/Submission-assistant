@@ -135,8 +135,8 @@ async function main() {
     slots: [
       {
         id: "slot",
-        start: "2026-10-05T14:00:00.000Z",
-        end: "2026-10-05T15:00:00.000Z",
+        start: "2027-01-05T14:00:00.000Z",
+        end: "2027-01-05T15:00:00.000Z",
       },
     ],
   };
@@ -151,13 +151,13 @@ async function main() {
         requests.push(cmd);
         if (token)
           return route.fulfill({ json: { ok: true, completed: true } });
-        if (cmd.type === "decision")
+        if (cmd.type === "proceed_with_slots")
           view = {
             ...view,
             cases: [
               {
                 ...view.cases[0],
-                status: "slots_needed",
+                status: "selection_pending",
                 stageIndex: 0,
                 version: 2,
               },
@@ -185,11 +185,16 @@ async function main() {
     }
     return route.continue();
   });
-  const output = path.join(__dirname, "../docs/validation");
+  const output = path.join(__dirname, "../docs/validation/manager-email-actions");
   fs.mkdirSync(output, { recursive: true });
-  await page.goto(`${base}/workflow`);
+  await page.goto(`${base}/workflow?workspace=synthetic-workflow-review&case=case&action=proceed-times&version=1`);
   await page.getByRole("button", { name: "Proceed", exact: true }).waitFor();
-  await page.getByRole("button", { name: "Proceed", exact: true }).click();
+  for (const label of ["Proceed", "Proceed but select your time your way", "Hold for other candidate review", "Decline to proceed"]) await page.getByRole("button", {name: label, exact: true}).waitFor();
+  assert.equal(requests.length, 0);
+  await page.getByRole("button", {name:"Decline to proceed", exact:true}).click();
+  await page.getByLabel("Decline reason").waitFor();
+  assert.equal(requests.length, 0);
+  await page.getByRole("button", {name:"Proceed but select your time your way", exact:true}).click();
   await page.getByText("Offer interview times", { exact: true }).waitFor();
   await page
     .getByLabel("Interview location or joining link")
@@ -197,10 +202,10 @@ async function main() {
   await page
     .getByLabel("Preparation information")
     .fill("Review the role and bring your questions.");
-  await page.getByLabel("Slot start").fill("2026-10-05T10:00");
-  await page.getByLabel("Slot end").fill("2026-10-05T11:00");
+  await page.getByLabel("Slot start").fill("2027-01-05T10:00");
+  await page.getByLabel("Slot end").fill("2027-01-05T11:00");
   await page.getByRole("button", { name: "Add time", exact: true }).click();
-  await page.getByRole("button", { name: "Send offered times" }).click();
+  await page.getByRole("button", { name: "Proceed and send interview invitation" }).click();
   await page
     .getByText("Replace offered interview times", { exact: true })
     .waitFor();
@@ -244,14 +249,14 @@ async function main() {
   await page.getByText("Thank you. Your response has been recorded.").waitFor();
   assert.deepEqual(
     requests.map((r) => r.type),
-    ["decision", "offer_slots", "book", "experience"],
+    ["proceed_with_slots", "book", "experience"],
   );
   assert.equal(
-    requests[1].payload.instructions,
+    requests[0].payload.instructions,
     "Review the role and bring your questions.",
   );
-  assert.equal(requests[3].payload.interested, "no");
-  assert.equal(requests[3].payload.decision, undefined);
+  assert.equal(requests[2].payload.interested, "no");
+  assert.equal(requests[2].payload.decision, undefined);
   assert.equal(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,

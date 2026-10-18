@@ -1,7 +1,7 @@
 // File: src/App.js
 // Premium Purple Precision Polish - squared UI, cleaner header, dark mode contrast, glossary-first help
 
-import WorkflowPanel from "./workflow/WorkflowPanel";
+import WorkflowPanel, { SubmissionWorkflowHandoff } from "./workflow/WorkflowPanel";
 import { isConfirmedCompletion } from "./workflow/completion";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RecruiterEnablementPage, RecruiterIndustrySetupCard } from "./RecruiterEnablementPage";
@@ -20649,8 +20649,9 @@ function SubmissionCommunicationsPanel({ record, processing = false, onViewPacka
     },
   ];
   return (
-    <Accordion title="Submission Communications" subtitle="Controlled manual actions from the exact reviewed package." defaultOpen>
+    <Accordion title="Submission Communications" subtitle="Manager decision automation and saved communication actions." defaultOpen>
       <div style={{ display: "grid", gap: 12 }}>
+        {process.env.REACT_APP_WELCOMEFLOW_WORKFLOW_ENABLED === "true" && !ownerUatMode ? <SubmissionWorkflowHandoff client={supabase} workspaceId={CLOUD_WORKSPACE_ID} candidateId={record.id} /> : null}
         <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 8 }}>
           {[["Candidate", normalized.candidate], ["Position", normalized.position], ["Facility", normalized.site], ["Req Number", normalized.reqNumber], ["Snapshot Hash", packageData.snapshotHash], ["Package Confirmed At", packageData.confirmedAt], ["Package Confirmed By", packageData.confirmedBy], ["Current Status", normalized.status], ["Current Next Action", normalized.nextAction]].map(([label, value]) => <ProfileSummaryBlock key={label} title={label}>{value || "Not provided"}</ProfileSummaryBlock>)}
         </section>

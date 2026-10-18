@@ -109,6 +109,174 @@
 .wf-prewrap {
   white-space: pre-wrap;
 }
+.wf-saved-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #cbb8e2;
+  border-radius: 6px;
+  background: #f8f4fc;
+}
+.wf-availability {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid #ddd3ee;
+  border-radius: 8px;
+}
+.wf-availability h4,
+.wf-availability p {
+  margin: 0;
+}
+.wf-calendar {
+  display: grid;
+  gap: 10px;
+  max-width: 560px;
+}
+.wf-calendar-heading {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+.wf-calendar-heading button,
+.wf-selected-dates button,
+.wf-date-tabs button,
+.wf-slot-review button {
+  min-height: 36px;
+  padding: 7px 10px;
+}
+.wf-month-jump {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr);
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+}
+.wf-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(38px, 1fr));
+  gap: 6px;
+}
+.wf-calendar-weekday {
+  padding: 5px 0;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-align: center;
+}
+.wf-workflow .wf-calendar-day {
+  min-height: 42px;
+  padding: 6px;
+  color: #241246;
+  background: #fff;
+}
+.wf-workflow .wf-calendar-day.is-selected,
+.wf-workflow .wf-date-tabs button.is-selected {
+  color: #fff;
+  background: #5f2c91;
+  box-shadow: inset 0 0 0 2px #fff;
+}
+.wf-selected-dates,
+.wf-date-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.wf-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 700;
+}
+.wf-checkbox input {
+  width: 20px;
+  height: 20px;
+}
+.wf-scheduling-settings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  gap: 10px;
+  max-width: 560px;
+}
+.wf-time-groups {
+  display: grid;
+  gap: 12px;
+}
+.wf-time-period-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(90px, 1fr));
+  gap: 7px;
+  max-width: 560px;
+}
+.wf-select-all-times {
+  padding: 10px 12px;
+  border: 1px solid #d8caeb;
+  border-radius: 8px;
+  background: #fbf8ff;
+}
+.wf-workflow .wf-time-period-tabs button {
+  color: #241246;
+  background: #fff;
+}
+.wf-workflow .wf-time-period-tabs button.is-selected {
+  color: #fff;
+  background: #5f2c91;
+}
+.wf-time-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 7px;
+}
+.wf-workflow .wf-time-options button {
+  min-height: 38px;
+  padding: 7px;
+  color: #241246;
+  background: #fff;
+}
+.wf-workflow .wf-time-options button.is-selected {
+  color: #fff;
+  background: #5f2c91;
+  box-shadow: inset 0 0 0 2px #fff;
+}
+.wf-slot-review {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  background: #faf8fd;
+  border-radius: 6px;
+}
+.wf-slot-day {
+  padding-top: 8px;
+  border-top: 1px solid #ddd3ee;
+}
+.wf-slot-entry {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 8px 0;
+  border-top: 1px solid #eee8f5;
+}
+.wf-slot-entry-actions {
+  display: flex;
+  gap: 7px;
+}
+.wf-slot-editor {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(130px, 1fr)) auto auto;
+  gap: 8px;
+  align-items: end;
+  width: 100%;
+}
+.wf-slot-editor label {
+  display: grid;
+  gap: 5px;
+  font-weight: 600;
+}
 .wf-card a {
   display: inline-block;
   margin: 8px 0;
@@ -129,10 +297,51 @@
   .wf-actions > * {
     width: 100%;
   }
+  .wf-calendar-heading {
+    grid-template-columns: 1fr 1fr;
+  }
+  .wf-calendar-heading strong {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+  .wf-month-jump {
+    grid-template-columns: 1fr;
+  }
+  .wf-scheduling-settings,
+  .wf-slot-editor {
+    grid-template-columns: 1fr;
+  }
+  .wf-time-period-tabs {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .wf-calendar-grid {
+    gap: 3px;
+  }
+  .wf-calendar-weekday {
+    font-size: 0.72rem;
+  }
   .wf-card {
     padding: 12px;
   }
   .wf-portal {
     padding: 8px;
   }
+}
+.wf-password-success {
+  text-align: center;
+}
+
+.wf-success-check {
+  align-items: center;
+  background: #e8f7ee;
+  border: 2px solid #218653;
+  border-radius: 999px;
+  color: #17673f;
+  display: inline-flex;
+  font-size: 2rem;
+  font-weight: 700;
+  height: 3.5rem;
+  justify-content: center;
+  margin-bottom: 0.75rem;
+  width: 3.5rem;
 }

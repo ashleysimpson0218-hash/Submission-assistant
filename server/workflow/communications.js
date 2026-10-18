@@ -8,12 +8,101 @@ const {
 } = require("../../src/workflow/engine");
 const { signCapability } = require("./capabilities");
 const crypto = require("crypto");
+const { managerActions, messageHtml } = require("./managerActions");
 const terminal = new Set(["declined", "withdrawn", "offer_ready"]);
 const decisionKinds = new Set([
   "decision_request",
   "decision_reminder",
   "decision_escalation",
 ]);
+function requisitionDetails(r) {
+  const [position, facility, jobIdentifier] = String(r.title || "")
+    .split("|")
+    .map((value) => value.trim());
+  return {
+    position: position || r.title || "Position not listed",
+    facility: facility || "Facility not listed",
+    jobIdentifier: jobIdentifier || r.id,
+  };
+}
+function calendarAssets(c, r, stage) {
+  const details = requisitionDetails(r),
+    title = `${stage.name} | ${details.position} | ${details.facility}`,
+    description = [
+      `Candidate: ${c.name}`,
+      `Position: ${details.position}`,
+      `Facility: ${details.facility}`,
+      `Unique job identifier: ${details.jobIdentifier}`,
+      `Preparation: ${stage.instructions}`,
+    ].join("\n"),
+    compact = (value) =>
+      new Date(value)
+        .toISOString()
+        .replace(/[-:]/g, "")
+        .replace(/\.\d{3}Z$/, "Z"),
+    query = {
+      text: title,
+      dates: `${compact(stage.booking.start)}/${compact(stage.booking.end)}`,
+      details: description,
+      location: stage.location,
+    },
+    google = new URL("https://calendar.google.com/calendar/render"),
+    outlook = new URL("https://outlook.live.com/calendar/0/deeplink/compose");
+  google.search = new URLSearchParams({ action: "TEMPLATE", ...query }).toString();
+  outlook.search = new URLSearchParams({
+    path: "/calendar/action/compose",
+    rru: "addevent",
+    subject: title,
+    startdt: stage.booking.start,
+    enddt: stage.booking.end,
+    body: description,
+    location: stage.location,
+  }).toString();
+  const escapeIcs = (value) =>
+      String(value || "")
+        .replace(/\\/g, "\\\\")
+        .replace(/\r?\n/g, "\\n")
+        .replace(/,/g, "\\,")
+        .replace(/;/g, "\\;"),
+    uid = crypto
+      .createHash("sha256")
+      .update(`${c.id}|${stage.id}|${stage.booking.start}|${stage.booking.end}`)
+      .digest("hex"),
+    ics = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//WelcomeFlow//Interview//EN",
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      "BEGIN:VEVENT",
+      `UID:${uid}@welcomeflowhq.com`,
+      `DTSTAMP:${compact(stage.bookedAt || stage.booking.start)}`,
+      `DTSTART:${compact(stage.booking.start)}`,
+      `DTEND:${compact(stage.booking.end)}`,
+      `SUMMARY:${escapeIcs(title)}`,
+      `DESCRIPTION:${escapeIcs(description)}`,
+      `LOCATION:${escapeIcs(stage.location)}`,
+      "STATUS:CONFIRMED",
+      "END:VEVENT",
+      "END:VCALENDAR",
+      "",
+    ].join("\r\n");
+  return {
+    actions: [
+      { label: "Add to Google Calendar", url: google.toString() },
+      { label: "Add to Outlook Calendar", url: outlook.toString() },
+    ],
+    links: [
+      `Add to Google Calendar: ${google.toString()}`,
+      `Add to Outlook Calendar: ${outlook.toString()}`,
+    ],
+    attachment: {
+      filename: "WelcomeFlow-interview.ics",
+      content: Buffer.from(ics).toString("base64"),
+      content_type: "text/calendar; charset=UTF-8; method=PUBLISH",
+    },
+  };
+}
 function eligible(job, state, members, now) {
   const c = state.cases.find((x) => x.id === job.caseId),
     r = state.requisitions.find((x) => x.id === job.requisitionId),
@@ -23,9 +112,14 @@ function eligible(job, state, members, now) {
   if (job.kind === "experience") {
     if (!stage?.completedAt || stage.experience)
       return { state: "cancelled", reason: "EXPERIENCE_RESOLVED" };
+  } else if (job.kind === "recruiter_decline") {
+    if (c.status !== "declined" || job.recipientId !== c.recruiterId)
+      return { state: "cancelled", reason: "DECLINE_CHANGED" };
+  } else if (job.kind === "candidate_decline") {
+    return { state: "cancelled", reason: "CANDIDATE_DISPOSITION_EMAIL_DISABLED" };
   } else if (decisionKinds.has(job.kind)) {
     if (
-      !["manager_decision", "feedback_due"].includes(c.status) ||
+      !["manager_decision", "feedback_due", "held"].includes(c.status) ||
       c.stageIndex !== job.stageIndex
     )
       return { state: "cancelled", reason: "DECISION_RESOLVED" };
@@ -45,6 +139,7 @@ function eligible(job, state, members, now) {
       "preparation",
       "interview_reminder",
       "manager_interview",
+      "facility_booking_confirmation",
     ].includes(job.kind)
   ) {
     if (
@@ -61,6 +156,8 @@ function eligible(job, state, members, now) {
       : member(members, job.recipientId);
   if (!recipient?.email || !zoneValid(recipient.timezone))
     return { state: "blocked", reason: "RECIPIENT_UNVERIFIED" };
+  if (job.recipientId === "candidate" && !member(members, c.recruiterId)?.email)
+    return { state: "blocked", reason: "RECRUITER_REPLY_ROUTE_REQUIRED" };
   if (job.recipientId === "candidate" && !c.contactAllowed)
     return { state: "blocked", reason: "CONTACT_PERMISSION_REQUIRED" };
   if (
@@ -81,7 +178,7 @@ function eligible(job, state, members, now) {
   )
     return { state: "cancelled", reason: "ESCALATION_OWNER_CHANGED" };
   if (
-    job.kind !== "confirmation" &&
+    !["confirmation", "facility_booking_confirmation"].includes(job.kind) &&
     !withinWindow(now, recipient.timezone, state.policy)
   )
     return { state: "waiting", reason: "SEND_WINDOW" };
@@ -117,7 +214,9 @@ function buildMessage(
   if (jobs.some((j) => eligible(j, state, members, now).state !== "ready"))
     return null;
   const { c, r, recipient, stage } = first,
-    lines = [];
+    lines = [],
+    actions = [],
+    attachments = [];
   const actionUrl = `${origin}/workflow?workspace=${encodeURIComponent(workspaceId)}`;
   const date = (iso) =>
     new Intl.DateTimeFormat("en-US", {
@@ -126,18 +225,88 @@ function buildMessage(
       timeZone: recipient.timezone,
     }).format(new Date(iso));
   if (decisionKinds.has(jobs[0].kind)) {
+    if (jobs[0].kind === "decision_reminder") {
+      lines.push(
+        "Hello Manager,",
+        "This is a reminder of candidates currently on hold or already interviewed and awaiting your feedback.",
+        "Opening a link below does not record a decision. Review the candidate in WelcomeFlow, then confirm your choice there.",
+      );
+      const addSection = (title, sectionJobs, options) => {
+        if (!sectionJobs.length) return;
+        lines.push(title);
+        for (const reminderJob of sectionJobs) {
+          const entry = eligible(reminderJob, state, members, now);
+          if (entry.state !== "ready") continue;
+          const details = requisitionDetails(entry.r);
+          const note = entry.c.stages
+            .flatMap((item) => item.feedback || [])
+            .map((feedback) => feedback.text)
+            .filter(Boolean)
+            .slice(-1)[0] || entry.c.packet || "No additional candidate note recorded.";
+          lines.push(
+            `Facility: ${details.facility}`,
+            `Candidate: ${entry.c.name}`,
+            `Position: ${details.position}`,
+            `Unique job identifier: ${details.jobIdentifier}`,
+            `Candidate note reminder: ${note}`,
+            `Available decisions: ${options}`,
+          );
+          if (currentOwner(entry.c, entry.r) === recipient.userId) {
+            const links = managerActions(origin, workspaceId, entry.c);
+            actions.push(...links.map((action) => ({ ...action, label: `${entry.c.name}: ${action.label}` })));
+            lines.push(...links.map((action) => `${action.label}: ${action.url}`));
+          }
+        }
+      };
+      addSection(
+        "CANDIDATES CURRENTLY ON HOLD",
+        jobs.filter((reminderJob) => eligible(reminderJob, state, members, now).c?.status === "held"),
+        "Proceed; Proceed but select your time your way; Continue to hold; Decline to proceed",
+      );
+      addSection(
+        "CANDIDATES INTERVIEWED — FEEDBACK NEEDED",
+        jobs.filter((reminderJob) => eligible(reminderJob, state, members, now).c?.status === "feedback_due"),
+        "Decline to proceed; Offer position / proceed to offer handoff; Continue to hold",
+      );
+      lines.push(
+        "Offer position records the candidate as ready for the authorized offer handoff. It does not create or send an offer.",
+      );
+    } else {
     lines.push(
       jobs[0].kind === "decision_escalation"
         ? "Your intervention is requested for overdue interview decisions."
-        : "Please review these outstanding interview decisions.",
+        : "Candidate submission for manager review.",
+      "Opening a link below does not record a decision. Review the candidate in WelcomeFlow, then confirm your choice there.",
     );
     for (const j of jobs) {
       const e = eligible(j, state, members, now);
       if (e.state !== "ready") return null;
       if (canReadCase(recipient, r, e.c))
-        lines.push(
-          `${e.c.name} | ${e.stage?.name || "Post-screen review"} | ${e.c.status} | Requested: ${e.c.decisionRequestedAt || "new request"}`,
-        );
+        {
+          lines.push(
+            `Candidate: ${e.c.name}`,
+            `Candidate email: ${e.c.email}`,
+            `Opening: ${e.r.title}`,
+            `Current review: ${e.stage?.name || "Post-screen manager review"}`,
+            `Status: ${e.c.status}`,
+            `Requested: ${e.c.decisionRequestedAt || "new request"}`,
+          );
+          if (e.c.stageIndex === -1 && e.c.packet)
+            lines.push(`Reviewed candidate details:\n${e.c.packet}`);
+          if (currentOwner(e.c, r) === recipient.userId) {
+            const links = managerActions(origin, workspaceId, e.c);
+            if (e.c.stageIndex < e.c.stages.length - 1)
+              lines.push(
+                "Decision paths:",
+                "Proceed: review and confirm the connected-calendar scheduling path.",
+                "Proceed but select your time your way: enter approved interview times; confirming queues the candidate invitation.",
+                "Hold for other candidate review: confirming queues an active-review update to the candidate without promising an interview date.",
+                "Decline to proceed: enter a required reason; confirming notifies recruiting first and does not email the candidate.",
+              );
+            actions.push(...links.map(a => ({...a, label: jobs.length > 1 ? `${e.c.name}: ${a.label}` : a.label})));
+            lines.push(...links.map(a => `${a.label}: ${a.url}`));
+          }
+        }
     }
     if (!canReadCase(recipient, r, c))
       lines.push(
@@ -147,6 +316,7 @@ function buildMessage(
       "Each candidate needs an individual decision. Supporting feedback does not decide for the stage owner.",
       actionUrl,
     );
+    }
   } else if (jobs[0].kind === "slots_request")
     lines.push(
       `Please provide interview slots for ${c.name}: ${stage.name}.`,
@@ -168,11 +338,37 @@ function buildMessage(
         );
       }
     lines.push(actionUrl);
+  } else if (jobs[0].kind === "facility_booking_confirmation") {
+    const details = requisitionDetails(r);
+    lines.push(
+      "Hello Manager,",
+      "The candidate has selected an interview time and is booked.",
+      `Facility: ${details.facility}`,
+      `Candidate: ${c.name}`,
+      `Position: ${details.position}`,
+      `Unique job identifier: ${details.jobIdentifier}`,
+      `Interview stage: ${stage.name}`,
+      `Interview time: ${date(stage.booking.start)}–${date(stage.booking.end)} (${recipient.timezone})`,
+      `Location or joining information: ${stage.location}`,
+      stage.calendarSync?.status === "created"
+        ? "Calendar status: the connected Outlook invitation was created."
+        : "Calendar status: the interview is saved, but the connected Outlook invitation still needs attention in WelcomeFlow.",
+      "The candidate received a confirmation. Review the booking in WelcomeFlow:",
+      `${actionUrl}&case=${encodeURIComponent(c.id)}`,
+    );
   } else if (jobs[0].kind === "active_review")
     lines.push(
       `Hello ${c.name},`,
-      `Your application for ${r.title} is in active review. Please contact recruiting if your interest or availability changes.`,
+      `Congratulations—your resume for ${requisitionDetails(r).position} is being reviewed by the hiring manager.`,
+      "Once the manager provides clear direction, we will be in touch with the next steps.",
+      "No interview or hiring decision has been made yet. Please reply to recruiting with any questions or changes to your interest or availability.",
     );
+  else if (jobs[0].kind === "recruiter_decline") {
+    lines.push(`The manager declined to proceed with ${c.name} for ${r.title}.`,
+      `Reason: ${c.lastDecision.reason}`, ...(c.lastDecision.comment ? [`Manager comment: ${c.lastDecision.comment}`] : []),
+      "WelcomeFlow recorded the candidate as dispositioned. Update the company ATS using the documented reason and comment. No candidate disposition email was generated.",
+      `${actionUrl}&case=${encodeURIComponent(c.id)}`);
+  }
   else if (jobs[0].kind === "slot_selection" || jobs[0].kind === "experience") {
     const purpose = jobs[0].kind === "experience" ? "experience" : "booking";
     const token = signCapability(
@@ -186,32 +382,77 @@ function buildMessage(
       },
       linkSecret,
     );
-    lines.push(
-      `Hello ${c.name},`,
-      purpose === "booking"
-        ? `Please choose an offered time for your ${stage.name} interview.`
-        : "How was your interview? Are you still interested, and do you have unanswered questions or want recruiting/HR follow-up? This is a feedback check-in, not an offer or hiring decision.",
-      `${origin}/workflow?workspace=${encodeURIComponent(workspaceId)}&token=${encodeURIComponent(token)}`,
-    );
+    const details = requisitionDetails(r);
+    lines.push(`Hello ${c.name},`);
+    if (purpose === "booking")
+      lines.push(
+        "You have been invited to schedule an interview.",
+        `Position: ${details.position}`,
+        `Facility: ${details.facility}`,
+        `Unique job identifier: ${details.jobIdentifier}`,
+        `Interview stage: ${stage.name}`,
+        `Location or joining information: ${stage.location}`,
+        "Available interview times:",
+        "A WelcomeFlow account is not required, and the secure scheduling link is intended only for you.",
+        ...stage.slots.map((slot) => `${date(slot.start)}–${date(slot.end)} (${recipient.timezone})`),
+        `Select your interview time: ${origin}/workflow?workspace=${encodeURIComponent(workspaceId)}&token=${encodeURIComponent(token)}`,
+        "Please contact recruiting if none of the offered times work or if your availability changes.",
+      );
+    else
+      lines.push(
+        "How was your interview? Are you still interested, and do you have unanswered questions or want recruiting/HR follow-up? This is a feedback check-in, not an offer or hiring decision.",
+        `${origin}/workflow?workspace=${encodeURIComponent(workspaceId)}&token=${encodeURIComponent(token)}`,
+      );
   } else {
-    lines.push(
-      `Hello ${c.name},`,
-      `${jobs[0].kind === "preparation" ? "Prepare for your interview" : jobs[0].kind === "confirmation" ? "Your interview is confirmed" : "Interview reminder"}: ${stage.name} | ${date(stage.booking.start)} (${recipient.timezone}).`,
-      `Joining details: ${stage.location}`,
-      ...(jobs.some((j) => j.kind === "preparation") ||
-      stage.communicationPath === "short_notice_under_24"
-        ? [`Joining details and preparation: ${stage.instructions}`]
-        : []),
-      ...(jobs.some((j) => j.kind === "interview_reminder")
-        ? ["This message also includes your interview reminder."]
-        : []),
-      "Please contact recruiting with any questions or changes.",
-    );
+    const details = requisitionDetails(r);
+    if (jobs[0].kind === "confirmation") {
+      const calendar = calendarAssets(c, r, stage);
+      actions.push(...calendar.actions);
+      attachments.push(calendar.attachment);
+      lines.push(
+        `Hello ${c.name},`,
+        "Your interview is confirmed.",
+        `Position: ${details.position}`,
+        `Facility: ${details.facility}`,
+        `Unique job identifier: ${details.jobIdentifier}`,
+        `Interview stage: ${stage.name}`,
+        `Interview time: ${date(stage.booking.start)}–${date(stage.booking.end)} (${recipient.timezone})`,
+        `Joining details: ${stage.location}`,
+        ...(jobs.some((job) => job.kind === "preparation") ||
+        stage.communicationPath === "short_notice_under_24"
+          ? [`Preparation information: ${stage.instructions}`]
+          : []),
+        ...(jobs.some((job) => job.kind === "interview_reminder")
+          ? ["This confirmation also includes your interview reminder."]
+          : []),
+        stage.calendarSync?.status === "created"
+          ? "A calendar invitation was created from the connected Outlook calendar."
+          : "Use the attached calendar file or one of the links below to save this interview to your calendar.",
+        ...calendar.links,
+        "The facility has been notified of your selected time. Please contact recruiting with any questions or changes.",
+      );
+    } else
+      lines.push(
+        `Hello ${c.name},`,
+        `${jobs[0].kind === "preparation" ? "Prepare for your interview" : "Interview reminder"}: ${stage.name} | ${date(stage.booking.start)} (${recipient.timezone}).`,
+        `Joining details: ${stage.location}`,
+        ...(jobs.some((j) => j.kind === "preparation") ||
+        stage.communicationPath === "short_notice_under_24"
+          ? [`Joining details and preparation: ${stage.instructions}`]
+          : []),
+        ...(jobs.some((j) => j.kind === "interview_reminder")
+          ? ["This message also includes your interview reminder."]
+          : []),
+        "Please contact recruiting with any questions or changes.",
+      );
   }
   return {
     to: recipient.email,
-    subject: `${jobs[0].kind === "experience" ? "Your interview experience" : jobs[0].kind === "manager_interview" ? "Upcoming interview" : decisionKinds.has(jobs[0].kind) ? "Interview decisions needed" : "Interview update"} | ${r.title}`,
+    subject: `${jobs[0].kind === "experience" ? "Your interview experience" : jobs[0].kind === "confirmation" ? "Your interview is confirmed" : jobs[0].kind === "manager_interview" ? "Upcoming interview" : jobs[0].kind === "facility_booking_confirmation" ? `Candidate booked | ${c.name}` : jobs[0].kind === "decision_reminder" ? "Manager candidate reminder" : decisionKinds.has(jobs[0].kind) ? "Candidate submission for review" : jobs[0].kind === "recruiter_decline" ? "Manager disposition recorded — ATS update needed" : jobs[0].kind === "active_review" ? "Your resume is being reviewed" : jobs[0].kind === "slot_selection" ? "Choose your interview time" : "Interview update"} | ${r.title}`,
     text: lines.join("\n\n"),
+    html: messageHtml(lines.join("\n\n"), actions),
+    ...(attachments.length ? { attachments } : {}),
+    ...(jobs[0].recipientId === "candidate" ? {replyTo: member(members, c.recruiterId).email} : {}),
     idempotencyKey: crypto
       .createHash("sha256")
       .update(
