@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { RecruiterEnablementPage, RecruiterIndustrySetupCard } from "./RecruiterEnablementPage";
 import { LoginPage } from "./App";
 
@@ -32,16 +32,54 @@ test("industry preview does not apply changes until the recruiter clicks apply",
   render(<RecruiterEnablementPage {...options} />);
   fireEvent.change(screen.getByRole("combobox", { name: "Industry" }), { target: { value: "trucking" } });
   expect(options.onApplyIndustry).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Apply industry profile" }));
+  fireEvent.click(screen.getByRole("button", { name: "Apply industry" }));
   expect(options.onApplyIndustry).toHaveBeenCalledWith("trucking");
   expect(screen.getByRole("status")).toHaveTextContent("Trucking & Logistics applied");
+});
+
+test("industry setup has one path to the setup guide without applying a pending industry choice", () => {
+  const settings = {
+    recruiterExperience: { industryId: "healthcare" },
+    roles: [{ id: "existing-role", positionTitle: "Registered Nurse", status: "Active" }],
+    templates: { hiringManager: { body: "Approved message", useCustom: true } },
+  };
+  const before = JSON.stringify(settings);
+  const options = props({ section: "industry", settings });
+  render(<RecruiterEnablementPage {...options} />);
+  fireEvent.change(screen.getByRole("combobox", { name: "Industry" }), { target: { value: "trucking" } });
+  const setup = within(screen.getByRole("region", { name: "Workspace setup" }));
+  expect(setup.getAllByRole("button")).toHaveLength(1);
+  fireEvent.click(setup.getByRole("button", { name: "Continue workspace setup" }));
+  expect(options.onOpenSettings).toHaveBeenCalledTimes(1);
+  expect(options.onOpenSettings).toHaveBeenCalledWith("general");
+  expect(options.onApplyIndustry).not.toHaveBeenCalled();
+  expect(JSON.stringify(settings)).toBe(before);
+});
+
+test("industry setup progress follows required information and does not count optional follow-up timing", () => {
+  const options = props({ section: "industry", settings: { options: { workflowRules: { candidateFollowUpDays: 2, managerNudgeDays: 2 } } } });
+  const { rerender } = render(<RecruiterEnablementPage {...options} />);
+  expect(screen.getByRole("progressbar", { name: "Workspace basics" })).toHaveAttribute("value", "0");
+  expect(screen.getByRole("progressbar", { name: "Workspace basics" })).toHaveAttribute("max", "4");
+  const general = { recruiterName: "Alex Recruiter", recruiterEmail: "alex@example.test", companyName: "Example Company" };
+  rerender(<RecruiterEnablementPage {...options} settings={{ general }} />);
+  expect(screen.getByRole("progressbar", { name: "Workspace basics" })).toHaveAttribute("value", "1");
+  rerender(<RecruiterEnablementPage {...options} settings={{
+    general,
+    sites: [{ id: "location", siteName: "North", hiringManagerEmail: "manager@example.test", status: "Inactive" }],
+    roles: [{ id: "role", positionTitle: "Operations Associate", status: "Active" }],
+    requisitions: [{ id: "opening", reqNumber: "REQ-1", siteName: "North", positionTitle: "Operations Associate", status: "Active" }],
+  }} />);
+  expect(screen.getByRole("progressbar", { name: "Workspace basics" })).toHaveAttribute("value", "4");
+  expect(screen.getByRole("button", { name: "Continue workspace setup" })).toBeEnabled();
+  expect(options.onApplyIndustry).not.toHaveBeenCalled();
 });
 
 test("training routes to real working pages and marks only the selected lesson reviewed", () => {
   const options = props();
   render(<RecruiterEnablementPage {...options} />);
-  fireEvent.click(screen.getByRole("button", { name: "Open my work" }));
-  expect(options.onNavigate).toHaveBeenCalledWith("home");
+  fireEvent.click(screen.getByRole("button", { name: "Open candidate profiles" }));
+  expect(options.onNavigate).toHaveBeenCalledWith("workspace");
   fireEvent.click(screen.getByRole("button", { name: "Mark reviewed & continue" }));
   expect(options.onCompleteLesson).toHaveBeenCalledWith("daily");
   expect(screen.getByRole("heading", { name: "Capture a candidate once" })).toBeInTheDocument();

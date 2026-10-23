@@ -1,4 +1,4 @@
-import { applyIndustryProfile, industryProfile, industryScreeningQuestions, mobilePageValue, notesWithIndustryScreening, recruiterSetupSteps, resolveIndustryRole, workspaceSaveStatus } from "./industryProfiles";
+import { applyIndustryProfile, industryProfile, industryScreeningQuestions, mobilePageValue, notesWithIndustryScreening, recruiterSetupSteps, recruiterSetupSummary, resolveIndustryRole, workspaceSaveStatus } from "./industryProfiles";
 
 const existingRole = { id: "existing", positionTitle: "Registered Nurse", requiresCpr: true, status: "Active" };
 const original = { roles: [existingRole], options: { roleTypes: ["Healthcare"], workflowRules: { candidateFollowUpDays: 2 } }, sites: [{ id: "site" }], requisitions: [{ id: "req" }], templates: { hiringManager: { body: "Our approved template", useCustom: true } } };
@@ -77,4 +77,185 @@ test("setup checks distinguish completed information from missing setup", () => 
   expect(steps.find((step) => step.id === "identity").done).toBe(true);
   expect(steps.find((step) => step.id === "locations").done).toBe(true);
   expect(steps.find((step) => step.id === "roles").done).toBe(false);
+});
+
+function setupSettings() {
+  return {
+    general: { recruiterName: " Example Recruiter ", recruiterEmail: "recruiter@example.test", companyName: "Example Company" },
+    sites: [{ id: "location-1", siteName: "Example Site", hiringManagerEmail: "manager@example.test", status: "Inactive" }],
+    roles: [{ id: "role-1", positionTitle: "Team Assistant", status: "Active" }],
+    requisitions: [{ id: "opening-1", reqNumber: "SYN-100", positionTitle: "Team Assistant", siteName: " example site ", status: "Active" }],
+    options: { workflowRules: {} },
+  };
+}
+
+const setupDone = (settings, id) => recruiterSetupSteps(settings).find((step) => step.id === id).done;
+
+test("the shared summary advances through required information and excludes optional timing from progress", () => {
+  const settings = setupSettings();
+  const empty = recruiterSetupSummary({});
+  expect(empty).toMatchObject({ completedCount: 0, totalCount: 4, nextStep: { id: "identity", target: "general" } });
+  expect(empty.requiredSteps.map((step) => [step.id, step.target])).toEqual([
+    ["identity", "general"], ["locations", "sites"], ["roles", "roles"], ["openings", "requisitions"],
+  ]);
+  expect(empty.requiredSteps.every((step) => step.required === true)).toBe(true);
+  expect(empty.optionalSteps).toEqual([expect.objectContaining({ id: "follow-up", required: false, done: false })]);
+
+  let partial = { general: settings.general };
+  expect(recruiterSetupSummary(partial)).toMatchObject({ completedCount: 1, nextStep: { id: "locations" } });
+  partial = { ...partial, sites: settings.sites };
+  expect(recruiterSetupSummary(partial)).toMatchObject({ completedCount: 2, nextStep: { id: "roles" } });
+  partial = { ...partial, roles: settings.roles };
+  expect(recruiterSetupSummary(partial)).toMatchObject({ completedCount: 3, nextStep: { id: "openings" } });
+  expect(recruiterSetupSummary(settings)).toMatchObject({ completedCount: 4, totalCount: 4, nextStep: null });
+
+  settings.options.workflowRules = { candidateFollowUpDays: 2, managerNudgeDays: "3" };
+  expect(recruiterSetupSummary(settings)).toMatchObject({ completedCount: 4, totalCount: 4, nextStep: null, optionalSteps: [expect.objectContaining({ done: true })] });
+});
+
+test.each(["recruiterName", "recruiterEmail", "companyName"])("identity stays incomplete when %s is blank or malformed", (field) => {
+  for (const value of ["  ", null, 123, {}, []]) {
+    const settings = setupSettings();
+    settings.general[field] = value;
+    expect(setupDone(settings, "identity")).toBe(false);
+  }
+});
+
+test("a signature is required only when the user explicitly includes a signature line", () => {
+  const settings = setupSettings();
+  expect(setupDone(settings, "identity")).toBe(true);
+  settings.general.includeSignatureLineInEmails = false;
+  expect(setupDone(settings, "identity")).toBe(true);
+  settings.general.includeSignatureLineInEmails = true;
+  settings.general.signOffLine = "  ";
+  expect(setupDone(settings, "identity")).toBe(false);
+  settings.general.signOffLine = "Example Company Recruiting";
+  expect(setupDone(settings, "identity")).toBe(true);
+});
+
+test("location information can precede openings even when activity is derived as Inactive", () => {
+  const settings = setupSettings();
+  settings.requisitions = [];
+  expect(setupDone(settings, "locations")).toBe(true);
+  expect(setupDone(settings, "openings")).toBe(false);
+  settings.sites[0].hiringManagerEmail = " ";
+  expect(setupDone(settings, "locations")).toBe(false);
+  settings.sites[0].hiringManagerEmail = "manager@example.test";
+  settings.sites[0].siteName = " ";
+  expect(setupDone(settings, "locations")).toBe(false);
+});
+
+test("role information needs an explicitly active named role", () => {
+  const settings = setupSettings();
+  for (const status of ["Inactive", "Archived", undefined, {}, "  ", " active ", "active", "ACTIVE"]) {
+    settings.roles[0].status = status;
+    expect(setupDone(settings, "roles")).toBe(false);
+  }
+  settings.roles[0].status = "Active";
+  expect(setupDone(settings, "roles")).toBe(true);
+  settings.roles[0].positionTitle = "  ";
+  expect(setupDone(settings, "roles")).toBe(false);
+});
+
+test.each(["id", "reqNumber", "positionTitle", "siteName"])("an opening linked only by location name cannot complete setup without a usable %s", (field) => {
+  for (const value of [undefined, "  ", {}, []]) {
+    const settings = setupSettings();
+    settings.requisitions[0][field] = value;
+    expect(setupDone(settings, "openings")).toBe(false);
+  }
+});
+
+test("the opening check follows the application's active status rather than unrecognized status labels", () => {
+  const settings = setupSettings();
+  for (const status of ["Open", "Approved", "Posted", "Closed", "Inactive", {}]) {
+    settings.requisitions[0].status = status;
+    expect(setupDone(settings, "openings")).toBe(false);
+  }
+  for (const status of [" active ", undefined, ""]) {
+    settings.requisitions[0].status = status;
+    expect(setupDone(settings, "openings")).toBe(true);
+  }
+});
+
+test("an opening needs a unique ID and number and one matching saved location", () => {
+  const settings = setupSettings();
+  const opening = settings.requisitions[0];
+  settings.requisitions.push({ ...opening, reqNumber: "SYN-200" });
+  expect(setupDone(settings, "openings")).toBe(false);
+  settings.requisitions[1] = { ...opening, id: "opening-2", reqNumber: " syn-100 " };
+  expect(setupDone(settings, "openings")).toBe(false);
+  settings.requisitions = [opening];
+  opening.siteName = "Unconfigured Site";
+  expect(setupDone(settings, "openings")).toBe(false);
+  opening.siteName = " example site ";
+  expect(setupDone(settings, "openings")).toBe(true);
+  settings.sites.push({ id: "location-2", siteName: " EXAMPLE SITE " });
+  expect(setupDone(settings, "openings")).toBe(false);
+});
+
+test("an opening keeps its configured location after a rename through a saved alias", () => {
+  const settings = setupSettings();
+  settings.sites[0] = { ...settings.sites[0], siteName: "Renamed Site", aliases: ["Example Site"] };
+  const before = JSON.stringify(settings);
+  expect(recruiterSetupSummary(settings)).toMatchObject({ completedCount: 4, nextStep: null });
+  expect(JSON.stringify(settings)).toBe(before);
+});
+
+test.each(["facilityId", "siteId"])("an opening can use its stable %s when its location label is old or absent", (field) => {
+  const settings = setupSettings();
+  settings.sites[0].siteName = "Renamed Site";
+  settings.requisitions[0][field] = settings.sites[0].id;
+  expect(setupDone(settings, "openings")).toBe(true);
+  delete settings.requisitions[0].siteName;
+  expect(setupDone(settings, "openings")).toBe(true);
+  settings.requisitions[0][field] = "unknown-location";
+  expect(setupDone(settings, "openings")).toBe(false);
+});
+
+test("ambiguous aliases stay incomplete until the opening has a stable location ID", () => {
+  const settings = setupSettings();
+  settings.sites = [
+    { ...settings.sites[0], siteName: "North Site", aliases: ["Example Site"] },
+    { id: "location-2", siteName: "South Site", aliases: ["Example Site"] },
+  ];
+  expect(setupDone(settings, "openings")).toBe(false);
+  settings.requisitions[0].facilityId = "location-1";
+  expect(setupDone(settings, "openings")).toBe(true);
+  settings.requisitions.push({ ...settings.requisitions[0], id: "opening-2" });
+  expect(setupDone(settings, "openings")).toBe(false);
+});
+
+test("duplicate source location IDs stay incomplete through name and stable ID resolution", () => {
+  const settings = setupSettings();
+  settings.sites.push({ ...settings.sites[0], siteName: "Another Site" });
+  expect(setupDone(settings, "openings")).toBe(false);
+  settings.requisitions[0].facilityId = "location-1";
+  expect(setupDone(settings, "openings")).toBe(false);
+});
+
+test("an unknown location ID can use a unique saved name or alias consistently with reporting", () => {
+  const settings = setupSettings();
+  settings.requisitions[0].facilityId = "old-unmapped-id";
+  expect(setupDone(settings, "openings")).toBe(true);
+  settings.sites[0] = { ...settings.sites[0], siteName: "Renamed Site", aliases: ["Example Site"] };
+  expect(setupDone(settings, "openings")).toBe(true);
+});
+
+test.each([0, -1, " ", "not a number", "Infinity", Infinity, true, [], {}])("optional follow-up timing rejects unusable values: %p", (value) => {
+  const settings = setupSettings();
+  settings.options.workflowRules = { candidateFollowUpDays: value, managerNudgeDays: 2 };
+  expect(setupDone(settings, "follow-up")).toBe(false);
+  settings.options.workflowRules = { candidateFollowUpDays: 2, managerNudgeDays: value };
+  expect(setupDone(settings, "follow-up")).toBe(false);
+});
+
+test("malformed settings and record collections stay incomplete without throwing or changing saved data", () => {
+  for (const settings of [null, [], 7, "settings", { general: [], sites: {}, roles: "Active", requisitions: null, options: { workflowRules: [] } }]) {
+    expect(recruiterSetupSummary(settings)).toMatchObject({ completedCount: 0, totalCount: 4, nextStep: { id: "identity" } });
+  }
+  const settings = setupSettings();
+  for (const collection of ["sites", "roles", "requisitions"]) settings[collection].unshift(null, undefined, [], 1, "invalid");
+  const before = JSON.stringify(settings);
+  expect(recruiterSetupSummary(settings)).toMatchObject({ completedCount: 4, nextStep: null });
+  expect(JSON.stringify(settings)).toBe(before);
 });

@@ -5,6 +5,7 @@ import WorkflowPanel, { SubmissionWorkflowHandoff } from "./workflow/WorkflowPan
 import { isConfirmedCompletion } from "./workflow/completion";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RecruiterEnablementPage, RecruiterIndustrySetupCard } from "./RecruiterEnablementPage";
+import { WorkspaceSetupOverview, setupSectionDestination } from "./WorkspaceSetupOverview";
 import { INDUSTRY_PROFILES, applyIndustryProfile, industryProfile, industryScreeningQuestions, mobilePageValue, notesWithIndustryScreening, resolveIndustryRole, workspaceSaveStatus } from "./industryProfiles";
 import { hasExplicitNonHealthcareIndustry, resolveIndustryCommunicationTemplate } from "./industryCommunicationTemplates";
 import {
@@ -6181,6 +6182,7 @@ function RecruiterApp() {
   const [actionCenterNavigationTarget, setActionCenterNavigationTarget] = useState(initialActionCenterNavigation);
   const [accountTab, setAccountTab] = useState("profile");
   const [activeSettingsTab, setActiveSettingsTab] = useState("general");
+  const [facilitySetupTab, setFacilitySetupTab] = useState(null);
   const [learningSection, setLearningSection] = useState("learn");
   const [completedLessons, setCompletedLessons] = useState([]);
   const [reportsTab, setReportsTabState] = useState(() => initialReportReviewTarget ? "review-reports" : "overview");
@@ -15464,6 +15466,7 @@ function rowifyCandidate(item = {}) {
     setReportCorrectionTarget(navigation.reportCorrectionTarget);
     setActionCenterCandidateTarget(navigation.actionCenterCandidateTarget);
     setActionCenterSetupTarget(navigation.actionCenterSetupTarget);
+    setFacilitySetupTab("positions");
     setActivePage("positions");
     return true;
   }
@@ -15555,7 +15558,14 @@ function rowifyCandidate(item = {}) {
     navigateToPage("learning");
   }
   function openGuidedSettings(tab) {
-    setActiveSettingsTab(tab);
+    const destination = setupSectionDestination(tab);
+    setReportCorrectionTarget(null);
+    if (destination.page === "positions") {
+      navigateToPage("positions");
+      setFacilitySetupTab(destination.tab);
+      return;
+    }
+    setActiveSettingsTab(destination.tab);
     navigateToPage("settings");
   }
   function updateActionCenterNavigation({ filter, itemId = "" } = {}) {
@@ -20142,6 +20152,7 @@ function rowifyCandidate(item = {}) {
             exportFullDataWorkbook={exportFullDataWorkbook}
             onScheduleCalendar={openCalendarCreate}
             correctionTarget={reportCorrectionTarget || actionCenterSetupTarget}
+            navigationTab={facilitySetupTab}
             onCorrectionSaved={reportCorrectionTarget ? returnToFacilityReadiness : () => { setActionCenterSetupTarget(null); setActivePage("home"); }}
             onReturnToFacilityReadiness={reportCorrectionTarget ? returnToFacilityReadiness : () => { setActionCenterSetupTarget(null); setActivePage("home"); }}
             onNavigationTargetOpened={!reportCorrectionTarget && actionCenterSetupTarget ? clearActionCenterNavigationTargets : null}
@@ -20149,33 +20160,26 @@ function rowifyCandidate(item = {}) {
         ) : null}
         {activePage === "settings" ? (
           <div style={{ display: "grid", gap: 18 }}>
-            <Card compact title="Your recruiting industry" subtitle={settings.recruiterExperience?.industryId ? activeIndustry.name : "Choose the industry for your account's recruiting workspace."} action={<Button primary onClick={() => openLearning("industry")}>{settings.recruiterExperience?.industryId ? "Review industry setup" : "Choose industry"}</Button>} />
-            <div>
-              <h1 style={{ margin: 0, fontSize: 24, lineHeight: 1.15 }}>Settings</h1>
-              <p style={{ margin: "6px 0 0", color: THEME.muted, fontWeight: 700 }}>Manage your workspace configuration and application settings.</p>
-            </div>
-            <Card compact>
-              <div style={{ display: "grid", gap: 10, gridTemplateColumns: isNarrow ? "1fr" : isMedium ? "repeat(3, minmax(0, 1fr))" : "repeat(6, minmax(0, 1fr))" }}>
-                {[
-                  ["general", "Start Here", "Basic workspace setup"],
-                  ["contacts", "People & Contacts", "HR and process contacts"],
-                  ["roles", "Position Requirements", "Role rules and fields"],
-                  ["compensation", "Rate Rules", "Position and rate rules"],
-                  ["workflow", "Follow-Up Rules", "SLA and task timing"],
-                  ["options", "Dropdown Options", "Form choices and defaults"],
-                  ["intakeRules", "Intake Logic", "Guided intake rules"],
-                  ["templates", "Email & Text Templates", "Message wording"],
-                  ["glossary", "Help Dictionary", "Site terminology"],
-                ].map(([value, label, helper], index) => (
-                  <button key={value} type="button" onClick={() => setActiveSettingsTab(value)} style={{ border: `1px solid ${activeSettingsTab === value ? THEME.primary2 : THEME.borderSoft}`, borderRadius: 6, padding: "13px 12px", background: activeSettingsTab === value ? THEME.blueBg : THEME.panelAlt, color: THEME.text, cursor: "pointer", textAlign: "left", fontWeight: 900, fontSize: 12, boxShadow: activeSettingsTab === value ? `inset 0 -3px 0 ${THEME.primary2}` : "none" }}>
-                    <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 999, background: activeSettingsTab === value ? THEME.primary2 : THEME.blueBg, color: activeSettingsTab === value ? "#fff" : THEME.primary2, marginRight: 8 }}>{index + 1}</span>
-                    {label}
-                    <span style={{ display: "block", color: THEME.muted, marginTop: 5, fontWeight: 700 }}>{helper}</span>
-                  </button>
-                ))}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <div>
+                <h1 style={{ margin: 0, fontSize: 24, lineHeight: 1.15 }}>{activeSettingsTab === "general" ? "Workspace setup" : "Settings"}</h1>
+                <p style={{ margin: "6px 0 0", color: THEME.muted }}>Add the basics, then adjust the settings your team needs.</p>
               </div>
-            </Card>
-            <SettingsPanel activeSettingsTab={activeSettingsTab} setActiveSettingsTab={setActiveSettingsTab} settings={settings} setSettings={setSettings} updateSettings={updateSettings} activeRoles={activeRoles} activeSites={activeSites} tracker={tracker} setActivePage={setActivePage} setSelectedId={setSelectedId} setActiveProfileTab={setActiveProfileTab} openMailto={openMailto} exportFullBackup={exportFullBackup} importFullBackup={importFullBackup} exportFullDataWorkbook={exportFullDataWorkbook} onRequisitionReferenceChange={syncRequisitionReferences} onOpenSetupIssue={openWorkspaceSetupIssue} runtime={{ environment: runtimeConfig.environment, projectRef: runtimeConfig.projectRef }} onSaveCommunicationDraft={saveCommunicationDraft} onRefreshCommunicationDraft={refreshCommunicationDraft} onActivateCommunicationVariant={activateCommunicationTemplate} onDeactivateCommunicationVariant={deactivateCommunicationTemplate} />
+              <Button subtle onClick={() => openLearning("industry")}>{settings.recruiterExperience?.industryId ? `Industry: ${activeIndustry.name}` : "Choose an industry"}</Button>
+            </div>
+            <nav aria-label="Workspace settings" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {[["general", "Setup overview"], ["sites", "Locations and managers"], ["roles", "Role requirements"], ["requisitions", "Job openings"]].map(([value, label]) => (
+                <Button key={value} subtle aria-current={activeSettingsTab === value ? "page" : undefined} onClick={() => openGuidedSettings(value)}>{label}</Button>
+              ))}
+            </nav>
+            <Accordion title="More settings" subtitle="Contacts, pay rates, follow-up timing, message wording, and form choices." defaultOpen={!["general", "roles"].includes(activeSettingsTab)}>
+              <nav aria-label="Additional workspace settings" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {[["contacts", "Additional contacts"], ["compensation", "Pay rates"], ["workflow", "Follow-up timing"], ["options", "Form choices"], ["intakeRules", "Intake rules"], ["templates", "Message templates"], ["glossary", "Terms and definitions"]].map(([value, label]) => (
+                  <Button key={value} subtle aria-current={activeSettingsTab === value ? "page" : undefined} onClick={() => openGuidedSettings(value)}>{label}</Button>
+                ))}
+              </nav>
+            </Accordion>
+            <SettingsPanel activeSettingsTab={activeSettingsTab} setActiveSettingsTab={setActiveSettingsTab} settings={settings} setSettings={setSettings} updateSettings={updateSettings} activeRoles={activeRoles} activeSites={activeSites} tracker={tracker} setActivePage={setActivePage} setSelectedId={setSelectedId} setActiveProfileTab={setActiveProfileTab} openMailto={openMailto} exportFullBackup={exportFullBackup} importFullBackup={importFullBackup} exportFullDataWorkbook={exportFullDataWorkbook} onRequisitionReferenceChange={syncRequisitionReferences} onOpenSetupIssue={openWorkspaceSetupIssue} onOpenSettings={openGuidedSettings} saveStatus={saveStatus} runtime={{ environment: runtimeConfig.environment, projectRef: runtimeConfig.projectRef }} onSaveCommunicationDraft={saveCommunicationDraft} onRefreshCommunicationDraft={refreshCommunicationDraft} onActivateCommunicationVariant={activateCommunicationTemplate} onDeactivateCommunicationVariant={deactivateCommunicationTemplate} />
           </div>
         ) : null}
 
@@ -21936,10 +21940,10 @@ function CandidateManagementPage({ activeTab, setActiveTab, search, setSearch, h
   );
 }
 
-export function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], activeSites = [], tracker = [], setActivePage = () => {}, setActiveSettingsTab = () => {}, onRequisitionReferenceChange = () => {}, exportFullDataWorkbook = () => {}, onScheduleCalendar = () => {}, correctionTarget = null, onCorrectionSaved = () => {}, onReturnToFacilityReadiness = () => {}, onNavigationTargetOpened = null }) {
+export function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], activeSites = [], tracker = [], setActivePage = () => {}, setActiveSettingsTab = () => {}, onRequisitionReferenceChange = () => {}, exportFullDataWorkbook = () => {}, onScheduleCalendar = () => {}, correctionTarget = null, navigationTab = null, onCorrectionSaved = () => {}, onReturnToFacilityReadiness = () => {}, onNavigationTargetOpened = null }) {
   const width = useWindowWidth();
   const compact = width < 960;
-  const [activeTab, setActiveTab] = useState(() => correctionTarget?.tab === "positions" ? "positions" : "facilities");
+  const [activeTab, setActiveTab] = useState(() => correctionTarget?.tab === "positions" ? "positions" : ["facilities", "positions", "rates"].includes(navigationTab) ? navigationTab : "facilities");
   const [facilitySearch, setFacilitySearch] = useState("");
   const [facilityStatusFilter, setFacilityStatusFilter] = useState("All Status");
   const [selectedSiteId, setSelectedSiteId] = useState("");
@@ -21975,6 +21979,14 @@ export function FacilityPositionSetupPage({ settings, setSettings, activeRoles =
   const [readinessIncludeArchived, setReadinessIncludeArchived] = useState(false);
   const [newRegionName, setNewRegionName] = useState("");
   const correctionOpenedRef = useRef("");
+  const previousNavigationTabRef = useRef(navigationTab);
+
+  useEffect(() => {
+    const navigationChanged = previousNavigationTabRef.current !== navigationTab;
+    previousNavigationTabRef.current = navigationTab;
+    // Opening or clearing an exact-record correction must not replay an older setup route.
+    if (navigationChanged && !correctionTarget?.recordId && ["facilities", "positions", "rates"].includes(navigationTab)) setActiveTab(navigationTab);
+  }, [navigationTab, correctionTarget?.recordId]);
 
   useEffect(() => {
     const handler = (event) => {
@@ -23674,7 +23686,7 @@ export function FacilityPositionSetupPage({ settings, setSettings, activeRoles =
   );
 }
 
-export function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setSettings, updateSettings, activeRoles, activeSites, tracker = [], setActivePage = () => {}, setSelectedId = () => {}, setActiveProfileTab = () => {}, openMailto = () => {}, exportFullBackup, importFullBackup, exportFullDataWorkbook, onRequisitionReferenceChange = () => {}, onOpenSetupIssue = null, runtime = {}, onSaveCommunicationDraft = null, onRefreshCommunicationDraft = null, onActivateCommunicationVariant = null, onDeactivateCommunicationVariant = null }) {
+export function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setSettings, updateSettings, activeRoles, activeSites, tracker = [], setActivePage = () => {}, setSelectedId = () => {}, setActiveProfileTab = () => {}, openMailto = () => {}, exportFullBackup, importFullBackup, exportFullDataWorkbook, onRequisitionReferenceChange = () => {}, onOpenSetupIssue = null, onOpenSettings = null, saveStatus = null, runtime = {}, onSaveCommunicationDraft = null, onRefreshCommunicationDraft = null, onActivateCommunicationVariant = null, onDeactivateCommunicationVariant = null }) {
   const width = useWindowWidth();
   const fieldGrid = { display: "grid", gap: 14, gridTemplateColumns: width < 900 ? "1fr" : "repeat(2, minmax(0, 1fr))" };
   const [glossarySearch, setGlossarySearch] = useState("");
@@ -24379,88 +24391,39 @@ export function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, setting
       if (issue.tab && issue.tab !== "general") setSearchFor(issue.tab, issue.query || "");
       window.setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 50);
     };
-    const wizardSteps = [
-      { step: "1", label: "Start Here", done: Boolean(settings.general.recruiterName && settings.general.recruiterEmail && (settings.general.includeSignatureLineInEmails === false || settings.general.signOffLine)), detail: "Add recruiter identity, company name, booking link, and signature preferences.", tab: "general", type: "complete", level: "Required" },
-      { step: "2", label: "Facilities", done: (settings.sites || []).some((site) => site.siteName && site.hiringManagerEmail), detail: "Add work locations, operational time, and manager contacts.", tab: "sites", type: "complete", level: "Required" },
-      { step: "3", label: "People & Contacts", done: (settings.contacts || []).some((contact) => contact.email && contact.duty), detail: "Add HR, background check, credentialing, and onboarding contacts.", tab: "contacts", type: "complete", level: "Recommended" },
-      { step: "4", label: "Position Management", done: safeObjectRecords(settings.requisitions).some((req) => isLiveRequisition(req) && req.reqNumber), detail: "Add active openings, req numbers, shifts, FTE, and work details.", tab: "requisitions", type: "complete", level: "Required" },
-      { step: "5", label: "Position Requirements", done: Boolean((settings.roles || []).length), detail: "Confirm what each role requires during intake.", tab: "roles", type: "complete", level: "Required" },
-      { step: "6", label: "Rate Rules", done: Boolean((settings.compensationStructure?.rules || []).length), detail: "Import or enter position rate rules and bonus details.", tab: "compensation", type: "attention", level: "Recommended" },
-      { step: "7", label: "Follow-Up Rules", done: Boolean(settings.options.workflowRules?.candidateFollowUpDays && settings.options.workflowRules?.managerNudgeDays), detail: "Set company timing for follow-ups, nudges, and hot candidate attempts.", tab: "workflow", type: "attention", level: "Recommended" },
-      { step: "8", label: "Dropdown Options", done: true, detail: "Customize form choices only when company language is different.", tab: "options", type: "optional", level: "Advanced" },
-    ];
-    const completedCount = wizardSteps.filter((step) => step.type !== "optional" && step.done).length;
-    const attentionCount = wizardSteps.filter((step) => step.type !== "optional" && !step.done).length;
-    const optionalCount = wizardSteps.filter((step) => step.type === "optional").length;
-    const setupPercent = Math.round((completedCount / Math.max(1, wizardSteps.filter((step) => step.type !== "optional").length)) * 100);
-    const quickActionStyle = { width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, border: `1px solid ${THEME.borderSoft}`, borderRadius: 6, padding: "12px 14px", background: THEME.panel, color: THEME.text, cursor: "pointer", fontWeight: 900, textAlign: "left" };
-    const setupStat = (icon, value, label, tone) => (
-      <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 16, background: THEME.panelAlt, minHeight: 92 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ display: "inline-flex", width: 30, height: 30, borderRadius: 999, alignItems: "center", justifyContent: "center", background: tone === "green" ? THEME.greenBg : tone === "amber" ? THEME.amberBg : THEME.blueBg, color: tone === "green" ? THEME.green : tone === "amber" ? THEME.amber : THEME.primary2, fontWeight: 900 }}>{icon}</span>
-          <div style={{ fontSize: 30, color: tone === "green" ? THEME.green : tone === "amber" ? THEME.amber : THEME.primary2, fontWeight: 950, lineHeight: 1 }}>{value}</div>
-        </div>
-        <div style={{ marginTop: 8, fontWeight: 900 }}>{label}</div>
-        <div style={{ color: THEME.muted, fontSize: 12, marginTop: 2 }}>Sections</div>
-      </div>
-    );
-    const wizardTone = (item) => item.type === "optional" ? { bg: THEME.blueBg, color: THEME.primary2, label: "Optional", icon: "Done" } : item.done ? { bg: THEME.greenBg, color: THEME.green, label: "Complete", icon: "✓" } : { bg: THEME.amberBg, color: THEME.amber, label: "Needs Attention", icon: "!" };
+    const openSetupSection = (section) => {
+      if (section === "general") {
+        setSearchFor("general", "");
+        const requiredFields = ["companyName", "recruiterName", "recruiterEmail", ...(settings.general.includeSignatureLineInEmails === true ? ["signOffLine"] : [])];
+        const field = requiredFields.find((key) => !String(settings.general[key] || "").trim()) || "companyName";
+        window.setTimeout(() => {
+          const input = document.getElementById(`workspace-field-${field}`);
+          input?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+          input?.focus();
+        }, 0);
+        return;
+      }
+      if (typeof onOpenSettings === "function") {
+        onOpenSettings(section);
+        return;
+      }
+      const destination = setupSectionDestination(section);
+      if (destination.page === "positions") {
+        setActivePage("positions");
+        window.setTimeout(() => window.dispatchEvent(new CustomEvent("welcomeflow-facility-tab", { detail: destination.tab })), 30);
+      } else setActiveSettingsTab(destination.tab);
+    };
     const generalMatches = (...parts) => matchesSettingsSearch(parts, searchFor("general"));
     const workspaceField = (key, label = labelFromKey(key), full = false) => generalMatches(key, label, settings.general[key]) ? (
       <div style={full ? { gridColumn: "1 / -1" } : null}>
         <Field label={label}>
-          <TextInput value={settings.general[key] || ""} onChange={(event) => updateSettings(["general", key], event.target.value)} />
+          <TextInput id={`workspace-field-${key}`} value={settings.general[key] || ""} onChange={(event) => updateSettings(["general", key], event.target.value)} />
         </Field>
       </div>
     ) : null;
     return (
       <div style={{ display: "grid", gap: 16 }}>
-        <Card compact>
-          <div style={{ display: "grid", gridTemplateColumns: width < 980 ? "1fr" : "1.6fr 220px 1fr", gap: 22, alignItems: "center" }}>
-            <div>
-              <h2 style={{ margin: 0, fontSize: 19 }}>Setup Overview</h2>
-              <p style={{ margin: "5px 0 22px", color: THEME.muted, fontWeight: 700 }}>Configure your workspace and ensure everything is ready to go.</p>
-              <div style={{ display: "grid", gap: 12, gridTemplateColumns: width < 760 ? "1fr" : "repeat(3, minmax(0, 1fr))" }}>
-                {setupStat("Done", completedCount, "Completed", "green")}
-                {setupStat("Done", attentionCount, "Need Attention", "amber")}
-                {setupStat("Done", optionalCount, "Optional", "purple")}
-              </div>
-            </div>
-            <div style={{ display: "grid", placeItems: "center", gap: 10 }}>
-              <div style={{ width: 122, height: 122, borderRadius: "50%", background: `conic-gradient(${THEME.primary2} ${setupPercent * 3.6}deg, ${THEME.borderSoft} 0deg)`, display: "grid", placeItems: "center" }}>
-                <div style={{ width: 88, height: 88, borderRadius: "50%", background: THEME.panel, display: "grid", placeItems: "center", fontSize: 28, fontWeight: 950 }}>{setupPercent}%</div>
-              </div>
-              <strong>Setup progress</strong>
-            </div>
-            <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 14, background: THEME.panelAlt }}>
-              <div style={{ fontWeight: 950, marginBottom: 12 }}>Quick Actions</div>
-              <div style={{ display: "grid", gap: 9 }}>
-                <button type="button" onClick={exportSettingsExcel} style={quickActionStyle}>Export All Data Excel <span>&gt;</span></button>
-                <button type="button" onClick={downloadSettingsTemplate} style={quickActionStyle}>Download Setup Template <span>&gt;</span></button>
-                <FileButton accept=".xlsx,.xltx,.xlsm,.xls,.xml,.csv,text/csv,.txt" onText={importSettingsSpreadsheet}>Import Setup Spreadsheet</FileButton>
-                <button type="button" onClick={() => { if (window.confirm("Reset settings to the built-in defaults?")) setSettings(DEFAULT_SETTINGS); }} style={{ ...quickActionStyle, color: THEME.red }}>Reset Defaults <span>&gt;</span></button>
-              </div>
-            </div>
-          </div>
-        </Card>
-
-        <Card title="Setup Wizard" subtitle="Complete each section to set up your recruiting workspace." compact>
-          <div style={{ display: "grid", gap: 10 }}>
-            {wizardSteps.map((item) => {
-              const tone = wizardTone(item);
-              return (
-                <button key={item.label} type="button" onClick={() => { setActiveSettingsTab(item.tab); window.setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 50); }} style={{ display: "grid", gridTemplateColumns: width < 760 ? "auto auto 1fr" : "auto auto 1fr auto auto auto", gap: 12, alignItems: "center", border: `1px solid ${tone.color}`, borderRadius: 8, padding: 13, background: tone.bg, color: THEME.text, cursor: "pointer", textAlign: "left" }}>
-                  <span style={{ display: "inline-flex", width: 26, height: 26, borderRadius: 999, alignItems: "center", justifyContent: "center", background: THEME.panel, color: tone.color, fontWeight: 950 }}>{tone.icon}</span>
-                  <span style={{ display: "inline-flex", width: 30, height: 30, borderRadius: 8, alignItems: "center", justifyContent: "center", background: THEME.panel, color: tone.color, fontWeight: 950 }}>{item.step}</span>
-                  <span><strong>{item.label}</strong><span style={{ display: "block", color: THEME.muted, marginTop: 3 }}>{item.detail}</span></span>
-                  <span style={{ borderRadius: 999, padding: "6px 10px", background: THEME.panel, color: setupLevelTone(item.level).color, fontSize: 12, fontWeight: 950 }}>{item.level}</span>
-                  <span style={{ borderRadius: 999, padding: "6px 10px", background: THEME.panel, color: tone.color, fontSize: 12, fontWeight: 950 }}>{tone.label}</span>
-                  <span style={{ color: tone.color, fontWeight: 950 }}> </span>
-                </button>
-              );
-            })}
-          </div>
-        </Card>
+        <WorkspaceSetupOverview settings={settings} theme={THEME} saveStatus={saveStatus} onOpenSection={openSetupSection} />
 
         <Card title="Check opening details" subtitle="Check each opening's number, job title, and location. This is one part of workspace setup." compact action={<Badge tone={setupIssues.length ? "Medium" : "Low"}>{setupIssues.length ? `${setupIssues.length} to review` : "Details present"}</Badge>}>
           {setupIssues.length ? (
@@ -24477,36 +24440,47 @@ export function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, setting
           ) : <EmptyState>The saved openings have a number, job title, and location. Account access, communication settings, and security still need their own checks.</EmptyState>}
         </Card>
 
-        {setupGuideCard("general")}
-
-        <Card title="Start Here" subtitle="Configure the basic workspace information used in generated messages, reports, and recruiter actions." compact action={<Button primary onClick={() => window.dispatchEvent(new CustomEvent("welcomeflow-copy", { detail: "Workspace setup is saved automatically." }))}>Save Changes</Button>}>
+        <Card title="Recruiter and company details" subtitle="These details appear in your messages and reports. Changes use the workspace's existing saving settings." compact>
           <div style={{ display: "grid", gap: 14 }}>
           {searchBox("general", "Search workspace, recruiter, HR contact, booking link, signature")}
           <div style={fieldGrid}>
-            {workspaceField("workspaceName", "Workspace Name")}
-            {workspaceField("companyName", "Company Name")}
-            {workspaceField("recruiterName", "Recruiter Name")}
-            {workspaceField("recruiterEmail", "Recruiter Email")}
-            {workspaceField("recruiterPhone", "Recruiter Phone")}
-            {workspaceField("hrContactName", "HR Contact Name")}
-            {workspaceField("hrContactEmail", "HR Contact Email")}
-            {workspaceField("hrContactPhone", "HR Contact Phone")}
-            {workspaceField("defaultBookingLink", "Default Booking Link")}
-            {workspaceField("defaultApplicationLink", "Default Application Link")}
-            {workspaceField("signOffName", "Sign-Off Name")}
-            {workspaceField("signOffLine", "Email Signature / Sign-Off Line", true)}
-            {generalMatches("include sign-off name generated emails") ? <ToggleField label="Include sign-off name in generated emails" checked={settings.general.includeSignOffNameInEmails !== false} onChange={(value) => updateSettings(["general", "includeSignOffNameInEmails"], value)} /> : null}
-            {generalMatches("include signature line generated emails") ? <ToggleField label="Include signature line in generated emails" checked={settings.general.includeSignatureLineInEmails !== false} onChange={(value) => updateSettings(["general", "includeSignatureLineInEmails"], value)} /> : null}
-            {searchFor("general") && !generalMatches(settings.general, "workspace recruiter HR contact booking signature email phone company") ? <div style={{ gridColumn: "1 / -1" }}><EmptyState>No Start Here fields match that search.</EmptyState></div> : null}
+            {workspaceField("companyName", "Company name")}
+            {workspaceField("recruiterName", "Your name")}
+            {workspaceField("recruiterEmail", "Your email")}
+            {workspaceField("signOffLine", "Email signature", true)}
+            {generalMatches("include signature line generated emails") ? <ToggleField label="Include the signature in generated emails" checked={settings.general.includeSignatureLineInEmails !== false} onChange={(value) => updateSettings(["general", "includeSignatureLineInEmails"], value)} /> : null}
           </div>
+          <Accordion title="More contact details and links" subtitle="Optional phone numbers, HR contacts, booking links, and email preferences." defaultOpen={Boolean(searchFor("general"))}>
+            <div style={fieldGrid}>
+              {workspaceField("workspaceName", "Workspace name")}
+              {workspaceField("recruiterPhone", "Your phone")}
+              {workspaceField("hrContactName", "HR contact name")}
+              {workspaceField("hrContactEmail", "HR contact email")}
+              {workspaceField("hrContactPhone", "HR contact phone")}
+              {workspaceField("defaultBookingLink", "Booking link")}
+              {workspaceField("defaultApplicationLink", "Application link")}
+              {workspaceField("signOffName", "Email sign-off name")}
+              {generalMatches("include sign-off name generated emails") ? <ToggleField label="Include the sign-off name in generated emails" checked={settings.general.includeSignOffNameInEmails !== false} onChange={(value) => updateSettings(["general", "includeSignOffNameInEmails"], value)} /> : null}
+            </div>
+          </Accordion>
+          {searchFor("general") && !generalMatches(settings.general, "workspace recruiter HR contact booking signature email phone company") ? <EmptyState>No details match that search.</EmptyState> : null}
           </div>
-          <Accordion title="Advanced - JSON Backup" subtitle="Optional technical restore point for the whole app, including settings, tracker, history, and notes.">
+          <Accordion title="Import, export, and reset" subtitle="Use these tools when you need to move setup data or restore defaults.">
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Button subtle onClick={exportSettingsExcel}>Export setup spreadsheet</Button>
+              <Button subtle onClick={downloadSettingsTemplate}>Download setup template</Button>
+              <FileButton accept=".xlsx,.xltx,.xlsm,.xls,.xml,.csv,text/csv,.txt" onText={importSettingsSpreadsheet}>Import setup spreadsheet</FileButton>
+              <Button danger onClick={() => { if (window.confirm("Reset settings to the built-in defaults?")) setSettings(DEFAULT_SETTINGS); }}>Reset defaults</Button>
+            </div>
+          </Accordion>
+          <Accordion title="Setup help">{setupGuideCard("general")}</Accordion>
+          <Accordion title="Workspace backup" subtitle="Download or restore a backup of settings, candidates, history, and notes.">
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <Button subtle onClick={exportFullBackup}>Export JSON Backup</Button>
               <FileButton accept="application/json,.json" onText={importFullBackup}>Import JSON Backup</FileButton>
             </div>
           </Accordion>
-          <Accordion title="Mailto Email Setup" subtitle="Use this if Open Email does not open Outlook or Gmail.">
+          <Accordion title="Help opening email drafts" subtitle="Use this if Open Email does not open your email app.">
             <div style={{ color: THEME.muted, lineHeight: 1.7, fontSize: 13 }}>{emailSetupText()} If Gmail is your email tool, open Gmail in Chrome and allow Gmail to handle email links when prompted.</div>
           </Accordion>
         </Card>

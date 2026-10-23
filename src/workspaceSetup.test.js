@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { FacilityPositionSetupPage, SettingsPanel, resolveSetupIssueTarget, setupIssuesFor } from "./App";
+import { setupSectionDestination } from "./WorkspaceSetupOverview";
 
 function fixtureSettings() {
   return {
@@ -19,20 +20,24 @@ function fixtureSettings() {
   };
 }
 
-function SetupRepairHarness({ settings, setSettings }) {
+function SetupRepairHarness({ settings, setSettings, panelProps = {} }) {
   const [target, setTarget] = useState(null);
   const [error, setError] = useState("");
+  const [destination, setDestination] = useState({ page: "settings", tab: "general" });
   if (target) return <FacilityPositionSetupPage settings={settings} setSettings={setSettings} correctionTarget={target} />;
+  if (destination.page === "positions") return <FacilityPositionSetupPage settings={settings} setSettings={setSettings} navigationTab={destination.tab} />;
   return <>
     {error ? <div role="alert">{error}</div> : null}
     <SettingsPanel
-      activeSettingsTab="general"
-      setActiveSettingsTab={jest.fn()}
+      activeSettingsTab={destination.tab}
+      setActiveSettingsTab={(tab) => setDestination({ page: "settings", tab })}
       settings={settings}
       setSettings={setSettings}
       updateSettings={jest.fn()}
       activeRoles={settings.roles}
       activeSites={settings.sites}
+      onOpenSettings={(section) => setDestination(setupSectionDestination(section))}
+      {...panelProps}
       onOpenSetupIssue={(issue) => {
         const resolution = resolveSetupIssueTarget(issue, settings);
         if (resolution.ok) setTarget(resolution.target);
@@ -42,10 +47,10 @@ function SetupRepairHarness({ settings, setSettings }) {
   </>;
 }
 
-function renderSetup(settings = fixtureSettings()) {
+function renderSetup(settings = fixtureSettings(), panelProps = {}) {
   const setSettings = jest.fn();
   const before = JSON.stringify(settings);
-  render(<SetupRepairHarness settings={settings} setSettings={setSettings} />);
+  render(<SetupRepairHarness settings={settings} setSettings={setSettings} panelProps={panelProps} />);
   return { setSettings, before };
 }
 
@@ -66,6 +71,57 @@ test.each([
   expect(screen.queryByDisplayValue("OTHER-OPENING")).not.toBeInTheDocument();
   const fieldContainer = screen.getByTestId(`correction-field-${field}`);
   await waitFor(() => expect(fieldContainer.contains(document.activeElement)).toBe(true));
+  expect(setSettings).not.toHaveBeenCalled();
+  expect(JSON.stringify(settings)).toBe(before);
+});
+
+test.each([
+  ["companyName", "Company name"],
+  ["recruiterName", "Your name"],
+  ["recruiterEmail", "Your email"],
+  ["signOffLine", "Email signature"],
+])("the recruiter details CTA clears a hiding search and focuses the missing %s", async (field, label) => {
+  const settings = fixtureSettings();
+  settings.general = {
+    companyName: "Synthetic Company",
+    recruiterName: "Synthetic Recruiter",
+    recruiterEmail: "recruiter@example.test",
+    includeSignatureLineInEmails: true,
+    signOffLine: "Synthetic Recruiting Team",
+    [field]: "  ",
+  };
+  const onOpenSettings = jest.fn();
+  const updateSettings = jest.fn();
+  const { setSettings, before } = renderSetup(settings, { onOpenSettings, updateSettings });
+  const search = screen.getByPlaceholderText("Search workspace, recruiter, HR contact, booking link, signature");
+  fireEvent.change(search, { target: { value: "does-not-match-any-detail" } });
+  expect(screen.queryByRole("textbox", { name: label })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Add recruiter details" }));
+
+  const input = await screen.findByRole("textbox", { name: label });
+  expect(search).toHaveValue("");
+  expect(input).toHaveValue("  ");
+  await waitFor(() => expect(input).toHaveFocus());
+  expect(onOpenSettings).not.toHaveBeenCalled();
+  expect(updateSettings).not.toHaveBeenCalled();
+  expect(setSettings).not.toHaveBeenCalled();
+  expect(JSON.stringify(settings)).toBe(before);
+});
+
+test.each([
+  ["Open locations and managers", "Search facilities..."],
+  ["Open job openings", "Search facility, position, req #, shift, or status"],
+  ["Open pay rates", "Search rate rules..."],
+])("the overview's %s action opens its working setup section directly", async (action, searchPlaceholder) => {
+  const settings = fixtureSettings();
+  const { setSettings, before } = renderSetup(settings);
+  if (action === "Open pay rates") fireEvent.click(screen.getByText("Optional settings"));
+  fireEvent.click(screen.getByRole("button", { name: action }));
+
+  expect(await screen.findByPlaceholderText(searchPlaceholder)).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Facility & Position Setup moved" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Rate Rules moved" })).not.toBeInTheDocument();
   expect(setSettings).not.toHaveBeenCalled();
   expect(JSON.stringify(settings)).toBe(before);
 });

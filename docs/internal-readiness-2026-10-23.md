@@ -2,6 +2,8 @@
 
 October 23, 2026. Status: **first repairs verified locally; overall internal readiness remains incomplete**.
 
+Follow-up: the [setup simplification checkpoint](setup-simplification-2026-10-23.md) records the subsequent shared setup guide, direct editor navigation, wording changes, and current verification. The results below describe the original repair checkpoint.
+
 This work follows the owner's instruction to repair security, setup, and usability before any customer testing. It is based on the exact `codex/manager-email-actions` source at commit `0f764be49419eeed17e5dc1462bfbcf562f2b182` (tree `1fe8cc6905c4b8a89de5200110d2f6e599297e33`). The review branch is `codex/internal-readiness-access-setup-20261023`.
 
 ## Implemented in this package
