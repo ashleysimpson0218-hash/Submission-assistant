@@ -128,18 +128,34 @@ async function authorizedRecruiter(req = {}) {
     return { error: "Recruiter authorization is not configured.", unavailable: true };
   }
 
-  const appMetadata = authentication.user.app_metadata || {};
-  const role = String(appMetadata.welcomeflow_role || "").trim().toLowerCase();
-  const memberships = new Set(
-    (Array.isArray(appMetadata.welcomeflow_workspace_ids) ? appMetadata.welcomeflow_workspace_ids : [])
-      .map((value) => String(value || "").trim().toLowerCase())
-      .filter(Boolean),
-  );
-  const normalizedWorkspaceId = workspaceId.toLowerCase();
-  if (!allowedRoles.has(role) || !allowedWorkspaces.has(normalizedWorkspaceId) || !memberships.has(normalizedWorkspaceId)) {
-    return { error: "This account is not authorized for the requested WelcomeFlow workspace.", forbidden: true };
+  const denied = { error: "This account is not authorized for the requested WelcomeFlow workspace.", forbidden: true };
+  const unavailable = { error: "Recruiter authorization could not be verified.", unavailable: true };
+  if (!allowedWorkspaces.has(workspaceId.toLowerCase())) return denied;
+
+  // Use the same current membership source as the workflow API. App metadata
+  // can outlive a workspace removal or role change and must not grant access.
+  try {
+    const client = serviceSupabaseClient();
+    if (!client) return unavailable;
+    const { data: membership, error } = await client
+      .from("welcomeflow_workflow_members")
+      .select("workspace_id,user_id,role,active")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", authentication.user.id)
+      .maybeSingle();
+    if (error || (membership !== null && (typeof membership !== "object" || Array.isArray(membership)))) {
+      return unavailable;
+    }
+    if (!membership || membership.active !== true
+      || membership.workspace_id !== workspaceId
+      || membership.user_id !== authentication.user.id
+      || !allowedRoles.has(membership.role)) {
+      return denied;
+    }
+    return { user: authentication.user, role: membership.role, workspaceId };
+  } catch {
+    return unavailable;
   }
-  return { user: authentication.user, role, workspaceId };
 }
 
 function serviceSupabaseClient(runtime = readServerRuntimeConfig()) {

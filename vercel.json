@@ -1,4 +1,9 @@
 {
+  "git": {
+    "deploymentEnabled": {
+      "codex/internal-readiness-access-setup-20261023": false
+    }
+  },
   "functions": {
     "api/parse-resume.js": {
       "includeFiles": "node_modules/{pdf-parse/dist/pdf-parse/cjs/pdf.worker.mjs,pdfjs-dist/legacy/build/pdf.worker.js}"

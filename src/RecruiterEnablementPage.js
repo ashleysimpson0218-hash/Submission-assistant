@@ -1,9 +1,9 @@
 import React, { useState } from "react";
-import { INDUSTRY_PROFILES, industryProfile, recruiterSetupSteps } from "./industryProfiles";
+import { INDUSTRY_PROFILES, industryProfile, recruiterSetupSummary } from "./industryProfiles";
 import "./recruiterExperience.css";
 
 const LESSONS = [
-  { id: "daily", title: "Run your recruiting day", minutes: 2, target: "home", action: "Open my work", steps: ["Start with Needs Action. Review the highest-priority record and its next owner.", "Check Today & Scheduled before starting outreach.", "Use Recruiting Needed to focus on openings that need more candidates. Wrap Up My Day helps you leave a clear handoff."], example: "A manager has not responded. Review the exact candidate and opening, prepare a follow-up, then log what actually happened." },
+  { id: "daily", title: "Run your recruiting day", minutes: 2, target: "workspace", action: "Open candidate profiles", steps: ["Open a candidate profile to review their stage, latest note, and next action.", "Check the calendar for interviews and other scheduled work.", "Review job openings for roles that need more candidates. Before you finish, update the next action and owner in each candidate's profile."], example: "A manager has not responded. Review the exact candidate and opening, prepare a follow-up, then log what actually happened." },
   { id: "intake", title: "Capture a candidate once", minutes: 3, target: "submission", action: "Open candidate intake", steps: ["Select the exact opening, then capture candidate contact details and source.", "Review imported information and answer the role's screening questions. Save a draft when something is missing.", "Resolve the missing items in Submission Readiness before reviewing a submission package."], example: "For a driver: capture route preference and home-time expectations alongside the CDL information to verify. These answers belong with the candidate, not on a second spreadsheet." },
   { id: "communication", title: "Keep candidates and managers informed", minutes: 3, target: "home", action: "Review follow-ups", steps: ["Open a communication from the candidate's current work item.", "Check the recipient, opening, message, and timing before using the draft.", "Log the actual outcome. Drafted, copied, and sent mean different things. Keep the next action and owner current."], example: "Waiting on a manager? Prepare the manager follow-up and a factual candidate update. Do not promise a decision date you have not confirmed." },
   { id: "leadership", title: "Report to leadership without rebuilding the story", minutes: 3, target: "reports", action: "Open weekly reporting", steps: ["Choose the reporting period and review readiness issues.", "Fix missing opening details or contacts in the linked record. Return to the same report.", "Select the appropriate audience, review the report, and use the available export or communication action. Find saved reports in Reports & History."], example: "Give leadership the movement, the blockers, who owns the next step, and the decision needed. Use the report's current data rather than manually recounting candidates." },
@@ -56,7 +56,7 @@ export function RecruiterEnablementPage({ settings, theme, saveStatus, onApplyIn
   const [selectedLesson, setSelectedLesson] = useState(LESSONS[0].id);
   const [notice, setNotice] = useState("");
   const selected = INDUSTRY_PROFILES.find((profile) => profile.id === selectedId) || current;
-  const setup = recruiterSetupSteps(settings);
+  const setup = recruiterSetupSummary(settings);
   const lesson = LESSONS.find((item) => item.id === selectedLesson) || LESSONS[0];
   const completed = LESSONS.filter((item) => completedLessons.includes(item.id)).length;
   const filteredHelp = HELP.filter(([title, answer]) => `${title} ${answer}`.toLowerCase().includes(query.toLowerCase()));
@@ -77,12 +77,16 @@ export function RecruiterEnablementPage({ settings, theme, saveStatus, onApplyIn
       </div><PracticeExercise industry={current} />
     </> : null}
     {section === "industry" ? <div className="wf-learning-layout">
-      <section className="wf-experience-card"><h2>Make it fit your recruiting</h2><p>Current profile: <strong>{current.name}</strong>. Profiles add role starters and relevant screening prompts. Review the requirements for each real opening.</p><label>Industry<select value={selectedId} onChange={(event) => { setSelectedId(event.target.value); setNotice(""); }}>{INDUSTRY_PROFILES.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></label><p>{selected.description}</p><dl><dt>Location language</dt><dd>{selected.location}</dd><dt>Role starters</dt><dd>{selected.roles.join(", ") || "Use your existing roles or create your own."}</dd></dl>
-        {selected.questions.length ? <details><summary>Preview {selected.questions.length} screening prompts</summary><ul>{selected.questions.map((item) => <li key={item.id}>{item.question}</li>)}</ul></details> : null}
-        <p className="wf-experience-note">Existing candidates, openings, role rules, and messages are preserved. Choosing a profile does not verify credentials or connect an external service.</p>
-        <button className="wf-experience-primary" onClick={() => { onApplyIndustry(selectedId); setNotice(`${selected.name} applied. Review Position Requirements and message templates before using the added roles.`); }}>Apply industry profile</button>{notice ? <p role="status">{notice}</p> : null}
+      <section className="wf-experience-card" aria-labelledby="industry-workspace-setup-title"><h2 id="industry-workspace-setup-title">Workspace setup</h2>
+        <div className="wf-experience-progress"><strong>{setup.completedCount} of {setup.totalCount} basics have information</strong><progress value={setup.completedCount} max={setup.totalCount} aria-label="Workspace basics" /></div>
+        <p>Add missing information or review what you've entered in the setup guide.</p>
+        <button className="wf-experience-primary" onClick={() => onOpenSettings("general")}>Continue workspace setup</button>
       </section>
-      <section className="wf-experience-card"><h2>Workspace setup</h2><p>{setup.filter((item) => item.done).length} of {setup.length} setup checks have information. Review the details before recruiting.</p><ol className="wf-setup-list">{setup.map((item) => <li key={item.id}><div><strong>{item.title}</strong><span className="wf-experience-status">{item.done ? "Information present" : "Needs setup"}</span><p>{item.detail}</p></div><button onClick={() => onOpenSettings(item.target)}>{item.done ? "Review" : "Set up"}</button></li>)}</ol><button onClick={() => onOpenSettings("templates")}>Review email & text templates</button></section>
+      <section className="wf-experience-card"><h2>Choose your recruiting industry</h2><p>Current industry: <strong>{current.name}</strong>. Choose an industry to see suggested roles and screening questions.</p><label>Industry<select value={selectedId} onChange={(event) => { setSelectedId(event.target.value); setNotice(""); }}>{INDUSTRY_PROFILES.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></label><p>{selected.description}</p><dl><dt>Location label</dt><dd>{selected.location}</dd><dt>Suggested roles</dt><dd>{selected.roles.join(", ") || "Use your existing roles or create your own."}</dd></dl>
+        {selected.questions.length ? <details><summary>Preview {selected.questions.length} screening questions</summary><ul>{selected.questions.map((item) => <li key={item.id}>{item.question}</li>)}</ul></details> : null}
+        <p className="wf-experience-note">Apply your choice to add any missing suggested roles. Review each role's requirements for your openings.</p>
+        <button onClick={() => { onApplyIndustry(selectedId); setNotice(`${selected.name} applied. Review the added roles before using them.`); }}>Apply industry</button>{notice ? <p role="status">{notice}</p> : null}
+      </section>
     </div> : null}
     {section === "connections" ? <>
       <section className="wf-experience-card"><h2>Know what is connected</h2><p>These statuses describe what WelcomeFlow can confirm in this session. A saved link or message template is not a verified service connection.</p><div className="wf-connection-grid">

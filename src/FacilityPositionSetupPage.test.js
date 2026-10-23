@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { FacilityPositionSetupPage } from "./App";
 
 function fixtureSettings() {
@@ -108,4 +108,73 @@ test("Add Contact opens the exact facility contact section without changing sour
   expect(screen.getByTestId("reporting-correction-source-context")).toHaveTextContent("Missing role: Regional Manager");
   expect(setSettings).not.toHaveBeenCalled();
   expect(JSON.stringify(settings)).toBe(original);
+});
+
+test.each([
+  ["facilities", "Search facilities..."],
+  ["positions", "Search facility, position, req #, shift, or status"],
+  ["rates", "Search rate rules..."],
+])("direct %s navigation opens the usable section without saving", async (navigationTab, searchPlaceholder) => {
+  const settings = fixtureSettings();
+  const before = JSON.stringify(settings);
+  const setSettings = jest.fn();
+  render(<FacilityPositionSetupPage settings={settings} setSettings={setSettings} navigationTab={navigationTab} />);
+
+  expect(await screen.findByPlaceholderText(searchPlaceholder)).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Edit Requisition" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Edit Facility" })).not.toBeInTheDocument();
+  expect(setSettings).not.toHaveBeenCalled();
+  expect(JSON.stringify(settings)).toBe(before);
+});
+
+test("a navigation prop change switches setup sections without modifying records", async () => {
+  const settings = fixtureSettings();
+  const before = JSON.stringify(settings);
+  const setSettings = jest.fn();
+  const { rerender } = render(<FacilityPositionSetupPage settings={settings} setSettings={setSettings} navigationTab="facilities" />);
+  expect(screen.getByPlaceholderText("Search facilities...")).toBeVisible();
+
+  rerender(<FacilityPositionSetupPage settings={settings} setSettings={setSettings} navigationTab="rates" />);
+  expect(await screen.findByPlaceholderText("Search rate rules...")).toBeVisible();
+  expect(screen.queryByPlaceholderText("Search facilities...")).not.toBeInTheDocument();
+
+  rerender(<FacilityPositionSetupPage settings={settings} setSettings={setSettings} navigationTab="positions" />);
+  expect(await screen.findByRole("button", { name: "+ Add Requisition" })).toBeVisible();
+  expect(screen.queryByPlaceholderText("Search rate rules...")).not.toBeInTheDocument();
+
+  rerender(<FacilityPositionSetupPage settings={settings} setSettings={setSettings} navigationTab="facilities" />);
+  expect(await screen.findByPlaceholderText("Search facilities...")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "+ Add Requisition" })).not.toBeInTheDocument();
+  expect(setSettings).not.toHaveBeenCalled();
+  expect(JSON.stringify(settings)).toBe(before);
+});
+
+test("an exact opening correction remains authoritative over generic section navigation", async () => {
+  const settings = fixtureSettings();
+  settings.requisitions.push({ ...settings.requisitions[0], id: "req-other", reqNumber: "SYN-OTHER", uniqueIdNumber: "OTHER-OPENING" });
+  const before = JSON.stringify(settings);
+  const setSettings = jest.fn();
+  const correctionTarget = { action: "Complete opening details", recordType: "requisition", recordId: "req-1", tab: "positions", field: "reqNumber", label: "SYN-81271" };
+  const { rerender } = render(<FacilityPositionSetupPage settings={settings} setSettings={setSettings} navigationTab="facilities" correctionTarget={correctionTarget} />);
+
+  expect(await screen.findByRole("heading", { name: "Edit Requisition" })).toBeVisible();
+  expect(screen.getByDisplayValue("SYN-UNIQUE-1")).toBeVisible();
+  expect(screen.queryByDisplayValue("OTHER-OPENING")).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Positions / Requisitions" })).toBeVisible();
+  const input = screen.getByTestId("correction-field-reqNumber").querySelector("input");
+  await waitFor(() => expect(input).toHaveFocus());
+
+  rerender(<FacilityPositionSetupPage settings={settings} setSettings={setSettings} navigationTab="rates" correctionTarget={correctionTarget} />);
+  expect(screen.getByRole("heading", { name: "Edit Requisition" })).toBeVisible();
+  expect(screen.getByDisplayValue("SYN-UNIQUE-1")).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Positions / Requisitions" })).toBeVisible();
+  expect(screen.queryByPlaceholderText("Search rate rules...")).not.toBeInTheDocument();
+
+  rerender(<FacilityPositionSetupPage settings={settings} setSettings={setSettings} navigationTab="rates" correctionTarget={null} />);
+  expect(screen.getByRole("heading", { name: "Positions / Requisitions" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Edit Requisition" })).toBeVisible();
+  expect(screen.getByDisplayValue("SYN-UNIQUE-1")).toBeVisible();
+  expect(screen.queryByPlaceholderText("Search rate rules...")).not.toBeInTheDocument();
+  expect(setSettings).not.toHaveBeenCalled();
+  expect(JSON.stringify(settings)).toBe(before);
 });
