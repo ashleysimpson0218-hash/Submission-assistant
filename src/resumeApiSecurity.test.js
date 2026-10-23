@@ -11,14 +11,19 @@ function responseRecorder() {
 function configureSupabase(rateResult = true, user = {
   id: "user-1",
   app_metadata: { welcomeflow_role: "recruiter", welcomeflow_workspace_ids: ["workspace-1"] },
-}) {
+}, membership = { workspace_id: "workspace-1", user_id: "user-1", role: "recruiter", active: true }) {
   const results = Array.isArray(rateResult) ? rateResult : [];
   const rpc = jest.fn().mockResolvedValue({ data: rateResult === false ? false : true, error: null });
   results.forEach((result) => rpc.mockResolvedValueOnce({ data: result, error: null }));
   const getUser = jest.fn().mockResolvedValue({ data: { user }, error: null });
+  const membershipQuery = {
+    select: jest.fn().mockReturnThis(),
+    eq: jest.fn().mockReturnThis(),
+    maybeSingle: jest.fn().mockResolvedValue({ data: membership, error: null }),
+  };
   jest.doMock("@supabase/supabase-js", () => ({
     createClient: jest.fn((url, key) => key === "server-secret-key"
-      ? { rpc }
+      ? { rpc, from: jest.fn(() => membershipQuery) }
       : { auth: { getUser } }),
   }));
   rpc.getUser = getUser;
@@ -91,8 +96,9 @@ describe("resume parser authentication and abuse protection", () => {
     expect(JSON.stringify(rateArguments)).not.toMatch(/user-1|203\.0\.113\.20/);
   });
 
-  test("rejects a valid user without the recruiter role", async () => {
-    configureSupabase(true, { id: "user-2", app_metadata: { welcomeflow_workspace_ids: ["workspace-1"] } });
+  test("rejects a valid user without an allowed current membership role", async () => {
+    configureSupabase(true, { id: "user-2", app_metadata: { welcomeflow_role: "recruiter", welcomeflow_workspace_ids: ["workspace-1"] } },
+      { workspace_id: "workspace-1", user_id: "user-2", role: "manager", active: true });
     const handler = require("../api/parse-resume");
     const res = responseRecorder();
     await handler(resumeRequest(), res);
@@ -100,7 +106,7 @@ describe("resume parser authentication and abuse protection", () => {
   });
 
   test("rejects a recruiter who is not a member of the requested workspace", async () => {
-    configureSupabase(true, { id: "user-3", app_metadata: { welcomeflow_role: "recruiter", welcomeflow_workspace_ids: ["workspace-2"] } });
+    configureSupabase(true, { id: "user-3", app_metadata: { welcomeflow_role: "recruiter", welcomeflow_workspace_ids: ["workspace-1"] } }, null);
     const handler = require("../api/parse-resume");
     const res = responseRecorder();
     await handler(resumeRequest(), res);

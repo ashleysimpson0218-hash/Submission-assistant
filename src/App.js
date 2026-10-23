@@ -1055,14 +1055,39 @@ function standardRateRowsToRules(rows = []) {
   }));
 }
 
-function setupIssuesFor(settings = {}) {
+export function setupIssuesFor(settings = {}) {
   const issues = [];
-  safeObjectRecords(settings.requisitions).forEach((req) => {
-    if (!req.reqNumber) issues.push({ label: "A requisition is missing req number.", area: "Open Requisitions", req });
-    if (!req.positionTitle) issues.push({ label: "A requisition is missing position.", area: "Open Requisitions", req });
-    if (!req.siteName) issues.push({ label: "A requisition is missing site/facility.", area: "Open Requisitions", req });
+  const requisitions = safeObjectRecords(settings.requisitions);
+  if (!requisitions.some(isLiveRequisition)) {
+    const message = "No active openings are set up yet. Add an opening before starting recruiting work.";
+    issues.push({ id: "no-active-openings", message, label: message, area: "Open Requisitions", tab: "requisitions", actionLabel: "Open openings" });
+  }
+  requisitions.forEach((req, index) => {
+    const opening = String(req.reqNumber || "").trim()
+      ? `Opening ${String(req.reqNumber).trim()}`
+      : [req.positionTitle, req.siteName].map((value) => String(value || "").trim()).filter(Boolean).join(" at ") || "An unnamed opening";
+    [["reqNumber", "an opening number"], ["positionTitle", "a job title"], ["siteName", "a location"]].forEach(([field, missing]) => {
+      if (String(req[field] ?? "").trim()) return;
+      const message = `${opening} needs ${missing}.`;
+      issues.push({ id: `${req.id || index}:${field}`, message, label: message, area: "Open Requisitions", tab: "requisitions", field, req, actionLabel: "Fix opening" });
+    });
   });
   return issues;
+}
+
+export function resolveSetupIssueTarget(issue, settings = {}) {
+  if (issue?.id === "no-active-openings" && !issue.req) return { ok: true, target: { tab: "positions" } };
+  const resolution = resolveActionCenterSetupTarget({ type: "requisition", id: issue?.req?.id, requisitions: settings.requisitions });
+  if (!resolution.ok) return resolution;
+  return {
+    ok: true,
+    target: {
+      ...resolution.target,
+      action: "Complete opening details",
+      tab: "positions",
+      field: ["reqNumber", "positionTitle", "siteName"].includes(issue.field) ? issue.field : "reqNumber",
+    },
+  };
 }
 function mergeDefaults(defaults, value) {
   if (Array.isArray(defaults)) return Array.isArray(value) ? value : defaults;
@@ -15428,6 +15453,21 @@ function rowifyCandidate(item = {}) {
     return true;
   }
 
+  function openWorkspaceSetupIssue(issue) {
+    const resolution = resolveSetupIssueTarget(issue, settings);
+    if (!resolution.ok) {
+      setCopyNotice(resolution.error);
+      return false;
+    }
+    leaveActionCenterNavigation("positions");
+    const navigation = actionCenterNavigationState({ setupTarget: resolution.target });
+    setReportCorrectionTarget(navigation.reportCorrectionTarget);
+    setActionCenterCandidateTarget(navigation.actionCenterCandidateTarget);
+    setActionCenterSetupTarget(navigation.actionCenterSetupTarget);
+    setActivePage("positions");
+    return true;
+  }
+
   function openActionCenterCandidateRecord(candidateId, requisitionId) {
     const resolution = resolveActionCenterCandidateTarget({
       candidateId,
@@ -20135,7 +20175,7 @@ function rowifyCandidate(item = {}) {
                 ))}
               </div>
             </Card>
-            <SettingsPanel activeSettingsTab={activeSettingsTab} setActiveSettingsTab={setActiveSettingsTab} settings={settings} setSettings={setSettings} updateSettings={updateSettings} activeRoles={activeRoles} activeSites={activeSites} tracker={tracker} setActivePage={setActivePage} setSelectedId={setSelectedId} setActiveProfileTab={setActiveProfileTab} openMailto={openMailto} exportFullBackup={exportFullBackup} importFullBackup={importFullBackup} exportFullDataWorkbook={exportFullDataWorkbook} onRequisitionReferenceChange={syncRequisitionReferences} runtime={{ environment: runtimeConfig.environment, projectRef: runtimeConfig.projectRef }} onSaveCommunicationDraft={saveCommunicationDraft} onRefreshCommunicationDraft={refreshCommunicationDraft} onActivateCommunicationVariant={activateCommunicationTemplate} onDeactivateCommunicationVariant={deactivateCommunicationTemplate} />
+            <SettingsPanel activeSettingsTab={activeSettingsTab} setActiveSettingsTab={setActiveSettingsTab} settings={settings} setSettings={setSettings} updateSettings={updateSettings} activeRoles={activeRoles} activeSites={activeSites} tracker={tracker} setActivePage={setActivePage} setSelectedId={setSelectedId} setActiveProfileTab={setActiveProfileTab} openMailto={openMailto} exportFullBackup={exportFullBackup} importFullBackup={importFullBackup} exportFullDataWorkbook={exportFullDataWorkbook} onRequisitionReferenceChange={syncRequisitionReferences} onOpenSetupIssue={openWorkspaceSetupIssue} runtime={{ environment: runtimeConfig.environment, projectRef: runtimeConfig.projectRef }} onSaveCommunicationDraft={saveCommunicationDraft} onRefreshCommunicationDraft={refreshCommunicationDraft} onActivateCommunicationVariant={activateCommunicationTemplate} onDeactivateCommunicationVariant={deactivateCommunicationTemplate} />
           </div>
         ) : null}
 
@@ -21899,7 +21939,7 @@ function CandidateManagementPage({ activeTab, setActiveTab, search, setSearch, h
 export function FacilityPositionSetupPage({ settings, setSettings, activeRoles = [], activeSites = [], tracker = [], setActivePage = () => {}, setActiveSettingsTab = () => {}, onRequisitionReferenceChange = () => {}, exportFullDataWorkbook = () => {}, onScheduleCalendar = () => {}, correctionTarget = null, onCorrectionSaved = () => {}, onReturnToFacilityReadiness = () => {}, onNavigationTargetOpened = null }) {
   const width = useWindowWidth();
   const compact = width < 960;
-  const [activeTab, setActiveTab] = useState("facilities");
+  const [activeTab, setActiveTab] = useState(() => correctionTarget?.tab === "positions" ? "positions" : "facilities");
   const [facilitySearch, setFacilitySearch] = useState("");
   const [facilityStatusFilter, setFacilityStatusFilter] = useState("All Status");
   const [selectedSiteId, setSelectedSiteId] = useState("");
@@ -22804,7 +22844,7 @@ export function FacilityPositionSetupPage({ settings, setSettings, activeRoles =
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
-      {correctionTarget ? (
+      {correctionTarget?.recordId ? (
         <div role="status" data-testid="reporting-correction-target" style={{ border: `1px solid ${THEME.primary2}`, borderRadius: 8, padding: 12, background: THEME.blueBg, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           <div>
             <strong>{correctionTarget.action}: {correctionTarget.label || "reporting record"}</strong>
@@ -23576,9 +23616,9 @@ export function FacilityPositionSetupPage({ settings, setSettings, activeRoles =
             </div>
             <div style={{ display: "grid", gap: 12 }}>
               <div data-correction-field="siteName" data-testid="correction-field-siteName"><Field label="Facility"><SelectInput value={draftReq.siteName} onChange={(event) => updateDraftReq("siteName", event.target.value)} options={allSites.map((site) => site.siteName).filter(Boolean)} /></Field></div>
-              <Field label="Position Title"><TextInput value={draftReq.positionTitle} onChange={(event) => updateDraftReq("positionTitle", event.target.value)} placeholder="Position title" /></Field>
+              <div data-correction-field="positionTitle" data-testid="correction-field-positionTitle"><Field label="Position Title"><TextInput value={draftReq.positionTitle} onChange={(event) => updateDraftReq("positionTitle", event.target.value)} placeholder="Position title" /></Field></div>
               <div style={{ display: "grid", gridTemplateColumns: width < 720 ? "1fr" : "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-                <Field label="Req Number"><TextInput value={draftReq.reqNumber} onChange={(event) => updateDraftReq("reqNumber", event.target.value)} /></Field>
+                <div data-correction-field="reqNumber" data-testid="correction-field-reqNumber"><Field label="Req Number"><TextInput value={draftReq.reqNumber} onChange={(event) => updateDraftReq("reqNumber", event.target.value)} /></Field></div>
                 <Field label="Unique ID"><TextInput value={draftReq.uniqueIdNumber} onChange={(event) => updateDraftReq("uniqueIdNumber", event.target.value)} /></Field>
               <Field label="Internal Job Link"><TextInput value={draftReq.internalJobLink || ""} onChange={(event) => updateDraftReq("internalJobLink", event.target.value)} placeholder="Internal posting URL" /></Field>
               <Field label="External Job Link"><TextInput value={draftReq.externalJobLink || ""} onChange={(event) => updateDraftReq("externalJobLink", event.target.value)} placeholder="External posting URL" /></Field>
@@ -23634,10 +23674,11 @@ export function FacilityPositionSetupPage({ settings, setSettings, activeRoles =
   );
 }
 
-function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setSettings, updateSettings, activeRoles, activeSites, tracker = [], setActivePage = () => {}, setSelectedId = () => {}, setActiveProfileTab = () => {}, openMailto = () => {}, exportFullBackup, importFullBackup, exportFullDataWorkbook, onRequisitionReferenceChange = () => {}, runtime = {}, onSaveCommunicationDraft = null, onRefreshCommunicationDraft = null, onActivateCommunicationVariant = null, onDeactivateCommunicationVariant = null }) {
+export function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setSettings, updateSettings, activeRoles, activeSites, tracker = [], setActivePage = () => {}, setSelectedId = () => {}, setActiveProfileTab = () => {}, openMailto = () => {}, exportFullBackup, importFullBackup, exportFullDataWorkbook, onRequisitionReferenceChange = () => {}, onOpenSetupIssue = null, runtime = {}, onSaveCommunicationDraft = null, onRefreshCommunicationDraft = null, onActivateCommunicationVariant = null, onDeactivateCommunicationVariant = null }) {
   const width = useWindowWidth();
   const fieldGrid = { display: "grid", gap: 14, gridTemplateColumns: width < 900 ? "1fr" : "repeat(2, minmax(0, 1fr))" };
   const [glossarySearch, setGlossarySearch] = useState("");
+  const [showAllSetupIssues, setShowAllSetupIssues] = useState(false);
   const [settingsSearch, setSettingsSearch] = useState({ general: "", contacts: "", sites: "", requisitions: "", roles: "", intakeRules: "", compensation: "", options: "", workflow: "", templates: "" });
   const [selectedSettingsRecords, setSelectedSettingsRecords] = useState({ sites: [], requisitions: [], roles: [], compensation: [], options: [] });
   const [draftRequisition, setDraftRequisition] = useState(null);
@@ -24325,8 +24366,13 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
   if (activeSettingsTab === "general") {
     const setupIssues = setupIssuesFor(settings);
     const openSetupIssue = (issue) => {
+      if (typeof onOpenSetupIssue === "function" && issue.tab === "requisitions") {
+        onOpenSetupIssue(issue);
+        return;
+      }
       if (issue.tab === "sites" || issue.tab === "requisitions") {
         setActivePage("positions");
+        window.setTimeout(() => window.dispatchEvent(new CustomEvent("welcomeflow-facility-tab", { detail: issue.tab === "requisitions" ? "positions" : "facilities" })), 30);
         return;
       }
       setActiveSettingsTab(issue.tab || "general");
@@ -24384,7 +24430,7 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
               <div style={{ width: 122, height: 122, borderRadius: "50%", background: `conic-gradient(${THEME.primary2} ${setupPercent * 3.6}deg, ${THEME.borderSoft} 0deg)`, display: "grid", placeItems: "center" }}>
                 <div style={{ width: 88, height: 88, borderRadius: "50%", background: THEME.panel, display: "grid", placeItems: "center", fontSize: 28, fontWeight: 950 }}>{setupPercent}%</div>
               </div>
-              <strong>Setup Complete</strong>
+              <strong>Setup progress</strong>
             </div>
             <div style={{ border: `1px solid ${THEME.borderSoft}`, borderRadius: 8, padding: 14, background: THEME.panelAlt }}>
               <div style={{ fontWeight: 950, marginBottom: 12 }}>Quick Actions</div>
@@ -24416,19 +24462,19 @@ function SettingsPanel({ activeSettingsTab, setActiveSettingsTab, settings, setS
           </div>
         </Card>
 
-        <Card title="Validate Setup" subtitle="Review and resolve issues before generating reports." compact action={<Badge tone={setupIssues.length ? "Medium" : "Low"}>{setupIssues.length ? `${setupIssues.length} Issues` : "Ready"}</Badge>}>
+        <Card title="Check opening details" subtitle="Check each opening's number, job title, and location. This is one part of workspace setup." compact action={<Badge tone={setupIssues.length ? "Medium" : "Low"}>{setupIssues.length ? `${setupIssues.length} to review` : "Details present"}</Badge>}>
           {setupIssues.length ? (
             <div style={{ display: "grid", gap: 9 }}>
-              {setupIssues.slice(0, 3).map((issue, index) => (
-                <div key={`${issue.message}-${index}`} style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 12, alignItems: "center", border: `1px solid ${THEME.amber}`, borderRadius: 8, padding: 13, background: THEME.amberBg }}>
+              {(showAllSetupIssues ? setupIssues : setupIssues.slice(0, 3)).map((issue) => (
+                <div key={issue.id} style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 12, alignItems: "center", border: `1px solid ${THEME.amber}`, borderRadius: 8, padding: 13, background: THEME.amberBg }}>
                   <span style={{ color: THEME.amber, fontWeight: 950 }}>!</span>
-                  <button type="button" onClick={() => openSetupIssue(issue)} style={{ border: 0, padding: 0, background: "transparent", color: THEME.text, textAlign: "left", cursor: "pointer", font: "inherit" }}><strong>{issue.message}</strong><span style={{ display: "block", color: THEME.muted, fontSize: 12, marginTop: 3 }}>Open {labelFromKey(issue.tab || "general")}</span></button>
-                  <Button subtle onClick={() => openSetupIssue(issue)}>Open</Button>
+                  <strong>{issue.message}</strong>
+                  <Button subtle onClick={() => openSetupIssue(issue)} aria-label={`${issue.actionLabel}: ${issue.message}`}>{issue.actionLabel}</Button>
                 </div>
               ))}
-              {setupIssues.length > 3 ? <div style={{ color: THEME.muted, fontSize: 12, textAlign: "center" }}>{setupIssues.length - 3} more issue{setupIssues.length - 3 === 1 ? "" : "s"} found. Use the setup rows above to review each section.</div> : null}
+              {setupIssues.length > 3 ? <Button subtle onClick={() => setShowAllSetupIssues((value) => !value)}>{showAllSetupIssues ? "Show fewer issues" : `Show all ${setupIssues.length} issues`}</Button> : null}
             </div>
-          ) : <EmptyState>Setup looks ready for recruiter use.</EmptyState>}
+          ) : <EmptyState>The saved openings have a number, job title, and location. Account access, communication settings, and security still need their own checks.</EmptyState>}
         </Card>
 
         {setupGuideCard("general")}

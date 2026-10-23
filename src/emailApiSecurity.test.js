@@ -16,13 +16,18 @@ function authorizedSupabase(user = {
   id: "user-1",
   email: "recruiter@example.test",
   app_metadata: { welcomeflow_role: "recruiter", welcomeflow_workspace_ids: ["workspace-1"] },
-}, rateResults = []) {
+}, rateResults = [], membership = { workspace_id: "workspace-1", user_id: "user-1", role: "recruiter", active: true }) {
   const rpc = jest.fn().mockResolvedValue({ data: true, error: null });
   rateResults.forEach((result) => rpc.mockResolvedValueOnce({ data: result, error: null }));
   const getUser = jest.fn().mockResolvedValue({ data: { user }, error: null });
+  const membershipQuery = {
+    select: jest.fn().mockReturnThis(),
+    eq: jest.fn().mockReturnThis(),
+    maybeSingle: jest.fn().mockResolvedValue({ data: membership, error: null }),
+  };
   jest.doMock("@supabase/supabase-js", () => ({
     createClient: jest.fn((url, key) => key === "server-secret-key"
-      ? { rpc }
+      ? { rpc, from: jest.fn(() => membershipQuery) }
       : { auth: { getUser } }),
   }));
   rpc.getUser = getUser;
@@ -124,8 +129,9 @@ describe("email API authorization and abuse protection", () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  test("rejects a valid user without an authorized application role", async () => {
-    authorizedSupabase({ id: "user-2", app_metadata: { welcomeflow_workspace_ids: ["workspace-1"] } });
+  test("rejects a valid user without an authorized current membership role", async () => {
+    authorizedSupabase({ id: "user-2", app_metadata: { welcomeflow_role: "recruiter", welcomeflow_workspace_ids: ["workspace-1"] } }, [],
+      { workspace_id: "workspace-1", user_id: "user-2", role: "manager", active: true });
     const handler = require("../api/send-email");
     const res = responseRecorder();
     await handler(request({ to: "recruiter@example.test", subject: "Subject", body: "Body" }), res);
@@ -134,7 +140,7 @@ describe("email API authorization and abuse protection", () => {
   });
 
   test("rejects an authorized role without membership in the requested workspace", async () => {
-    authorizedSupabase({ id: "user-3", app_metadata: { welcomeflow_role: "recruiter", welcomeflow_workspace_ids: ["workspace-2"] } });
+    authorizedSupabase({ id: "user-3", app_metadata: { welcomeflow_role: "recruiter", welcomeflow_workspace_ids: ["workspace-1"] } }, [], null);
     const handler = require("../api/send-email");
     const res = responseRecorder();
     await handler(request({ to: "recruiter@example.test", subject: "Subject", body: "Body" }), res);
