@@ -1,3 +1,5 @@
+import { buildFacilityIndex, resolveCanonicalFacility } from "./weeklyCleanupReporting";
+
 // Industry packs add recruiter prompts; they never certify eligibility or replace records.
 const question = (id, label, options = "") => ({ id, question: label, type: options ? "Dropdown" : "Text", options, matchText: "", source: "Industry" });
 
@@ -97,14 +99,56 @@ export function workspaceSaveStatus({ cloudStatus = "", cloudEnabled = false, br
 }
 
 export function recruiterSetupSteps(settings = {}) {
-  const general = settings.general || {};
+  const record = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const records = (value) => Array.isArray(value) ? value.filter((item) => item && typeof item === "object" && !Array.isArray(item)) : [];
+  const text = (value) => typeof value === "string" ? value.trim() : "";
+  const key = (value) => text(value).toLowerCase();
+  const active = (value, defaultActive = false) => value == null || value === "" ? defaultActive : key(value) === "active";
+  const positiveDays = (value) => (typeof value === "number" || (typeof value === "string" && Boolean(value.trim()))) && Number.isFinite(Number(value)) && Number(value) > 0;
+  const source = record(settings);
+  const general = record(source.general);
+  const sites = records(source.sites);
+  const roles = records(source.roles);
+  const requisitions = records(source.requisitions);
+  const workflow = record(record(source.options).workflowRules);
+  const countValues = (items, field, normalize) => items.reduce((counts, item) => {
+    const value = normalize(item[field]);
+    if (value) counts.set(value, (counts.get(value) || 0) + 1);
+    return counts;
+  }, new Map());
+  const openingIds = countValues(requisitions, "id", text);
+  const openingNumbers = countValues(requisitions, "reqNumber", key);
+  const locationIds = countValues(sites, "id", text);
+  const facilityIndex = buildFacilityIndex(sites);
+  // Location activity is derived from its openings. It cannot be a prerequisite
+  // for entering location information before the first opening exists.
+  const hasLocation = sites.some((item) => text(item.siteName) && text(item.hiringManagerEmail));
+  const hasOpening = requisitions.some((item) => {
+    if (!active(item.status, true) || openingIds.get(text(item.id)) !== 1
+      || openingNumbers.get(key(item.reqNumber)) !== 1 || !text(item.positionTitle)) return false;
+    const resolution = resolveCanonicalFacility({ requisition: item, facilityIndex });
+    // The shared index deduplicates IDs; setup must still reject duplicate source rows.
+    return resolution.status === "resolved" && locationIds.get(resolution.facility.id) === 1;
+  });
   return [
-    { id: "identity", title: "Add your recruiter identity", detail: "Your name and email feed candidate and leadership messages.", done: Boolean(general.recruiterName?.trim() && general.recruiterEmail?.trim() && general.companyName?.trim()), target: "general" },
-    { id: "locations", title: "Add locations and decision makers", detail: "Give each opening a location and the right manager contact.", done: (settings.sites || []).some((item) => item.status !== "Inactive" && item.siteName?.trim() && item.hiringManagerEmail?.trim()), target: "sites" },
-    { id: "roles", title: "Review role requirements", detail: "Review licenses, screening prompts, and work expectations for each role.", done: (settings.roles || []).some((item) => item.status === "Active" && item.positionTitle?.trim()), target: "roles" },
-    { id: "openings", title: "Add active openings", detail: "Use a unique requisition number to keep candidates and reports connected.", done: (settings.requisitions || []).some((item) => ["Active", "Open", "Approved", "Posted"].includes(item.status) && item.reqNumber && item.siteName && item.positionTitle), target: "requisitions" },
-    { id: "follow-up", title: "Set follow-up timing", detail: "Decide when candidate and manager follow-ups should appear in Work.", done: Number(settings.options?.workflowRules?.candidateFollowUpDays) > 0 && Number(settings.options?.workflowRules?.managerNudgeDays) > 0, target: "workflow" },
+    { id: "identity", title: "Recruiter details", actionLabel: "Add recruiter details", detail: "Add your name, email, company, and any signature you choose to include.", required: true, done: Boolean(text(general.recruiterName) && text(general.recruiterEmail) && text(general.companyName) && (general.includeSignatureLineInEmails !== true || text(general.signOffLine))), target: "general" },
+    { id: "locations", title: "Locations and managers", actionLabel: "Add locations and managers", detail: "Save a work location and its hiring manager's email.", required: true, done: hasLocation, target: "sites" },
+    { id: "roles", title: "Role requirements", actionLabel: "Review role requirements", detail: "Choose the requirements and information to collect for each role.", required: true, done: roles.some((item) => item.status === "Active" && Boolean(text(item.positionTitle))), target: "roles" },
+    { id: "openings", title: "Job openings", actionLabel: "Add job openings", detail: "Add an active opening with a unique opening number, job title, and saved location.", required: true, done: hasOpening, target: "requisitions" },
+    { id: "follow-up", title: "Follow-up timing", actionLabel: "Set follow-up timing", detail: "Choose when candidate and manager follow-ups should appear.", required: false, done: positiveDays(workflow.candidateFollowUpDays) && positiveDays(workflow.managerNudgeDays), target: "workflow" },
   ];
+}
+
+export function recruiterSetupSummary(settings = {}) {
+  const steps = recruiterSetupSteps(settings);
+  const requiredSteps = steps.filter((step) => step.required);
+  return {
+    requiredSteps,
+    optionalSteps: steps.filter((step) => !step.required),
+    completedCount: requiredSteps.filter((step) => step.done).length,
+    totalCount: requiredSteps.length,
+    nextStep: requiredSteps.find((step) => !step.done) || null,
+  };
 }
 
 export function mobilePageValue(activePage, reportsTab) {
