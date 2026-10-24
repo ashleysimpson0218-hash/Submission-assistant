@@ -1,0 +1,25 @@
+{
+  "status": "source reconciliation only; not replayed or deployed",
+  "baseline_commit": "ce174f61b4dc4744af64f846862a3fbed6c4a1fb",
+  "source": "WelcomeFlow Test: supabase_migrations.schema_migrations",
+  "serialization": "array_to_string(statements, E'\\n\\n'); UTF-8; no added trailing newline",
+  "reverified_date": "2026-10-24",
+  "migrations": [
+    {
+      "version": "20261017195452",
+      "name": "add_hr_workflow_role",
+      "file": "supabase/migrations/20261017195452_add_hr_workflow_role.sql",
+      "bytes": 322,
+      "database_md5": "45b546af0c7772c5c1b11593d06ad235",
+      "sha256": "d74cf6b8999bf17543fa8658d96280b59c44a99e240005bbe2ce83cc96b9ef84"
+    },
+    {
+      "version": "20261018033142",
+      "name": "enforce_workflow_tenant_boundaries",
+      "file": "supabase/migrations/20261018033142_enforce_workflow_tenant_boundaries.sql",
+      "bytes": 2519,
+      "database_md5": "682dc5dbc380836442c3be082eb7628c",
+      "sha256": "e16316641fcaa9b5b91371af98f6764a9e2f490e5de10ecaadd07e4dd313cfb7"
+    }
+  ]
+}
